@@ -1,0 +1,3 @@
+# 统一用 LF。否则 Windows 上 core.autocrlf 会把 .sh 转成 CRLF，
+# 在 Linux/macOS 上 clone 后脚本直接跑不起来（bad interpreter）。
+* text=auto eol=lf
