@@ -29,6 +29,10 @@ const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
 
 /* ---------- 小工具 ---------- */
+/* 想要更专业的动效（弹簧 / 拍号 / 错开入场 / manim 缓动），用同级的 lib/motion.js：
+     <script src="lib/motion.js"></script>
+   然后 const p = MO.expoOut(MO.seg(t, 0.3, 1.4));
+   下面这几个是最常用的，够简单片子用。 */
 const clamp = (v,a,b) => v<a?a:v>b?b:v;
 const lerp  = (a,b,t) => a+(b-a)*t;
 const outCubic = t => 1-Math.pow(1-t,3);

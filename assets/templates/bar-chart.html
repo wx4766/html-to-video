@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 条形图对比</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script>
+/* =====================================================================
+   模板 ②  ·  横向条形图对比 / 排名
+   ---------------------------------------------------------------------
+   用途：业绩对比、排名、份额拆分。条形依次生长，数值同步滚动。
+   改 CFG.data 即可（按数值从大到小排，第一条会高亮）。
+
+   出片：
+     bash ../render.sh bar-chart.html --duration=6 --fps=60
+   ===================================================================== */
+const CFG = {
+  title:    '上半年各渠道新增用户',
+  sub:      '单位：万人 · 数据截至 6 月 30 日',
+  unit:     '',                 // 数值后缀，如 '万元'、'%'；空则不加
+  data: [                       // ← 改这里：第一条自动高亮
+    { label: '应用商店', value: 128.4 },
+    { label: '短视频投放', value: 96.2 },
+    { label: '老带新',   value: 61.7 },
+    { label: '线下活动', value: 38.5 },
+    { label: '搜索广告', value: 24.1 },
+  ],
+  note:  '数据来源：示例数据，替换成你自己的',
+  dur:   6.0,
+  accent: '#FFB86B',
+  ink:   '#F4F7FC',
+  bg:    '#080A10',
+};
+/* ===================================================================== */
+
+const W = 1920, H = 1080, DUR = CFG.dur;
+const cv = document.getElementById('stage');
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const outCubic = t => 1 - Math.pow(1 - t, 3);
+const fmt = v => v.toLocaleString('zh-CN', { maximumFractionDigits: 1 });
+
+/* 图表几何 */
+const X0 = 560, X1 = 1700;                     // 条形起点 / 最大终点
+const Y0 = 286, ROW = 116, BAR = 56;           // 底部留白 >15%，避免落进烧录字幕带
+const MAXV = Math.max(...CFG.data.map(d => d.value));
+
+function drawFrame(T) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  /* 背景 */
+  const bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, CFG.bg);
+  bg.addColorStop(1, '#0D111B');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+
+  /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200) - 600;
+  const sweep = g.createLinearGradient(scx - 620, 0, scx + 620, H);
+  sweep.addColorStop(0, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = sweep;
+  g.fillRect(0, 0, W, H);
+
+  /* 标题 */
+  const tiP = outCubic(win(T, 0.10, 0.75));
+  g.save();
+  g.globalAlpha = tiP;
+  g.fillStyle = CFG.ink;
+  g.font = `700 62px ${SANS}`;
+  g.fillText(CFG.title, 160, 168 + (1 - tiP) * 24);
+  g.globalAlpha = tiP * 0.55;
+  g.font = `400 30px ${SANS}`;
+  g.fillText(CFG.sub, 160, 226);
+  g.restore();
+
+  /* 基线 */
+  const axP = outCubic(win(T, 0.30, 0.90));
+  g.save();
+  g.globalAlpha = 0.16 * axP;
+  g.fillStyle = CFG.ink;
+  g.fillRect(X0, Y0 - 26, 2, CFG.data.length * ROW + 20);
+  g.restore();
+
+  /* 条形 */
+  CFG.data.forEach((d, i) => {
+    const cy = Y0 + i * ROW + ROW / 2;
+    const top = cy - BAR / 2;
+    const t0 = 0.45 + i * 0.16;
+    const grow = outExpo(win(T, t0, t0 + 0.95));       // 生长
+    const fade = outCubic(win(T, t0 - 0.15, t0 + 0.35)); // 行淡入
+    const isTop = i === 0;
+    const fullW = (d.value / MAXV) * (X1 - X0);
+    const w = fullW * grow;
+
+    /* 行背景条（刻度容器） */
+    g.save();
+    g.globalAlpha = 0.05 * fade;
+    g.fillStyle = CFG.ink;
+    g.fillRect(X0, top, X1 - X0, BAR);
+    g.restore();
+
+    /* 数值条 */
+    if (w > 0) {
+      const grad = g.createLinearGradient(X0, 0, X0 + Math.max(w, 1), 0);
+      if (isTop) {
+        grad.addColorStop(0, '#FF8A3D');
+        grad.addColorStop(1, CFG.accent);
+      } else {
+        grad.addColorStop(0, 'rgba(95,224,192,0.55)');
+        grad.addColorStop(1, 'rgba(95,224,192,0.85)');
+      }
+      g.fillStyle = grad;
+      g.fillRect(X0, top, w, BAR);
+    }
+
+    /* 左侧标签 */
+    g.save();
+    g.globalAlpha = fade * 0.92;
+    g.fillStyle = CFG.ink;
+    g.font = `500 36px ${SANS}`;
+    g.textAlign = 'right';
+    g.fillText(d.label, X0 - 40, cy + 13);
+    g.restore();
+
+    /* 数值（跟着条尾走） */
+    if (grow > 0.02) {
+      g.save();
+      g.globalAlpha = clamp(fade * grow * 1.4, 0, 1);
+      g.fillStyle = isTop ? CFG.accent : 'rgba(95,224,192,0.95)';
+      g.font = `700 40px ${MONO}`;
+      const shown = d.value * grow;
+      g.fillText(fmt(shown) + CFG.unit, X0 + w + 26, cy + 14);
+      g.restore();
+    }
+  });
+
+  /* 脚注 */
+  const noP = outCubic(win(T, 1.9, 2.5));
+  if (noP > 0) {
+    g.save();
+    g.globalAlpha = noP * 0.42;
+    g.fillStyle = CFG.ink;
+    g.font = `400 24px ${SANS}`;
+    g.fillText(CFG.note, 160, H - 190);
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约：这段不要改 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>
