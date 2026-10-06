@@ -42,6 +42,7 @@
  * 容错
  *   --allow-errors         页面报错不判失败（默认：有 pageerror/console.error → 非零退出）
  *   --readytimeout=8       等 window.__seek 就绪的秒数
+ *   --no-serve             用 file:// 加载（默认走本地 http server；file:// 下 ESM 与 fetch 会被 CORS 拦死）
  *
  * Output:
  *   同目录同名 .mp4。给了 --from/--to 时输出名为 <名>.<起>-<止>s.mp4，**不会覆盖成品**。
@@ -53,6 +54,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { HIDE_CHROME_CSS, hideChromeInit } = require('./lib/hide-chrome.cjs');
+const { startServer } = require('./lib/local-server.cjs');
 
 function arg(name, def) {
   const p = process.argv.find(a => a.startsWith('--' + name + '='));
@@ -86,6 +88,7 @@ const GOP_RAW     = arg('gop', null);
 const KEEP_CHROME = hasFlag('keep-chrome');
 const KEEP_FRAMES = hasFlag('keep-frames');
 const ALLOW_ERRORS = hasFlag('allow-errors');
+const NO_SERVE     = hasFlag('no-serve');       // 默认走本地 http；见 lib/local-server.cjs 顶部说明
 
 const HTML_ABS = path.resolve(HTML_FILE);
 const BASENAME = path.basename(HTML_FILE, path.extname(HTML_FILE));
@@ -157,8 +160,11 @@ async function renderFrames(context, url, frames, onPage) {
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
 
   // 契约：__seek 就绪；或页面主动宣告启动失败
+  // 注意签名是 waitForFunction(fn, arg, options)：arg 排第二，options 排第三。
+  // 写成 waitForFunction(fn, {timeout}) 会把 options 当成传给页面的 arg，超时永远走默认 30s。
   await page.waitForFunction(
     () => window.__ready === true || !!window.__bootFailed,
+    null,
     { timeout: READY_TIMEOUT * 1000 },
   );
   const bootFailed = await page.evaluate(() => window.__bootFailed || null);
@@ -188,6 +194,7 @@ async function renderStills(context, url, times, onPage) {
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction(
     () => window.__ready === true || !!window.__bootFailed,
+    null,
     { timeout: READY_TIMEOUT * 1000 },
   );
   const bootFailed = await page.evaluate(() => window.__bootFailed || null);
@@ -220,8 +227,25 @@ async function renderStills(context, url, times, onPage) {
   };
 
   if (!STILLS) fs.mkdirSync(TMP_DIR, { recursive: true });
+
+  // 默认走本地 http：file:// 下 <script type="module"> 和 fetch() 会被 CORS 拦死，
+  // 用 ESM / 读本地 JSON 的动画项目在 file:// 下根本起不来。http 是 file:// 的超集。
+  // 真起不来（端口被禁等）就退回 file://——只 warn，不判失败。
+  let server = null;
+  let url = 'file://' + HTML_ABS;
+  if (!NO_SERVE) {
+    try {
+      server = await startServer();
+      url = server.url(HTML_ABS);
+      console.log(`  load: ${url}`);
+    } catch (e) {
+      console.warn(`⚠ 本地 http server 起不来，退回 file://（ESM / fetch 可能受限）：${String((e && e.message) || e)}`);
+      console.warn('  若确认不需要 ESM/fetch，加 --no-serve 可去掉这条提示。');
+      server = null;
+    }
+  }
+
   const browser = await chromium.launch();
-  const url = 'file://' + HTML_ABS;
 
   const context = await browser.newContext({
     viewport: { width: WIDTH, height: HEIGHT },
@@ -260,6 +284,16 @@ async function renderStills(context, url, times, onPage) {
       console.error('  seek 渲染只支持走冻结时钟的动画（见 assets/animation-skeleton.html 的「渲染契约」段）。');
       console.error('  纯 CSS @keyframes / Lottie / 手写非确定动画不吃 __seek，本渲染器不适用。');
       console.error('');
+    } else if (/Timeout .* exceeded/.test(msg)) {
+      // 「等 __ready 超时」本身不含任何线索，得把最常见的三个原因摆出来，否则只能干瞪眼
+      console.error('');
+      console.error('✗ 等 window.__ready 超时 —— 页面始终没宣告就绪。最常见的三个原因：');
+      console.error(`  1) 用了 ESM（<script type="module">）或 fetch()，却以 file:// 加载。`);
+      console.error(`     默认已走本地 http server；若你加了 --no-serve，去掉它再试。`);
+      console.error('  2) 启动就报错了（资源 404、语法错误、依赖没装），脚本根本没跑到 __ready。');
+      console.error('     渲染开头会打印 http 地址（默认模式），把它粘到浏览器里打开看控制台最直接。');
+      console.error(`  3) 启动逻辑比 ${READY_TIMEOUT}s 还慢（大字体 / 大数据）。加 --readytimeout=30。`);
+      console.error('');
     }
     await browser.close();
     cleanupTmp(TMP_DIR);
@@ -268,6 +302,7 @@ async function renderStills(context, url, times, onPage) {
   }
 
   await browser.close();
+  if (server) { try { await server.close(); } catch (e) { /* 关不掉也不影响成片 */ } }
 
   // ── 报错检查：在编码之前，先把「画面可能是坏的」这件事说清楚 ──
   // 保留成片（能直接看）但最终非零退出，让脚本/CI 能感知失败。

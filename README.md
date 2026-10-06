@@ -32,11 +32,14 @@
 
 | | 模板 | 用途 |
 |---|---|---|
-| ![](docs/preview-title-card.png) | `assets/templates/title-card.html` | **片头标题卡**：主标题逐字弹入 + 副标题 + 标签 |
-| ![](docs/preview-bar-chart.png) | `assets/templates/bar-chart.html` | **条形图 / 排名**：条形依次生长，数值同步滚动，第一条高亮 |
-| ![](docs/preview-line-chart.png) | `assets/templates/line-chart.html` | **折线趋势**：折线生长 + 数据点亮起 + 末点数值浮标 |
-| ![](docs/preview-number-counter.png) | `assets/templates/number-counter.html` | **大数字 / KPI**：从 0 滚到目标值 + 涨跌标签 + 进度条 |
-| ![](docs/preview-timeline.png) | `assets/templates/timeline.html` | **时间线 / 流程**：中轴生长，节点逐个点亮 |
+| [![](docs/demo-title-card.gif)](docs/demo-title-card.mp4) | `assets/templates/title-card.html` | **片头标题卡**：主标题逐字弹入 + 副标题 + 标签 |
+| [![](docs/demo-bar-chart.gif)](docs/demo-bar-chart.mp4) | `assets/templates/bar-chart.html` | **条形图 / 排名**：条形依次生长，数值同步滚动，第一条高亮 |
+| [![](docs/demo-line-chart.gif)](docs/demo-line-chart.mp4) | `assets/templates/line-chart.html` | **折线趋势**：折线生长 + 数据点亮起 + 末点数值浮标 |
+| [![](docs/demo-number-counter.gif)](docs/demo-number-counter.mp4) | `assets/templates/number-counter.html` | **大数字 / KPI**：从 0 滚到目标值 + 涨跌标签 + 进度条 |
+| [![](docs/demo-timeline.gif)](docs/demo-timeline.mp4) | `assets/templates/timeline.html` | **时间线 / 流程**：中轴生长，节点逐个点亮 |
+
+> 动图 400×225 / 10fps，只为让你看见「它在动」；**点动图打开 1080p 原片**看真实画质。
+> 静帧大图在 `docs/preview-*.png`。
 
 ```bash
 cp assets/templates/bar-chart.html my-video.html
@@ -96,9 +99,20 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 | `--gop=<秒>` | 关键帧间隔（`--gop=1` 便于后期按秒 seek） |
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码不必重截） |
 | `--allow-errors` | 页面报错不判失败（默认有报错就非零退出） |
+| `--readytimeout=8` | 等 `__seek` 就绪的秒数（大字体 / 大数据启动慢时调大） |
+| `--no-serve` | 用 `file://` 加载页面（默认走本地 http server，见下） |
 
 **渲染结束时如果有页面控制台报错，会非零退出**（成片照样产出，方便核对）。
 这是刻意的：报错通常意味着黑屏或缺内容，早年的版本会一路说成功，直到你回抽帧才发现。
+
+### ESM / fetch 项目直接能渲
+
+渲染器默认起一个**只绑 `127.0.0.1` 的本地 http server** 来加载页面（零新依赖，Node 内置 `http`）。
+`file://` 下 `<script type="module">` 和 `fetch()` 会被 CORS 拦死 —— 用 Vite/esbuild 组织的动画、
+读本地 JSON 的项目根本起不来；走 http 就没这些事，而且是 `file://` 的严格超集。
+
+渲染开头会打印这个地址，排障时直接粘到浏览器里看控制台最方便。
+服务器起不来会自动退回 `file://` 并提示（只警告，不判失败）。
 
 ## 动画要满足的契约
 
@@ -159,7 +173,7 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 
 | 维度 | 量什么 |
 |---|---|
-| 确定性 | 同一时刻渲两次逐像素比对 |
+| 确定性 | 抽 首/中/末 3 个时刻，各做「同页面 seek 回去」+「全新页面重渲」两轮逐像素比对 |
 | 动感 | 运动%、静止帧对比例、**最长连续静止秒数** |
 | 流畅 | 相邻帧差峰值/中位数，报「跳变」时刻 |
 | 框景 | hook `fillText` + DOM 文字行框 → 半截字 / 叠字 / 进字幕带 / 近空白 |
@@ -252,6 +266,7 @@ html-to-video/
 │   ├── render-video-seek.js       渲染器内核：冻结时钟 + 逐帧 seek + ffmpeg 编码 + 报错判定
 │   ├── qa.js                      自动化验收：确定性/动感/流畅/框景/字体/报错
 │   ├── lib/hide-chrome.cjs        隐藏播放控件的共享规则（渲染器与验收器同一份）
+│   ├── lib/local-server.cjs       本地 http 静态服务器（解锁 ESM / fetch，零新依赖）
 │   ├── detect-env.js              探测浏览器缓存，输出该装哪个 playwright 版本
 │   └── install-deps.sh            一键装依赖并写配置
 └── assets/

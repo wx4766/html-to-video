@@ -6,3 +6,6 @@ out/
 *.mp4
 *.mov
 palette.png
+
+# 例外：docs/ 里的示例成片要进仓库（README 内联动图 + 1080p 原片）
+!docs/demo-*.mp4

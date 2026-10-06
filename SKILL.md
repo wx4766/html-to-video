@@ -161,6 +161,13 @@ bash assets/render.sh animation.html --duration=12 --fps=60 --width=1920 --heigh
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码时不必重截） |
 | `--allow-errors` | 页面报错不判失败（默认：有报错 → 非零退出） |
 | `--keep-chrome` | 不隐藏播放控件（调试用） |
+| `--readytimeout=8` | 等 `__seek` 就绪的秒数（启动慢的大字体/大数据可调大） |
+| `--no-serve` | 用 `file://` 加载页面（默认走本地 http server，见下） |
+
+**ESM / fetch 项目直接能渲**。渲染器默认起一个只绑 `127.0.0.1` 的本地 http server 来加载页面 ——
+`file://` 下 `<script type="module">` 和 `fetch()` 会被 CORS 拦死，用 Vite/esbuild 组织的动画、
+读本地 JSON 的项目根本起不来；走 http 就没这些事。渲染开头会打印这个地址，排障时直接粘到浏览器里看控制台最方便。
+服务器起不来会自动退回 `file://` 并提示（只警告，不判失败）。
 
 - 输出与 HTML 同名的 `.mp4`
 - 帧数 = `fps × duration`。**12s@60fps = 720 帧，实测约 6~7 分钟**（concurrency=4）
@@ -202,7 +209,7 @@ bash assets/qa.sh animation.html --duration=12 --fps=30
 
 | 维度 | 量什么 |
 |---|---|
-| 确定性 | 同一时刻渲两次逐像素比对。不一致 = 画面里混了随机数/时钟/累积状态 |
+| 确定性 | 抽 首/中/末 3 个时刻，各做两轮逐像素比对：同页面 seek 回去（验累积状态）+ 全新页面重渲（验随机初始化）。不一致 = 画面里混了随机数/时钟/累积状态 |
 | 动感 | 相邻帧变化像素占比（运动%）、静止帧对比例、**最长连续静止秒数** |
 | 流畅 | 相邻帧差的峰值/中位数，报「跳变」时刻 |
 | 框景 | 从加载起 hook `fillText/strokeText` + DOM 文字行框 → 报**半截字 / 叠字 / 进字幕带 / 近空白** |
@@ -300,6 +307,7 @@ bash assets/qa.sh animation.html --duration=12 --fps=30
 | `scripts/render-video-seek.js` | 渲染器内核（冻结时钟 + 逐帧 seek 截图 + ffmpeg 编码 + 报错判定），自包含 |
 | `scripts/qa.js` | 自动化验收（确定性/动感/流畅/框景/字体/报错），纯 Node 零新依赖 |
 | `scripts/lib/hide-chrome.cjs` | 「隐藏播放控件」的共享规则，渲染器与验收器用同一份，规则不会漂移 |
+| `scripts/lib/local-server.cjs` | 本地 http 静态服务器（只绑 127.0.0.1），解锁 ESM / fetch；零新依赖 |
 | `scripts/detect-env.js` | 探测本机浏览器缓存，输出该装哪个 playwright 版本 |
 | `scripts/install-deps.sh` | 一键装依赖并写配置（探测 → 装 → 落地配置文件） |
 | `assets/render.sh` | 全量渲染包装器，自动解析 node 工作区与 ffmpeg 路径 |

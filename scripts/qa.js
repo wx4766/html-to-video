@@ -24,9 +24,18 @@
  *   --settle=2             seek 后等几个 rAF 再截图
  *   --safe-bottom=0.15     画面底部这个比例内出现文字 → 警告「进字幕带」（烧录字幕会盖住）；0 关掉
  *   --keep-chrome          不隐藏播放控件（默认隐藏，和渲染器一致）
+ *   --no-serve             用 file:// 加载（默认走本地 http server，和渲染器一致；
+ *                          两者必须同源加载，否则 QA 看到的和成片不是一回事）
  *
  * 产物
  *   --out=<dir>            报告目录，默认 <html目录>/qa
+ *
+ * ── 确定性怎么验 ──────────────────────────────────────────────────
+ *   在时间轴上抽 3 个时刻（首 / 中 / 末），各做两轮比对：
+ *     · 热比对：同一个页面 seek 回去再截 —— 验「累积状态」污染
+ *     · 冷比对：全新页面 seek 到同一时刻 —— 验「随机初始化」不一致
+ *   任一时刻、任一轮有像素差就判不确定。以前只验最后一个采样时刻，
+ *   随机数恰好在那帧稳定就漏检了 —— 所以别嫌它多花一次页面加载。
  *
  * ── 判据的脾气（经验阈值，不是规则）─────────────────────────────────
  *   运动 0.5%–8% 之间多数画面好看；最长静止 ≥3s 会提示（有意定格可以忽略）；
@@ -48,6 +57,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 const { HIDE_CHROME_CSS, hideChromeInit } = require('./lib/hide-chrome.cjs');
+const { startServer } = require('./lib/local-server.cjs');
 
 function arg(name, def) {
   const p = process.argv.find(a => a.startsWith('--' + name + '='));
@@ -74,6 +84,7 @@ const HEIGHT   = parseInt(arg('height', '1080'));
 const SETTLE   = Math.max(1, parseInt(arg('settle', '2')));
 const SAFE_BOTTOM = parseFloat(arg('safe-bottom', '0.15'));   // 底部 15% 视为字幕带
 const KEEP_CHROME = hasFlag('keep-chrome');
+const NO_SERVE    = hasFlag('no-serve');   // 加载方式必须和渲染器一致，否则验的不是同一个东西
 
 const HTML_ABS = path.resolve(HTML_FILE);
 const BASENAME = path.basename(HTML_FILE, path.extname(HTML_FILE));
@@ -367,11 +378,26 @@ function median(a) {
     else if (m.type() === 'warning') warns.push(m.text());
   });
 
-  await page.goto('file://' + HTML_ABS, { waitUntil: 'load', timeout: 60000 });
+  // 和渲染器同源加载：渲染器默认走本地 http，QA 也走，否则验的不是同一个东西
+  let server = null;
+  let targetUrl = 'file://' + HTML_ABS;
+  if (!NO_SERVE) {
+    try {
+      server = await startServer();
+      targetUrl = server.url(HTML_ABS);
+    } catch (e) {
+      console.warn(`⚠ 本地 http server 起不来，退回 file://：${String((e && e.message) || e)}`);
+      server = null;
+    }
+  }
+
+  await page.goto(targetUrl, { waitUntil: 'load', timeout: 60000 });
 
   let ready = true;
+  // 签名是 waitForFunction(fn, arg, options)：arg 排第二，options 排第三。
+  // 写成 waitForFunction(fn, {timeout}) 会把 options 当成传给页面的 arg，超时永远走默认 30s。
   try {
-    await page.waitForFunction(() => window.__ready === true || !!window.__bootFailed, { timeout: 30000 });
+    await page.waitForFunction(() => window.__ready === true || !!window.__bootFailed, null, { timeout: 30000 });
   } catch (e) { ready = false; }
   const bootFailed = ready ? await page.evaluate(() => window.__bootFailed || null) : null;
 
@@ -379,7 +405,9 @@ function median(a) {
     console.error('✗ 渲染契约没就绪：需要 window.__ready = true 且 window.__seek 是函数。');
     if (bootFailed) console.error('  页面自报启动失败：' + bootFailed);
     console.error('  参考 assets/animation-skeleton.html 的「渲染契约」段。');
+    console.error(`  加载方式：${server ? 'http' : 'file://'}。若页面用了 ESM / fetch，别加 --no-serve。`);
     await browser.close();
+    if (server) { try { await server.close(); } catch (e) { /* 忽略 */ } }
     process.exit(1);
   }
   console.log('  [OK] __seek 契约就绪');
@@ -403,21 +431,21 @@ function median(a) {
 
   /* 截图在 CDP 层就缩放（Page.captureScreenshot 的 clip.scale）：
      1920×1080 的 PNG 一张 1MB 上下，传 30 张要 30MB；缩到 480 宽后只剩几十 KB。
-     不行就退回整尺寸截图（helper 里再缩放，只是慢一点）。 */
-  let cdp = null;
-  try { cdp = await page.context().newCDPSession(page); } catch (e) { cdp = null; }
+     不行就退回整尺寸截图（helper 里再缩放，只是慢一点）。
+     CDP 会话绑在 page 上，所以做成参数 —— 冷启动页要用另一条。 */
+  const newCdp = async (pg) => { try { return await pg.context().newCDPSession(pg); } catch (e) { return null; } };
 
-  const grabPng = async () => {
-    if (cdp) {
+  const grabPng = async (pg, cdpSess) => {
+    if (cdpSess) {
       try {
-        const r = await cdp.send('Page.captureScreenshot', {
+        const r = await cdpSess.send('Page.captureScreenshot', {
           format: 'png',
           clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT, scale: SCALE_W / WIDTH },
         });
         if (r && r.data) return r.data;
       } catch (e) { /* 落到整尺寸 */ }
     }
-    const buf = await page.screenshot({ clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT } });
+    const buf = await pg.screenshot({ clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT } });
     return buf.toString('base64');
   };
 
@@ -432,30 +460,69 @@ function median(a) {
     console.log(`  ⚠ 采样间隔 ${spacing.toFixed(2)}s 偏大，跳变可能误报。建议 --samples=${Math.min(600, Math.ceil((lt1 - lt0) / 0.1))}（或提高 --fps）覆盖到 ≤0.1s`);
   }
 
-  const shot = async (t) => {
+  const makeShot = (pg, cdpSess) => async (t) => {
     const ms0 = Date.now();
-    const boxes = await page.evaluate(captureFrame, [t, SETTLE]);
+    const boxes = await pg.evaluate(captureFrame, [t, SETTLE]);
     const ms = Date.now() - ms0;
-    const b64 = await grabPng();
+    const b64 = await grabPng(pg, cdpSess);
     const idx = await helper.evaluate(b => window.addFrame(b), b64);
     return { ms, boxes, idx, t };
   };
+  const shot = makeShot(page, await newCdp(page));
 
-  // 冷启动帧先取：页面上还没 seek 过，用来验确定性
-  const cold = await shot(ts[ts.length - 1]);
+  /* 确定性采样点：首 / 中 / 末（去重）。
+     以前只在最后一个采样时刻验一次 —— 随机数恰好在那帧稳定就漏检了，这是真盲区。
+     分散到多个时刻，混在中间的随机性才藏不住。 */
+  const detIdx = [...new Set(n >= 3 ? [0, Math.floor((n - 1) / 2), n - 1] : [n - 1])];
+  const detTs = detIdx.map(i => ts[i]);
 
   const frames = [], costMs = [], boxSets = [];
   for (const t of ts) {
     const r = await shot(t);
     frames.push(r.idx); costMs.push(r.ms); boxSets.push(r.boxes);
   }
-  const again = await shot(ts[ts.length - 1]);
+  // 热比对：同一个页面 seek 回去再截 —— 验「累积状态」污染（改了全局变量没复原之类）
+  const hotShots = [];
+  for (const t of detTs) hotShots.push(await shot(t));
+
+  /* 冷比对：全新页面（JS 状态归零）seek 到同样的时刻 —— 验「随机初始化」不一致。
+     只多一次页面加载，比逐点重开页面便宜得多。 */
+  const coldShots = [];
+  {
+    const cp = await context.newPage();
+    cp.on('pageerror', e => { const s = String(e && e.message || e); errors.push('pageerror: ' + s); pageErrors.push(s); });
+    cp.on('console', m => {
+      if (m.type() === 'error') { errors.push('console.error: ' + m.text()); pageErrors.push(m.text()); }
+      else if (m.type() === 'warning') warns.push(m.text());
+    });
+    await cp.goto(targetUrl, { waitUntil: 'load', timeout: 60000 });
+    await cp.waitForFunction(() => window.__ready === true || !!window.__bootFailed, null, { timeout: 30000 });
+    const bf = await cp.evaluate(() => window.__bootFailed || null);
+    if (bf) errors.push('cold page __bootFailed: ' + bf);
+    if (!(await cp.evaluate(() => typeof window.__seek === 'function'))) {
+      console.error('✗ 冷启动页没有 window.__seek，确定性验不了。');
+      await browser.close();
+      if (server) { try { await server.close(); } catch (e) { /* 忽略 */ } }
+      process.exit(1);
+    }
+    const shotCold = makeShot(cp, await newCdp(cp));
+    for (const t of detTs) coldShots.push(await shotCold(t));
+    await cp.close();
+  }
 
   /* 指标 */
   const diffs = [];
   for (let i = 1; i < frames.length; i++) diffs.push(await helper.evaluate(([a, b]) => window.diffPct(a, b), [frames[i - 1], frames[i]]));
-  const detHot  = await helper.evaluate(([a, b]) => window.maxDiff(a, b), [frames[frames.length - 1], again.idx]);
-  const detCold = await helper.evaluate(([a, b]) => window.maxDiff(a, b), [frames[frames.length - 1], cold.idx]);
+  let detMax = 0;
+  const detBad = [];
+  for (let k = 0; k < detTs.length; k++) {
+    const i = detIdx[k];
+    const dH = await helper.evaluate(([a, b]) => window.maxDiff(a, b), [frames[i], hotShots[k].idx]);
+    const dC = await helper.evaluate(([a, b]) => window.maxDiff(a, b), [frames[i], coldShots[k].idx]);
+    const d = Math.max(dH || 0, dC || 0);
+    if (d > detMax) detMax = d;
+    if (d > 0) detBad.push({ t: +detTs[k].toFixed(3), hot: dH, cold: dC });
+  }
   const blanks = [];
   for (const idx of frames) blanks.push(await helper.evaluate(i => window.nearBlank(i), idx));
 
@@ -497,8 +564,11 @@ function median(a) {
       spikes_at: spikes,
       ms_mean: +mean(costMs).toFixed(1),
       ms_max: Math.max(...costMs),
-      deterministic: detHot === 0 && detCold === 0,
-      det_maxdiff: Math.max(detHot || 0, detCold || 0),
+      deterministic: detMax === 0,
+      det_maxdiff: detMax,
+      det_points: detTs.length,
+      det_checked_at: detTs.map(t => +t.toFixed(3)),
+      det_failed_at: detBad,
     },
     framing: framing.concat(blanksRun).sort((a, b) => a.lt[0] - b.lt[0]),
     text_boxes_tracked: boxSets.reduce((a, b) => a + b.length, 0),
@@ -516,13 +586,19 @@ function median(a) {
     fs.writeFileSync(heatPath, Buffer.from(heatUrl.split(',')[1], 'base64'));
   }
   await browser.close();
+  if (server) { try { await server.close(); } catch (e) { /* 忽略 */ } }
 
   const m = report.metrics;
   const verdict = [];
   if (stillRunS >= 3) verdict.push(`最长静止 ${stillRunS}s：画面连续 ${stillRunS} 秒完全不动。有意定格（数据图待读）可以忽略；否则补一点持续微动（慢速光扫/呼吸）或把片子剪短`);
   if (m.motion_pct > 8) verdict.push('运动偏大：' + m.motion_pct + '%（>8% 可能太闹）');
   if (spikes.length) verdict.push('有跳变：' + spikes.slice(0, 5).join(', ') + 's —— 去看那几帧再判断');
-  if (!m.deterministic) verdict.push('不确定：两次渲同一时刻有像素差（max ' + m.det_maxdiff + '）—— 画面里混进了随机数/Date/时间累积状态');
+  if (!m.deterministic) {
+    const bad = m.det_failed_at || [];
+    const at = bad.map(x => x.t + 's').join(', ');
+    verdict.push('不确定：验了 ' + m.det_points + ' 个时刻，' + bad.length + ' 处两次渲有像素差'
+      + (at ? '（' + at + '）' : '') + '（max ' + m.det_maxdiff + '）—— 画面里混进了随机数/Date/时间累积状态');
+  }
   if (report.framing.length) verdict.push('框景线索 ' + report.framing.length + ' 条 —— 逐条看时间点');
   if (errors.length) verdict.push('页面报错 ' + errors.length + ' 条');
 
