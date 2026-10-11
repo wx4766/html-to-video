@@ -112,7 +112,7 @@ function main() {
 
 /**
  * 输出必须做 shell 单引号转义再交给 eval。
- * 缓存路径常含撇号（如 C:\Users\wang'xin\...），裸输出会让 eval 报
+ * 缓存路径常含撇号（Windows 用户名带撇号时，如 C:\Users\o'brien\...），裸输出会让 eval 报
  * "unexpected EOF while looking for matching `'" —— 踩过。
  */
 function shquote(v) {
