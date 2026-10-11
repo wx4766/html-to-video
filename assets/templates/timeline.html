@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 时间线</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script>
+/* =====================================================================
+   模板 ⑤  ·  竖向时间线 / 流程步骤
+   ---------------------------------------------------------------------
+   用途：发展历程、项目排期、操作步骤。中轴自上而下生长，
+   节点逐个点亮。改 CFG.items 即可。
+
+   出片：
+     bash ../render.sh timeline.html --duration=7 --fps=60
+   ===================================================================== */
+const CFG = {
+  title: '项目里程碑',
+  sub:   '从立项到上线',
+  items: [                     // ← 改这里：3–6 条最好看
+    { date: '2026.03', title: '立项',   desc: '需求评审通过，确定范围与验收标准' },
+    { date: '2026.05', title: '原型',   desc: '交互原型与视觉方向定稿' },
+    { date: '2026.07', title: '开发',   desc: '核心链路打通，进入联调' },
+    { date: '2026.09', title: '上线',   desc: '灰度放量，指标达标' },
+  ],
+  dur:  7.0,
+  accent: '#FFB86B',
+  ink:    '#F4F7FC',
+  bg:     '#080A10',
+};
+/* ===================================================================== */
+
+const W = 1920, H = 1080, DUR = CFG.dur;
+const cv = document.getElementById('stage');
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outCubic = t => 1 - Math.pow(1 - t, 3);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };
+
+/* 中轴范围：底部留白 >15%，末条说明不落进烧录字幕带 */
+const SPINE_X = 470, SPINE_Y0 = 280, SPINE_Y1 = 840;
+const N = CFG.items.length;
+const STEP = N > 1 ? (SPINE_Y1 - SPINE_Y0) / (N - 1) : 0;
+const nodeY = i => SPINE_Y0 + i * STEP;
+
+function drawFrame(T) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  const bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, CFG.bg);
+  bg.addColorStop(1, '#0D111B');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+
+  /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200) - 600;
+  const sweep = g.createLinearGradient(scx - 620, 0, scx + 620, H);
+  sweep.addColorStop(0, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = sweep;
+  g.fillRect(0, 0, W, H);
+
+  /* 标题 */
+  const tiP = outCubic(win(T, 0.10, 0.75));
+  g.save();
+  g.globalAlpha = tiP;
+  g.fillStyle = CFG.ink;
+  g.font = `700 62px ${SANS}`;
+  g.fillText(CFG.title, 160, 168);
+  g.globalAlpha = tiP * 0.55;
+  g.font = `400 30px ${SANS}`;
+  g.fillText(CFG.sub, 160, 226);
+  g.restore();
+
+  /* 中轴底轨 + 生长中的实轴 */
+  const grow = smooth(win(T, 0.55, 1.55 + N * 0.62));
+  g.save();
+  g.globalAlpha = 0.12;
+  g.fillStyle = CFG.ink;
+  g.fillRect(SPINE_X - 2, SPINE_Y0, 4, SPINE_Y1 - SPINE_Y0);
+  g.globalAlpha = 1;
+  const gh = (SPINE_Y1 - SPINE_Y0 + 30) * grow;
+  const grad = g.createLinearGradient(0, SPINE_Y0, 0, SPINE_Y0 + gh);
+  grad.addColorStop(0, 'rgba(255,184,107,0.95)');
+  grad.addColorStop(1, 'rgba(255,138,61,0.75)');
+  g.fillStyle = grad;
+  g.fillRect(SPINE_X - 2, SPINE_Y0, 4, gh);
+  g.restore();
+
+  /* 节点 */
+  CFG.items.forEach((it, i) => {
+    const y = nodeY(i);
+    const reach = clamp((grow * (SPINE_Y1 - SPINE_Y0 + 30) - (y - SPINE_Y0)) / 40, 0, 1); // 轴到没到
+    const on = outExpo(reach);
+    const contentP = outExpo(clamp((T - (1.15 + i * 0.42)) / 0.65, 0, 1));
+
+    /* 日期（轴左侧，右对齐） */
+    g.save();
+    g.globalAlpha = contentP * 0.62;
+    g.fillStyle = CFG.ink;
+    g.font = `500 30px ${MONO}`;
+    g.textAlign = 'right';
+    g.fillText(it.date, SPINE_X - 76, y + 11);
+    g.restore();
+
+    /* 连接短横 */
+    g.save();
+    g.globalAlpha = 0.35 * on;
+    g.fillStyle = CFG.accent;
+    g.fillRect(SPINE_X + 20, y - 1.5, 34 * clamp(contentP * 1.5, 0, 1), 3);
+    g.restore();
+
+    /* 节点圆点：外圈光晕 + 内芯 */
+    const r = lerp(7, 13, on);
+    g.save();
+    if (on > 0.05) {
+      const halo = g.createRadialGradient(SPINE_X, y, 0, SPINE_X, y, 52 * on);
+      halo.addColorStop(0, 'rgba(255,184,107,0.42)');
+      halo.addColorStop(1, 'rgba(255,184,107,0)');
+      g.fillStyle = halo;
+      g.beginPath(); g.arc(SPINE_X, y, 52 * on, 0, Math.PI * 2); g.fill();
+    }
+    g.fillStyle = on > 0.5 ? CFG.accent : 'rgba(244,247,252,0.22)';
+    g.beginPath(); g.arc(SPINE_X, y, r, 0, Math.PI * 2); g.fill();
+    if (on > 0.5) {
+      g.fillStyle = CFG.bg;
+      g.beginPath(); g.arc(SPINE_X, y, r * 0.42, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+
+    /* 标题 + 说明 */
+    const tx = SPINE_X + 76 + (1 - contentP) * 24;
+    g.save();
+    g.globalAlpha = contentP;
+    g.fillStyle = CFG.ink;
+    g.font = `600 46px ${SANS}`;
+    g.fillText(it.title, tx, y - 4);
+    g.globalAlpha = contentP * 0.55;
+    g.font = `400 30px ${SANS}`;
+    g.fillText(it.desc, tx, y + 52);
+    g.restore();
+  });
+}
+
+/* ---------- 渲染契约：这段不要改 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

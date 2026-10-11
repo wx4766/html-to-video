@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>动画骨架</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  /* 画布必须正好铺满视口左上角——渲染器按 (0,0,W,H) 裁剪截图 */
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script>
+/* =========================================================
+   逐帧动画骨架
+   铁律：每一帧画面 = 时间 t 的纯函数。不依赖任何"上一帧"状态。
+   这样任何时刻都能被精确重现（同输入同输出）。
+   ========================================================= */
+
+const W = 1920, H = 1080;   // 必须与 <canvas> 的 width/height 一致
+const DUR = 10.0;           // 动画时长（秒），渲染时 --duration 要与之一致
+const FPS = 60;             // 参考值，渲染器自行决定实际截帧率
+
+const cv = document.getElementById('stage');
+const g  = cv.getContext('2d');
+
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+/* ---------- 小工具 ---------- */
+/* 想要更专业的动效（弹簧 / 拍号 / 错开入场 / manim 缓动），用同级的 lib/motion.js：
+     <script src="lib/motion.js"></script>
+   然后 const p = MO.expoOut(MO.seg(t, 0.3, 1.4));
+   下面这几个是最常用的，够简单片子用。 */
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+const lerp  = (a,b,t) => a+(b-a)*t;
+const outCubic = t => 1-Math.pow(1-t,3);
+const inOut    = t => t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+const outExpo  = t => t===1 ? 1 : 1-Math.pow(2,-10*t);
+/** 时间窗：t 在 [a,b] 内返回 0→1 线性进度，用来排"进入/退出" */
+const win = (t,a,b) => clamp((t-a)/(b-a), 0, 1);
+
+/* ---------- 主绘制：把 t 时刻的完整画面画出来 ---------- */
+function drawFrame(T){
+  g.setTransform(1,0,0,1,0,0);
+  g.globalAlpha = 1;
+
+  // 底色
+  g.fillStyle = '#0B0E14';
+  g.fillRect(0,0,W,H);
+
+  // 全局出入场（开头淡入、结尾淡出）
+  const master = Math.min(win(T, 0, 0.5), 1 - win(T, DUR-0.5, DUR-0.02));
+  if (master <= 0) return;
+  g.globalAlpha = master;
+
+  /* ------- 在这里堆你的画面 ------- */
+
+  // 示例：一个按 expoOut 弹出的方块
+  const e = outExpo(win(T, 0.3, 1.4));
+  const size = lerp(0, 260, e);
+  g.fillStyle = '#FFB86B';
+  g.fillRect(W/2 - size/2, H/2 - size/2, size, size);
+
+  // 示例：一段文字
+  g.globalAlpha *= win(T, 0.9, 1.8);
+  g.fillStyle = '#F4F7FC';
+  g.font = `700 64px ${SANS}`;
+  g.textAlign = 'center';
+  g.fillText('把代码变成画面', W/2, H/2 + 220);
+
+  // 示例：右下角时间码
+  g.globalAlpha = 0.5;
+  g.fillStyle = '#F4F7FC';
+  g.font = `500 24px ${MONO}`;
+  g.textAlign = 'right';
+  g.fillText('t = ' + T.toFixed(3) + 's', W-64, H-56);
+
+  /* ------- 画面结束 ------- */
+}
+
+/* ---------- 渲染契约：不要改这段 ---------- */
+
+function renderAt(t){
+  drawFrame(clamp(t, 0, DUR - 0.001));   // 收尾留 1ms，保证末帧状态还在
+}
+
+if (typeof window !== 'undefined'){
+  window.__seek = renderAt;
+
+  if (window.__seekRender){
+    // 冻结时钟：完全由外部 seek 推帧，确定性输出
+    renderAt(0);
+    window.__ready = true;
+  } else {
+    // 浏览器预览：自驱循环播放（点击可暂停）
+    let cur = 0, last = null, playing = true;
+    function tick(now){
+      if (last === null) last = now;
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (playing) cur = (cur + dt) % DUR;
+      renderAt(cur);
+      requestAnimationFrame(tick);
+    }
+    document.addEventListener('click', () => { playing = !playing; });
+    window.__ready = true;
+    requestAnimationFrame(tick);
+  }
+}
+</script>
+</body>
+</html>

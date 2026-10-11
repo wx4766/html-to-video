@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 折线趋势</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script>
+/* =====================================================================
+   模板 ③  ·  折线趋势图
+   ---------------------------------------------------------------------
+   用途：月度/年度趋势、增长曲线。折线从左往右生长，数据点依次亮起，
+   末点自动出数值浮标。改 CFG.x / CFG.y 即可。
+
+   出片：
+     bash ../render.sh line-chart.html --duration=8 --fps=60
+   ===================================================================== */
+const CFG = {
+  title: '月活跃用户趋势',
+  sub:   '单位：万人',
+  x: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
+  y: [42, 48, 45, 58, 66, 63, 78, 88, 84, 96, 108, 121],
+  yTicks: 5,                    // 纵轴刻度线数量
+  note: '数据来源：示例数据，替换成你自己的',
+  dur:  8.0,
+  accent: '#FFB86B',
+  line:   '#5FE0C0',
+  ink:    '#F4F7FC',
+  bg:     '#080A10',
+};
+/* ===================================================================== */
+
+const W = 1920, H = 1080, DUR = CFG.dur;
+const cv = document.getElementById('stage');
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outCubic = t => 1 - Math.pow(1 - t, 3);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };
+
+/* 绘图区（底部留白 >15%，避免横轴标签落进烧录字幕带） */
+const PL = 250, PR = 1720, PT = 300, PB = 790;
+const YMAX = Math.ceil(Math.max(...CFG.y) / 20) * 20;      // 纵轴上限取整到 20
+
+const PX = i => PL + (PR - PL) * (i / (CFG.x.length - 1));
+const PY = v => PB - (PB - PT) * (v / YMAX);
+
+function drawFrame(T) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  const bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, CFG.bg);
+  bg.addColorStop(1, '#0D111B');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+
+  /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200) - 600;
+  const sweep = g.createLinearGradient(scx - 620, 0, scx + 620, H);
+  sweep.addColorStop(0, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = sweep;
+  g.fillRect(0, 0, W, H);
+
+  /* 标题 */
+  const tiP = outCubic(win(T, 0.10, 0.75));
+  g.save();
+  g.globalAlpha = tiP;
+  g.fillStyle = CFG.ink;
+  g.font = `700 62px ${SANS}`;
+  g.fillText(CFG.title, 160, 168);
+  g.globalAlpha = tiP * 0.55;
+  g.font = `400 30px ${SANS}`;
+  g.font = `400 30px ${SANS}`;
+  g.fillText(CFG.sub, 160, 226);
+  g.restore();
+
+  /* 网格 + 纵轴刻度 */
+  const gridP = outCubic(win(T, 0.35, 1.05));
+  g.save();
+  g.font = `400 26px ${MONO}`;
+  g.textAlign = 'right';
+  for (let k = 0; k <= CFG.yTicks; k++) {
+    const v = YMAX * k / CFG.yTicks, y = PY(v);
+    g.globalAlpha = 0.10 * gridP;
+    g.fillStyle = CFG.ink;
+    g.fillRect(PL, y, PR - PL, 1);
+    g.globalAlpha = 0.42 * gridP;
+    g.fillText(String(Math.round(v)), PL - 28, y + 9);
+  }
+  /* 横轴标签 */
+  g.textAlign = 'center';
+  g.font = `400 26px ${SANS}`;
+  CFG.x.forEach((lab, i) => {
+    const p = outCubic(win(T, 0.55 + i * 0.045, 0.95 + i * 0.045));
+    if (p <= 0) return;
+    g.globalAlpha = 0.5 * p;
+    g.fillStyle = CFG.ink;
+    g.fillText(lab, PX(i), PB + 56 + (1 - p) * 10);
+  });
+  g.restore();
+
+  /* 折线生长进度：0 → 1 对应横轴从左到右 */
+  const grow = smooth(win(T, 0.80, 3.60));
+  const head = grow * (CFG.x.length - 1);
+
+  /* 面积填充 */
+  if (head > 0.01) {
+    g.save();
+    g.beginPath();
+    g.moveTo(PX(0), PY(CFG.y[0]));
+    for (let i = 1; i < CFG.x.length; i++) {
+      if (i <= head) { g.lineTo(PX(i), PY(CFG.y[i])); }
+      else {
+        const f = head - Math.floor(head), i0 = Math.floor(head);
+        if (i0 + 1 < CFG.x.length) {
+          g.lineTo(lerp(PX(i0), PX(i0 + 1), f), lerp(PY(CFG.y[i0]), PY(CFG.y[i0 + 1]), f));
+        }
+        break;
+      }
+    }
+    const last = Math.min(head, CFG.x.length - 1);
+    const ix = Math.floor(last), fx = last - ix;
+    const hx = ix + 1 < CFG.x.length ? lerp(PX(ix), PX(ix + 1), fx) : PX(ix);
+    const hy = ix + 1 < CFG.y.length ? lerp(PY(CFG.y[ix]), PY(CFG.y[ix + 1]), fx) : PY(CFG.y[ix]);
+    g.lineTo(hx, PB);
+    g.lineTo(PX(0), PB);
+    g.closePath();
+    const grad = g.createLinearGradient(0, PT, 0, PB);
+    grad.addColorStop(0, 'rgba(95,224,192,0.26)');
+    grad.addColorStop(1, 'rgba(95,224,192,0)');
+    g.fillStyle = grad;
+    g.fill();
+    g.restore();
+
+    /* 折线 */
+    g.save();
+    g.strokeStyle = CFG.line;
+    g.lineWidth = 5;
+    g.lineJoin = 'round';
+    g.lineCap = 'round';
+    g.shadowColor = 'rgba(95,224,192,0.55)';
+    g.shadowBlur = 18;
+    g.beginPath();
+    g.moveTo(PX(0), PY(CFG.y[0]));
+    for (let i = 1; i < CFG.x.length; i++) {
+      if (i <= head) g.lineTo(PX(i), PY(CFG.y[i]));
+      else {
+        const ix = Math.floor(head), f = head - ix;
+        if (ix + 1 < CFG.x.length) g.lineTo(lerp(PX(ix), PX(ix + 1), f), lerp(PY(CFG.y[ix]), PY(CFG.y[ix + 1]), f));
+        break;
+      }
+    }
+    g.stroke();
+    g.restore();
+  }
+
+  /* 数据点：线头过了才弹出来 */
+  CFG.y.forEach((v, i) => {
+    const p = outExpo(clamp((head - i) / 0.35, 0, 1));
+    if (p <= 0) return;
+    const r = lerp(0, 9, p);
+    g.save();
+    g.globalAlpha = p;
+    g.fillStyle = CFG.bg;
+    g.beginPath(); g.arc(PX(i), PY(v), r, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = CFG.line; g.lineWidth = 4;
+    g.beginPath(); g.arc(PX(i), PY(v), r, 0, Math.PI * 2); g.stroke();
+    g.restore();
+  });
+
+  /* 末点浮标 */
+  const lastI = CFG.x.length - 1;
+  const tagP = outExpo(win(T, 4.05, 4.75));
+  if (tagP > 0) {
+    const x = PX(lastI), y = PY(CFG.y[lastI]);
+    const label = String(CFG.y[lastI]);
+    g.save();
+    g.globalAlpha = tagP;
+    g.font = `700 34px ${MONO}`;
+    const tw = g.measureText(label).width;
+    const bx = x - tw - 74, by = y - 66;
+    g.fillStyle = CFG.accent;
+    g.beginPath();
+    if (g.roundRect) g.roundRect(bx, by, tw + 48, 58, 12); else g.rect(bx, by, tw + 48, 58);
+    g.fill();
+    g.fillStyle = '#1A1206';
+    g.fillText(label, bx + 24, by + 41);
+    /* 小尾巴 */
+    g.fillStyle = CFG.accent;
+    g.beginPath();
+    g.moveTo(x - 30, by + 58); g.lineTo(x - 12, by + 58); g.lineTo(x - 6, y - 4);
+    g.closePath(); g.fill();
+    g.restore();
+  }
+
+  /* 脚注 */
+  const noP = outCubic(win(T, 4.6, 5.3));
+  if (noP > 0) {
+    g.save();
+    g.globalAlpha = noP * 0.42;
+    g.fillStyle = CFG.ink;
+    g.font = `400 24px ${SANS}`;
+    g.fillText(CFG.note, 160, H - 190);
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约：这段不要改 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

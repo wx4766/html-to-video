@@ -1,0 +1,17 @@
+# 渲染中间产物与输出，不入库
+.seek-tmp-*/
+*.stills/
+qa/
+out/
+*.mp4
+*.mov
+palette.png
+
+# 例外：docs/ 里的示例成片要进仓库（README 内联动图 + 1080p 原片）
+!docs/demo-*.mp4
+
+# 发布用凭证与本地配置，绝不入库
+_gh_token.txt
+_gh_*.log
+_gh_cookies.txt
+oss-release.json
