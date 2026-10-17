@@ -1,0 +1,60 @@
+name: 功能 / 模板需求
+description: 想要新模板、新能力，或某处用着不顺手
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提需求时最有说服力的是**场景**：「我要给 X 类视频做 Y 效果，现在得 Z 才能做到」。
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 类型
+      options:
+        - 新模板（想要某种片子直接改字出片）
+        - 渲染器能力（参数、编码、音频、断点续渲……）
+        - 质量门（qa.js 的判据、报告、误报）
+        - 文档 / 上手体验
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: scene
+    attributes:
+      label: 使用场景
+      description: 你在做什么视频？卡在哪一步？
+      placeholder: |
+        每周要出 5 条竖屏科普短视频，每条 3 个数据点。
+        现在用 number-counter 排三个数字得改代码，希望有个「多 KPI 网格」模板。
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: 现在怎么做的（凑合方案）
+      description: 你现在是怎么绕过去的？这一步能说明真实痛点有多痛。
+      placeholder: 复制三份模板，手工调 y 坐标，每次改都得重算
+    validations:
+      required: false
+
+  - type: textarea
+    id: ideal
+    attributes:
+      label: 你希望的用法
+      description: 如果能像这样写就好了 —— 贴伪代码或命令都行
+      render: js
+    validations:
+      required: false
+
+  - type: textarea
+    id: why
+    attributes:
+      label: 为什么这件事应该由这个项目做
+      description: |
+        这个项目刻意不做的事：AI 生成视频、实拍氛围镜头、镜头语言/调色引擎。
+        如果你的需求落在这些范围里，说清楚为什么现有分工不够用。
+    validations:
+      required: false

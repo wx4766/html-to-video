@@ -1,3 +1,6 @@
+# 依赖（package-lock.json 要入库，CI 用它保证可复现）
+node_modules/
+
 # 渲染中间产物与输出，不入库
 .seek-tmp-*/
 *.stills/
@@ -12,6 +15,6 @@ palette.png
 
 # 发布用凭证与本地配置，绝不入库
 _gh_token.txt
-_gh_*.log
-_gh_cookies.txt
+_gh_*
 oss-release.json
+RELEASE.md

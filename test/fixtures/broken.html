@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>测试对照组 · 故意做坏的动画</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<script>
+/* 这是 qa.js 的**对照组**：把六类问题一次全做出来，
+   用来证明检测器真的抓得到，而不是永远只会说「一切正常」。
+   配合 test/qa-detects.test.mjs 使用。不要照这个写动画。 */
+
+const W = 1920, H = 1080, DUR = 6.0;
+const g = document.getElementById('stage').getContext('2d');
+
+function drawFrame(T) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.fillStyle = '#0B0E14';
+  g.fillRect(0, 0, W, H);
+
+  /* 缺陷⑤：3–4 秒之间是空场（近空白） */
+  if (T > 3.0 && T < 4.0) return;
+
+  /* 缺陷①：不确定性 —— 混进 Math.random()，两次渲同一时刻不一致 */
+  const jitter = Math.random() * 24;
+
+  g.fillStyle = '#F4F7FC';
+  g.font = '700 90px "Microsoft YaHei", "PingFang SC", sans-serif';
+  g.textAlign = 'left';
+
+  /* 缺陷②：半截字 —— baseline 40，字形上缘被画面上边切掉，全程存在 */
+  g.fillText('这行字被画面上边缘切掉了一半', 600, 40);
+
+  /* 缺陷③：叠字 —— 两串不同的字互相压住，全程存在 */
+  g.fillText('重复的文字', 700, 600 + jitter);
+  g.fillText('压上来的另一串', 760, 630 + jitter);
+
+  /* 缺陷④：进字幕带 —— 文字落在画面底部 15% 内，烧录字幕会盖住 */
+  g.fillText('落在底部字幕带里的字', 700, H - 60);
+
+  /* 陪衬：一个缓慢移动的方块，让画面不是全静止 */
+  g.fillStyle = '#FFB86B';
+  g.fillRect(200 + (T / DUR) * 1200, 850, 120, 40);
+}
+
+window.__seek = t => drawFrame(t);
+window.__ready = true;
+
+/* 缺陷⑥：页面报错 —— 渲染器与 QA 都应判失败 */
+console.error('对照组故意注入的报错：验证「报错即失败」是否真的生效');
+console.warn('对照组的一条 warn：不该判失败，但要在报告里列出来');
+
+drawFrame(0);
+</script>
+</body>
+</html>
