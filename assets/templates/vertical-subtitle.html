@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 竖屏字幕卡</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script>
+/* =====================================================================
+   模板 ⑤  ·  竖屏字幕卡（关键词高亮）
+   ---------------------------------------------------------------------
+   原生 9:16 设计，不是把横屏拉长。给短视频用：手机上一屏看一句，
+   句子里用 **两个星号** 包住的部分会高亮成强调色。
+
+   下方 30% 故意留空 —— 那里是平台 UI（进度条、昵称、按钮）和真人的位置，
+   字写进去会被盖住。
+
+   出片：
+     bash ../render.sh vertical-subtitle.html --duration=8 --fps=30 --width=1080 --height=1920
+   用字幕文件驱动：
+     bash ../render.sh vertical-subtitle.html --duration=8 --fps=30 --width=1080 --height=1920 --srt=voice.srt
+   ===================================================================== */
+const CFG = {
+  theme:  'neon',
+  tag:    '#代码做视频',
+  handle: '@wx4766',
+  lines: [
+    { start: 0.0, end: 2.4, text: '把**每一帧**写成时间的函数' },
+    { start: 2.4, end: 4.8, text: '同一份代码，每次渲出来**一模一样**' },
+    { start: 4.8, end: 7.0, text: '改文案只改**一行字**' },
+    { start: 7.0, end: 8.0, text: '这就是**确定性渲染**' },
+  ],
+  dur: 8.0,
+};
+/* ===================================================================== */
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+const VSY = PORTRAIT ? SF : SY;
+const DUR = CFG.dur;
+const TH = window.h2vTheme ? h2vTheme(CFG.theme) : { bg:'#06050E', bgAlt:'#0E0B20', ink:'#EAF2FF',
+  sub:'rgba(234,242,255,.58)', faint:'rgba(124,92,255,.22)', panel:'rgba(124,92,255,.09)',
+  accent:'#8B5CF6', accent2:'#22D3EE' };
+const TRANSPARENT = !!window.__transparent;
+
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };
+
+function allCues() {
+  const ext = window.__cues;
+  return Array.isArray(ext) && ext.length ? ext : CFG.lines;
+}
+function cueAt(t) {
+  const list = allCues();
+  for (let i = 0; i < list.length; i++) {
+    if (t >= list[i].start && t < list[i].end) return { cue: list[i], i, n: list.length };
+  }
+  let last = null;
+  for (let i = 0; i < list.length; i++) if (t >= list[i].start) last = { cue: list[i], i, n: list.length };
+  return last;
+}
+
+/* 把 **高亮** 拆成带标记的碎片，再按字符流排成行（中文没空格，只能逐字量宽） */
+function layoutRich(text, maxW) {
+  const parts = [];
+  const re = /\*\*(.+?)\*\*/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push({ t: text.slice(last, m.index), hi: false });
+    parts.push({ t: m[1], hi: true });
+    last = re.lastIndex;
+  }
+  if (last < text.length) parts.push({ t: text.slice(last), hi: false });
+
+  const lines = [[]];
+  let x = 0;
+  for (const p of parts) {
+    for (const ch of [...p.t]) {
+      const w = g.measureText(ch).width;
+      if (x + w > maxW && x > 0) { lines.push([]); x = 0; }
+      lines[lines.length - 1].push({ ch, hi: p.hi, w });
+      x += w;
+    }
+  }
+
+  /* 均衡换行 + 标点避头：
+     ① 逐字流式排出来的末行常常只剩两三个字（「把每一帧写成时间 / 的函数」），
+        中文排版里这叫孤行；按目标行数均分字符重排一次就匀了。
+     ② 均分不能硬切 —— 切点正好落在「，」前面时，逗号会被甩到下一行行首，
+        中文排版里这是硬伤（避头点规则）。所以切点要往前退，
+        退到行首不再是收尾标点、行尾不再是开头标点为止。
+     ③ 重排后每行必须仍在 maxW 内，超了就整体退回原排法：宁可难看，不许出框。 */
+  const NO_START = '，。、；：？！）】》」』’”·…—～,.;:?!)]}>%';
+  const NO_END = '（【《「『‘“([{<';
+
+  let rows = lines;
+  if (lines.length > 1) {
+    const flat = lines.flat();
+    const total = flat.length;
+    const nRows = lines.length;
+    const per = Math.ceil(total / nRows);
+
+    const bounds = [];
+    for (let i = 0; i <= nRows; i++) bounds.push(Math.min(total, i * per));
+    bounds[nRows] = total;
+
+    for (let k = 1; k < nRows; k++) {
+      /* ① 先试「标点悬挂」：行首若是收尾标点，把它提回上一行。
+            宽度够就直接提（相当于让标点挂在行末），这是中文排版的常规做法，
+            比把「代码」拆成「代 / 码」好看得多。 */
+      for (let guard = 0; guard < 4 && bounds[k] < bounds[k + 1]
+           && NO_START.indexOf(flat[bounds[k]].ch) >= 0; guard++) {
+        const upW = flat.slice(bounds[k - 1], bounds[k] + 1).reduce((a, c) => a + c.w, 0);
+        if (upW > maxW) break;
+        bounds[k]++;
+      }
+      /* ② 提不动（上一行已经排满）才退而求其次：切点往前挪一个字，
+            让行首不再是标点。宁可拆词，也不许标点打头。 */
+      for (let guard = 0; guard < 4 && bounds[k] > bounds[k - 1] + 1
+           && NO_START.indexOf(flat[bounds[k]].ch) >= 0; guard++) bounds[k]--;
+      for (let guard = 0; guard < 4 && bounds[k] > bounds[k - 1] + 1
+           && NO_END.indexOf(flat[bounds[k] - 1].ch) >= 0; guard++) bounds[k]--;
+      if (bounds[k] >= bounds[k + 1]) bounds[k] = bounds[k + 1] - 1;
+      for (let j = k + 1; j < nRows; j++) {
+        if (bounds[j] <= bounds[j - 1]) bounds[j] = bounds[j - 1] + 1;
+      }
+    }
+
+    const out = [];
+    for (let i = 0; i < nRows; i++) out.push(flat.slice(bounds[i], bounds[i + 1]));
+    const fits = out.every(l => l.length > 0 && l.reduce((a, c) => a + c.w, 0) <= maxW);
+    if (fits) rows = out;
+  }
+
+  return rows.map(ln => ({ chars: ln, w: ln.reduce((a, c) => a + c.w, 0) }));
+}
+
+function fitRich(text, basePx, maxW, maxLines) {
+  let px = basePx;
+  g.save();
+  for (let k = 0; k < 22; k++) {
+    g.font = `800 ${px}px ${SANS}`;
+    if (layoutRich(text, maxW).length <= maxLines) break;
+    px *= 0.93;
+  }
+  const lines = layoutRich(text, maxW);
+  g.restore();
+  return { px, lines };
+}
+
+function drawFrame(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  const hit = cueAt(t);
+  // 竖屏安全边距：左右各 8.5%，正文宽度 83%
+  const PAD = W * 0.085;
+  const MAXW = W - PAD * 2;
+
+  if (!TRANSPARENT) {
+    const bg = g.createLinearGradient(0, 0, W * 0.2, H);
+    bg.addColorStop(0, TH.bg);
+    bg.addColorStop(1, TH.bgAlt || TH.bg);
+    g.fillStyle = bg;
+    g.fillRect(0, 0, W, H);
+
+    // 顶部一团冷光，底部一团暖光：手机竖屏很吃这种上下对打的光
+    const g1 = g.createRadialGradient(W * 0.78, H * 0.12, 0, W * 0.78, H * 0.12, W * 0.85);
+    g1.addColorStop(0, 'rgba(34,211,238,0.13)');
+    g1.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = g1;
+    g.fillRect(0, 0, W, H);
+
+    const g2 = g.createRadialGradient(W * 0.16, H * 0.52, 0, W * 0.16, H * 0.52, W * 0.8);
+    g2.addColorStop(0, TH.glow || 'rgba(124,92,255,0.20)');
+    g2.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = g2;
+    g.fillRect(0, 0, W, H);
+  }
+
+  /* 话题标签：左上角胶囊 */
+  const tp = outExpo(win(t, 0.06, 0.52));
+  if (CFG.tag && tp > 0) {
+    const ty = H * 0.118;
+    const tPx = (PORTRAIT ? 27 : 26) * SF;
+    g.save();
+    g.font = `600 ${tPx}px ${SANS}`;
+    const tw = g.measureText(CFG.tag).width;
+    g.globalAlpha = tp * 0.9;
+    g.fillStyle = TH.panel;
+    const bh = tPx * 1.9, bw = tw + tPx * 2.1;
+    const bx = PAD, by = ty - tPx * 1.25;
+    g.beginPath();
+    const r = bh / 2;
+    g.moveTo(bx + r, by);
+    g.arcTo(bx + bw, by, bx + bw, by + bh, r);
+    g.arcTo(bx + bw, by + bh, bx, by + bh, r);
+    g.arcTo(bx, by + bh, bx, by, r);
+    g.arcTo(bx, by, bx + bw, by, r);
+    g.closePath();
+    g.fill();
+    g.fillStyle = TH.accent2 || TH.accent;
+    g.fillText(CFG.tag, bx + tPx * 1.05, ty);
+    g.restore();
+  }
+
+  /* 正文：关键词高亮 */
+  if (hit) {
+    const c = hit.cue;
+    const inP = outExpo(win(t, c.start, c.start + 0.34));
+    const outP = clamp((c.end - t) / 0.20, 0, 1);
+    const a = Math.min(inP, outP);
+    if (a > 0.001) {
+      const maxLines = PORTRAIT ? 4 : 3;
+      const basePx = (PORTRAIT ? 124 : 100) * SF;
+      const { px, lines } = fitRich(c.text, basePx, MAXW, maxLines);
+      const lineH = px * 1.38;
+      const blockH = lineH * lines.length;
+      // 文字块中心放在 42% 高度：下方 30% 要留给平台 UI 和人物
+      const y0 = H * 0.42 - blockH / 2 + px * 0.82;
+
+      lines.forEach((ln, li) => {
+        const lx = (W - ln.w) / 2;                       // 整行居中
+        const lp = outExpo(win(t, c.start + li * 0.06, c.start + 0.34 + li * 0.06));
+        let x = lx;
+        const y = y0 + li * lineH + (1 - lp) * 16 * SF;
+        g.save();
+        g.globalAlpha = a * clamp(lp, 0, 1);
+        g.font = `800 ${px}px ${SANS}`;
+        for (const ch of ln.chars) {
+          g.fillStyle = ch.hi ? TH.accent : TH.ink;
+          g.fillText(ch.ch, x, y);
+          x += ch.w;
+        }
+        // 高亮词下面画一道短线，比纯换色更「有分量」
+        if (ln.chars.some(ch => ch.hi)) {
+          let runStart = null, runW = 0, cx2 = lx;
+          for (const ch of ln.chars) {
+            if (ch.hi) { if (runStart === null) runStart = cx2; runW += ch.w; }
+            else if (runStart !== null) {
+              g.globalAlpha = a * clamp(lp, 0, 1) * 0.75;
+              g.fillStyle = TH.accent;
+              g.fillRect(runStart, y + px * 0.21, runW, 4 * SF);
+              runStart = null; runW = 0;
+            }
+            cx2 += ch.w;
+          }
+          if (runStart !== null) {
+            g.globalAlpha = a * clamp(lp, 0, 1) * 0.75;
+            g.fillStyle = TH.accent;
+            g.fillRect(runStart, y + px * 0.21, runW, 4 * SF);
+          }
+        }
+        g.restore();
+      });
+    }
+  }
+
+  /* 句序：底部小字，避开平台 UI 区（< 72% 高度） */
+  if (hit && hit.n > 1) {
+    g.save();
+    g.globalAlpha = 0.5;
+    g.fillStyle = TH.sub;
+    const nPx = 24 * SF;
+    g.font = `500 ${nPx}px ${SANS}`;
+    g.fillText(String(hit.i + 1).padStart(2, '0') + ' / ' + String(hit.n).padStart(2, '0'),
+      PAD, H * 0.700);
+    if (CFG.handle) {
+      g.textAlign = 'right';
+      g.fillText(CFG.handle, W - PAD, H * 0.700);
+      g.textAlign = 'left';
+    }
+    // 一条极细的分隔线，把正文区和「平台留白区」分开
+    g.globalAlpha = 0.28;
+    g.fillStyle = TH.faint;
+    g.fillRect(PAD, H * 0.712, MAXW * smooth(win(t, 0.2, 1.0)), 1 * SF);
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

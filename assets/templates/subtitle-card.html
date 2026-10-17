@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 逐句解说卡</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script>
+/* =====================================================================
+   模板 ④  ·  逐句解说卡
+   ---------------------------------------------------------------------
+   用途：一条解说音频配一张图，句子逐条换。最常见的口播视频形态。
+   一句话一个「卡片」，底部有分段进度，右上角有 02/04 计数。
+
+   两种驱动方式：
+     ① 自己写时间：改下面 CFG.lines 的 start / end（秒）
+     ② 用字幕文件驱动（推荐）：
+        bash ../render.sh subtitle.html --duration=8 --fps=30 --srt=voice.srt
+        渲染器会把当前句通过 window.__cue 传进来，CFG.lines 就不必手写时间
+
+   出片：
+     bash ../render.sh subtitle-card.html --duration=8 --fps=30
+     bash ../render.sh subtitle-card.html --duration=8 --fps=30 --width=1080 --height=1920
+   ===================================================================== */
+const CFG = {
+  theme:   'midnight',
+  chapter: '第一章 · 为什么用代码做视频',
+  lines: [
+    { start: 0.0, end: 2.2, text: '动画不再靠拖时间轴，而是一个函数：给它秒数，它返回这一帧。' },
+    { start: 2.2, end: 4.4, text: '浏览器逐帧截图，ffmpeg 编码，同一份代码每次渲出来都一样。' },
+    { start: 4.4, end: 6.6, text: '想改文案就改一行字，不用重新打开剪辑软件。' },
+    { start: 6.6, end: 8.0, text: '这就是 html-to-video 做的事。' },
+  ],
+  dur: 8.0,
+};
+/* ===================================================================== */
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+const VSY = PORTRAIT ? SF : SY;
+const FS = PORTRAIT ? 1.12 : 1;
+const DUR = CFG.dur;
+const TH = window.h2vTheme ? h2vTheme(CFG.theme) : { bg:'#0A0C12', bgAlt:'#121724', ink:'#F4F7FC',
+  sub:'rgba(244,247,252,.58)', faint:'rgba(244,247,252,.12)', panel:'rgba(255,255,255,.045)',
+  accent:'#FFB86B', accent2:'#7C9CFF' };
+const TRANSPARENT = !!window.__transparent;
+
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };
+
+/* 句子表：外部传入 __cues（渲染器 --srt 时注入）优先，否则用 CFG.lines */
+function allCues() {
+  const ext = window.__cues;
+  return Array.isArray(ext) && ext.length ? ext : CFG.lines;
+}
+function cueAt(t) {
+  const list = allCues();
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (t >= c.start && t < c.end) return { cue: c, i, n: list.length };
+  }
+  // 落在两句之间的空隙：算作前一句的尾巴，避免闪空
+  let last = null;
+  for (let i = 0; i < list.length; i++) if (t >= list[i].start) last = { cue: list[i], i, n: list.length };
+  return last;
+}
+
+/* 中文按字符量宽换行 —— 没有空格可断，逐字量最稳 */
+function wrapText(text, maxW, maxLines) {
+  const out = [];
+  let cur = '';
+  for (const ch of [...text]) {
+    if (cur && g.measureText(cur + ch).width > maxW) { out.push(cur); cur = ch; }
+    else cur += ch;
+  }
+  if (cur) out.push(cur);
+  if (out.length <= maxLines) return out;
+  const kept = out.slice(0, maxLines);
+  let last = kept[maxLines - 1];
+  while (last.length > 1 && g.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+  kept[maxLines - 1] = last + '…';
+  return kept;
+}
+
+/* 整段文字自适应：行数超了就缩字号，绝不静默出框 */
+function fitBlock(text, basePx, maxW, maxLines, weight) {
+  const fontOf = px => `${weight || 600} ${px}px ${SANS}`;
+  let px = basePx;
+  g.save();
+  for (let k = 0; k < 24; k++) {
+    g.font = fontOf(px);
+    if (wrapText(text, maxW, maxLines + 1).length <= maxLines) break;
+    px *= 0.94;
+  }
+  g.font = fontOf(px);
+  const lines = wrapText(text, maxW, maxLines);
+  g.restore();
+  return { px, lines };
+}
+
+function drawFrame(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  const hit = cueAt(t);
+  const PAD = PORTRAIT ? W * 0.085 : 150 * SX;
+  const MAXW = W - PAD * 2;
+
+  if (!TRANSPARENT) {
+    const bg = g.createLinearGradient(0, 0, W * 0.35, H);
+    bg.addColorStop(0, TH.bg);
+    bg.addColorStop(1, TH.bgAlt || TH.bg);
+    g.fillStyle = bg;
+    g.fillRect(0, 0, W, H);
+
+    // 巨型句号水印：给静止画面一点纵深，又不抢字
+    if (hit) {
+      const idx = String(hit.i + 1).padStart(2, '0');
+      g.save();
+      g.globalAlpha = 0.05;
+      g.fillStyle = TH.ink;
+      const wmPx = (PORTRAIT ? 420 : 520) * SF;
+      g.font = `700 ${wmPx}px ${MONO}`;
+      g.textAlign = 'right';
+      g.fillText(idx, W - PAD * 0.3, H * (PORTRAIT ? 0.665 : 0.73));
+      g.textAlign = 'left';
+      g.restore();
+    }
+
+    const glow = g.createRadialGradient(PAD, H * 0.55, 0, PAD, H * 0.55, W * 0.7);
+    glow.addColorStop(0, TH.glow || 'rgba(255,184,107,0.09)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = glow;
+    g.fillRect(0, 0, W, H);
+  }
+
+  /* 章节名 + 短线 */
+  const kp = outExpo(win(t, 0.05, 0.55));
+  if (CFG.chapter && kp > 0) {
+    const KICK_Y = PORTRAIT ? H * 0.255 : 268 * SY;
+    g.save();
+    g.globalAlpha = kp * 0.85;
+    g.fillStyle = TH.accent;
+    g.fillRect(PAD, KICK_Y - 22 * VSY, 34 * SF * smooth(win(t, 0.05, 0.45)), 3 * SF);
+    g.fillStyle = TH.sub;
+    const kPx = (PORTRAIT ? 25 : 24) * SF * FS;
+    g.font = `500 ${kPx}px ${SANS}`;
+    g.letterSpacing = `${4 * SF}px`;
+    g.fillText(CFG.chapter, PAD + 52 * SF, KICK_Y);
+    g.restore();
+  }
+
+  /* 正文：当前句 */
+  if (hit) {
+    const c = hit.cue;
+    const inP = outExpo(win(t, c.start, c.start + 0.38));
+    const outP = clamp((c.end - t) / 0.22, 0, 1);       // 末尾 0.22s 淡出
+    const a = Math.min(inP, outP);
+    if (a > 0.001) {
+      const maxLines = PORTRAIT ? 5 : 3;
+      const basePx = (PORTRAIT ? 62 : 66) * SF * FS;
+      const { px, lines } = fitBlock(c.text, basePx, MAXW, maxLines, 600);
+      const lineH = px * 1.52;
+      const blockH = lineH * lines.length;
+      // 竖屏略偏上（底部有字幕带/操作区），横屏居中偏上
+      const centerY = PORTRAIT ? H * 0.475 : H * 0.475;
+      const y0 = centerY - blockH / 2 + px * 0.78;
+
+      g.save();
+      g.globalAlpha = a;
+      g.fillStyle = TH.ink;
+      g.font = `600 ${px}px ${SANS}`;
+      g.textBaseline = 'alphabetic';
+      lines.forEach((ln, i) => {
+        // 逐行错开入场，比整块一起动更有节奏
+        const lp = outExpo(win(t, c.start + i * 0.05, c.start + 0.38 + i * 0.05));
+        g.globalAlpha = a * clamp(lp, 0, 1);
+        g.fillText(ln, PAD, y0 + i * lineH + (1 - lp) * 12 * SF);
+      });
+      g.restore();
+    }
+  }
+
+  /* 底部分段进度：一段一句，当前段按句内进度填充 */
+  if (hit && hit.n > 1) {
+    const list = allCues();
+    const BAR_Y = PORTRAIT ? H * 0.838 : 900 * SY;
+    const gap = 10 * SX;
+    const segW = (MAXW - gap * (hit.n - 1)) / hit.n;
+    const segH = 3 * SF;
+    const appear = smooth(win(t, 0.0, 0.55));
+    g.save();
+    g.globalAlpha = appear * 0.95;
+    for (let i = 0; i < hit.n; i++) {
+      const x = PAD + i * (segW + gap);
+      g.fillStyle = TH.faint;
+      g.fillRect(x, BAR_Y, segW, segH);
+      let fillW = 0;
+      if (i < hit.i) fillW = segW;
+      else if (i === hit.i) {
+        const c = list[i];
+        fillW = segW * smooth(clamp((t - c.start) / Math.max(0.001, c.end - c.start), 0, 1));
+      }
+      if (fillW > 0) {
+        g.fillStyle = TH.accent;
+        g.fillRect(x, BAR_Y, fillW, segH);
+      }
+    }
+    // 右上角计数
+    g.globalAlpha = appear * 0.7;
+    g.fillStyle = TH.sub;
+    const nPx = 22 * SF * FS;
+    g.font = `500 ${nPx}px ${MONO}`;
+    g.textAlign = 'right';
+    g.fillText(String(hit.i + 1).padStart(2, '0') + ' / ' + String(hit.n).padStart(2, '0'),
+      W - PAD, BAR_Y - 26 * VSY);
+    g.textAlign = 'left';
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

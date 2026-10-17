@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 步骤流程</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script>
+/* =====================================================================
+   模板 ③  ·  步骤流程动画
+   ---------------------------------------------------------------------
+   用途：讲清「一共几步、现在到哪一步」。步骤沿骨架线依次点亮，已完成的打勾。
+   横屏横向排布，竖屏自动改纵向。
+
+   出片：
+     bash ../render.sh flow-steps.html --duration=7 --fps=60
+     bash ../render.sh flow-steps.html --duration=7 --fps=60 --width=1080 --height=1920
+   ===================================================================== */
+const CFG = {
+  theme: 'midnight',
+  kicker: '渲染管线',
+  title: '从 HTML 到 MP4',
+  steps: [
+    { title: '写动画',   desc: 'Canvas · frame(t)' },
+    { title: '逐帧截图', desc: '无头 Chromium' },
+    { title: '编码',     desc: 'ffmpeg · H.264' },
+    { title: '验收',     desc: '六维自动检查' },
+    { title: '交付',     desc: 'MP4 / GIF / 透明层' },
+  ],
+  note: '每一步都能单独重跑，不必从头来',
+  dur: 7.0,
+};
+/* ===================================================================== */
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+const VSY = PORTRAIT ? SF : SY;        // 竖屏纵向度量跟字号走，不跟 H/1080 走
+const FS = PORTRAIT ? 1.16 : 1;
+const DUR = CFG.dur;
+const TH = window.h2vTheme ? h2vTheme(CFG.theme) : { bg:'#0A0C12', bgAlt:'#121724', ink:'#F4F7FC',
+  sub:'rgba(244,247,252,.58)', faint:'rgba(244,247,252,.12)', panel:'rgba(255,255,255,.045)',
+  accent:'#FFB86B', accent2:'#7C9CFF', good:'#4ADE80' };
+const TRANSPARENT = !!window.__transparent;
+
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const outBack = t => { const c = 1.7; t = t - 1; return 1 + (c + 1) * t * t * t + c * t * t; };
+const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };
+
+function fitOneLine(text, basePx, maxW, fontOf) {
+  g.save(); g.font = fontOf(basePx);
+  const w = g.measureText(text).width;
+  g.restore();
+  return w > maxW && w > 0 ? Math.max(basePx * 0.55, basePx * maxW / w) : basePx;
+}
+
+const N = CFG.steps.length;
+const PAD = PORTRAIT ? W * 0.085 : 130 * SX;
+
+/* 节点位置 */
+const POS = (() => {
+  const out = [];
+  if (PORTRAIT) {
+    const cx = PAD + 46 * SF;
+    const y0 = H * 0.275;
+    const gap = H * 0.112;
+    for (let i = 0; i < N; i++) out.push({ cx, cy: y0 + i * gap, textX: cx + 96 * SF });
+  } else {
+    const span = W - PAD * 2;
+    const cell = span / N;
+    for (let i = 0; i < N; i++) out.push({ cx: PAD + cell * (i + 0.5), cy: 536 * SY, textX: null });
+  }
+  return out;
+})();
+
+const R = PORTRAIT ? 46 * SF : 42 * SF;
+
+/* 第 i 步的入场时刻 */
+const STEP_T = i => 0.70 + i * 0.62;
+
+function drawCheck(cx, cy, s, color) {
+  g.save();
+  g.strokeStyle = color;
+  g.lineWidth = 4.5 * s;
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  g.beginPath();
+  g.moveTo(cx - 9 * s, cy + 1 * s);
+  g.lineTo(cx - 2.5 * s, cy + 8 * s);
+  g.lineTo(cx + 10 * s, cy - 7 * s);
+  g.stroke();
+  g.restore();
+}
+
+function drawFrame(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  if (!TRANSPARENT) {
+    const bg = g.createLinearGradient(0, 0, W * 0.4, H);
+    bg.addColorStop(0, TH.bg);
+    bg.addColorStop(1, TH.bgAlt || TH.bg);
+    g.fillStyle = bg;
+    g.fillRect(0, 0, W, H);
+
+    const glow = g.createRadialGradient(W * 0.5, H * 0.52, 0, W * 0.5, H * 0.52, W * 0.62);
+    glow.addColorStop(0, TH.glow || 'rgba(255,184,107,0.10)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = glow;
+    g.fillRect(0, 0, W, H);
+  }
+
+  /* 标题区 */
+  if (CFG.kicker) {
+    const p = outExpo(win(t, 0.10, 0.60));
+    g.save();
+    g.globalAlpha = p;
+    g.fillStyle = TH.sub;
+    const kPx = fitOneLine(CFG.kicker, 26 * SF * FS, W - PAD * 2, px => `500 ${px}px ${SANS}`);
+    g.font = `500 ${kPx}px ${SANS}`;
+    g.letterSpacing = `${8 * SF}px`;
+    g.fillText(CFG.kicker, PAD, PORTRAIT ? H * 0.135 : 196 * SY);
+    g.restore();
+  }
+  const tp = outExpo(win(t, 0.26, 0.98));
+  if (tp > 0) {
+    g.save();
+    g.globalAlpha = tp;
+    g.fillStyle = TH.ink;
+    const tPx = fitOneLine(CFG.title, 62 * SF * FS, W - PAD * 2, px => `700 ${px}px ${SANS}`);
+    g.font = `700 ${tPx}px ${SANS}`;
+    g.fillText(CFG.title, PAD + (1 - tp) * 16 * SX, PORTRAIT ? H * 0.175 : 286 * SY);
+    g.restore();
+  }
+
+  /* 骨架线：分段生长。竖屏是一整条竖线，横屏是相邻节点之间的横段 */
+  if (PORTRAIT) {
+    const totalP = smooth(win(t, STEP_T(0) + 0.30, STEP_T(N - 1) + 0.35));
+    if (totalP > 0) {
+      const yTop = POS[0].cy;
+      const yBot = POS[0].cy + (POS[N - 1].cy - POS[0].cy) * totalP;
+      g.save();
+      g.strokeStyle = TH.faint;
+      g.lineWidth = 2 * SF;
+      g.beginPath(); g.moveTo(POS[0].cx, yTop); g.lineTo(POS[0].cx, yBot); g.stroke();
+      g.restore();
+    }
+  } else {
+    for (let i = 0; i < N - 1; i++) {
+      const p = smooth(win(t, STEP_T(i) + 0.34, STEP_T(i) + 0.78));
+      if (p <= 0) continue;
+      const x0 = POS[i].cx + R + 14 * SF;
+      const x1 = POS[i + 1].cx - R - 14 * SF;
+      g.save();
+      g.strokeStyle = TH.faint;
+      g.lineWidth = 2 * SF;
+      g.beginPath(); g.moveTo(x0, POS[i].cy); g.lineTo(x0 + (x1 - x0) * p, POS[i].cy); g.stroke();
+      g.restore();
+    }
+  }
+
+  /* 节点 + 文字 */
+  CFG.steps.forEach((st, i) => {
+    const t0 = STEP_T(i);
+    const p = win(t, t0, t0 + 0.46);
+    if (p <= 0) return;
+    const { cx, cy } = POS[i];
+    const done = t >= STEP_T(i + 1) + 0.20;          // 下一步开始了，本步算完成
+    const active = !done && t >= t0;
+
+    g.save();
+    // 圆圈：缩放弹入
+    const sc = outBack(p);
+    g.translate(cx, cy);
+    g.scale(sc, sc);
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    // 已完成：淡填充 + 同色勾（实心块会把注意力全吸走）；当前：实心 accent
+    if (done) {
+      g.globalAlpha = p * 0.18;
+      g.fillStyle = TH.accent;
+    } else if (active) {
+      g.globalAlpha = p;
+      g.fillStyle = TH.accent;
+    } else {
+      g.globalAlpha = p * 0.6;
+      g.fillStyle = TH.panel;
+    }
+    g.fill();
+    g.globalAlpha = p;
+    g.lineWidth = 2 * SF;
+    g.strokeStyle = done ? TH.accent : (active ? TH.accent : TH.faint);
+    g.stroke();
+
+    if (done) {
+      drawCheck(0, 0, SF, TH.accent);
+    } else {
+      // 序号
+      g.fillStyle = active ? TH.bg : TH.sub;
+      g.font = `600 ${26 * SF * FS}px ${MONO}`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.globalAlpha = p;
+      g.fillText(String(i + 1), 0, 1 * SF);
+      g.textAlign = 'left';
+      g.textBaseline = 'alphabetic';
+    }
+    g.restore();
+
+    // 高亮环：当前步向外扩散，让「现在在这」一眼可见
+    if (active) {
+      const ph = ((t - t0) / 1.1) % 1;
+      g.save();
+      g.globalAlpha = (1 - ph) * 0.34 * p;
+      g.strokeStyle = TH.accent;
+      g.lineWidth = 2 * SF;
+      g.beginPath(); g.arc(cx, cy, R + ph * 22 * SF, 0, Math.PI * 2); g.stroke();
+      g.restore();
+    }
+
+    // 文字：横屏在圆下方居中，竖屏在圆右侧左对齐
+    const ep = outExpo(win(t, t0 + 0.18, t0 + 0.62));
+    if (ep <= 0) return;
+    g.save();
+    g.globalAlpha = ep;
+
+    if (PORTRAIT) {
+      const maxW = W - POS[i].textX - PAD;
+      const hPx = fitOneLine(st.title, 34 * SF * FS, maxW, px => `600 ${px}px ${SANS}`);
+      g.fillStyle = TH.ink;
+      g.font = `600 ${hPx}px ${SANS}`;
+      g.fillText(st.title, POS[i].textX, cy - 2 * VSY);
+      const dPx = fitOneLine(st.desc, 25 * SF * FS, maxW, px => `400 ${px}px ${SANS}`);
+      g.fillStyle = TH.sub;
+      g.font = `400 ${dPx}px ${SANS}`;
+      g.fillText(st.desc, POS[i].textX, cy + 34 * VSY);
+    } else {
+      const cell = (W - PAD * 2) / N;
+      const maxW = cell - 24 * SX;
+      const hPx = fitOneLine(st.title, 32 * SF * FS, maxW, px => `600 ${px}px ${SANS}`);
+      g.textAlign = 'center';
+      g.fillStyle = TH.ink;
+      g.font = `600 ${hPx}px ${SANS}`;
+      g.fillText(st.title, cx, cy + 96 * VSY);
+      const dPx = fitOneLine(st.desc, 23 * SF * FS, maxW, px => `400 ${px}px ${SANS}`);
+      g.fillStyle = TH.sub;
+      g.font = `400 ${dPx}px ${SANS}`;
+      g.fillText(st.desc, cx, cy + 138 * VSY);
+      g.textAlign = 'left';
+    }
+    g.restore();
+  });
+
+  /* 结束语 */
+  const np = outExpo(win(t, 4.20, 5.00));
+  if (np > 0) {
+    const nx = PORTRAIT ? PAD : W * 0.5;
+    g.save();
+    g.globalAlpha = np * 0.9;
+    g.fillStyle = TH.sub;
+    const nPx = fitOneLine(CFG.note, 26 * SF * FS, W - PAD * 2, px => `400 ${px}px ${SANS}`);
+    g.font = `400 ${nPx}px ${SANS}`;
+    g.textAlign = PORTRAIT ? 'left' : 'center';
+    g.fillText(CFG.note, nx, PORTRAIT ? H * 0.812 : 856 * SY);
+    g.textAlign = 'left';
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

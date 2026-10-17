@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>对照 · 离屏文字出界</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0a0c12; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+/* QA 盲区对照页：文字先画进离屏 canvas，再 drawImage 贴到主画布右下角，
+   右半边故意超出画布。
+   · 旧版 qa.js 只 hook fillText/strokeText，看到的是「一块贴图」，检不出半截字
+   · 修好后 drawImage 会做坐标映射，应该能报出「半截字：离屏文字应该被追上」 */
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+const g = cv.getContext('2d');
+
+const off = document.createElement('canvas');
+off.width = 800; off.height = 200;
+const og = off.getContext('2d');
+
+function drawFrame(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#0a0c12';
+  g.fillRect(0, 0, W, H);
+
+  // 左侧：正常画在离屏上的字（不报）
+  og.setTransform(1, 0, 0, 1, 0, 0);
+  og.clearRect(0, 0, 800, 200);
+  og.fillStyle = '#F4F7FC';
+  og.font = '700 56px "Microsoft YaHei", "PingFang SC", sans-serif';
+  og.fillText('离屏文字应该被追上', 20, 110);
+
+  // 贴到右下角，右半边超出画布
+  g.drawImage(off, 1500, 720, 800, 200);
+}
+
+window.__seek = drawFrame;
+window.__ready = true;
+drawFrame(0);
+</script>
+</body>
+</html>

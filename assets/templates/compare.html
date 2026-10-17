@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 前后对比</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script>
+/* =====================================================================
+   模板 ②  ·  前后对比图
+   ---------------------------------------------------------------------
+   用途：讲「改了什么、好了多少」。左右两栏，条目逐条入场，最后压一句结论。
+   改 CFG 就够，画布代码不用动。
+
+   出片（横屏）：
+     bash ../render.sh compare.html --duration=6 --fps=60
+   出片（竖屏，两栏自动改上下）：
+     bash ../render.sh compare.html --duration=6 --fps=60 --width=1080 --height=1920
+   透明叠加：
+     bash ../render.sh compare.html --duration=6 --fps=60 --alpha
+   ===================================================================== */
+const CFG = {
+  theme:    'midnight',            // midnight | paper | neon，或直接传对象
+  kicker:   '构建耗时',
+  title:    '一次改造，快了 4.7 倍',
+  left: {
+    label: '改造前', tone: 'bad',
+    metric: '42s', metricLabel: '全量构建',
+    items: ['webpack 全量编译', '没有持久化缓存', '产物 2.1 MB'],
+  },
+  right: {
+    label: '改造后', tone: 'good',
+    metric: '9s', metricLabel: '全量构建',
+    items: ['esbuild 增量编译', '缓存命中率 92%', '产物 640 KB'],
+  },
+  verdict: '同样的产出，等待时间少了 79%',
+  dur: 6.0,
+};
+/* ===================================================================== */
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+const DUR = CFG.dur;
+const TH = window.h2vTheme ? h2vTheme(CFG.theme) : { bg:'#0A0C12', ink:'#F4F7FC', sub:'rgba(244,247,252,.58)',
+  faint:'rgba(244,247,252,.10)', panel:'rgba(255,255,255,.045)', accent:'#FFB86B', good:'#4ADE80', bad:'#FF6B6B' };
+const TRANSPARENT = !!window.__transparent;
+
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const outCubic = t => 1 - Math.pow(1 - t, 3);
+const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };
+
+function fitOneLine(text, basePx, maxW, fontOf) {
+  g.save(); g.font = fontOf(basePx);
+  const w = g.measureText(text).width;
+  g.restore();
+  return w > maxW && w > 0 ? Math.max(basePx * 0.55, basePx * maxW / w) : basePx;
+}
+
+/* 版式：横屏左右分栏，竖屏上下堆叠（竖屏横向放两栏会窄到放不下中文）
+   纵向度量分两套：横屏按 SY（H/1080），竖屏按 SF（字号缩放）。
+   竖屏 H=1920 时 SY=1.78，若继续用它做行距，54*SY 会变成 96px —— 字 28px、行距 96px，
+   整栏直接散架。竖屏的字体和间距都该跟着字号走。 */
+const VSY = PORTRAIT ? SF : SY;
+
+const PAD = PORTRAIT ? W * 0.085 : 150 * SX;
+const GAP = 90 * SX;
+const COLW = (W - PAD * 2 - GAP) / 2;
+
+const BOX_H = PORTRAIT ? 452 * SF : 432 * SY;
+const BOX1_Y = PORTRAIT ? H * 0.235 : 400 * SY;
+const BOX2_Y = PORTRAIT ? BOX1_Y + BOX_H + 48 * SF : 400 * SY;
+const FS = PORTRAIT ? 1.18 : 1;          // 竖屏字号整体放大一档
+
+const LAY = {
+  kickerY: PORTRAIT ? H * 0.135 : 208 * SY,
+  titleY:  PORTRAIT ? H * 0.180 : 300 * SY,
+  boxes: PORTRAIT
+    ? [{ x: PAD, y: BOX1_Y, w: W - PAD * 2, h: BOX_H },
+       { x: PAD, y: BOX2_Y, w: W - PAD * 2, h: BOX_H }]
+    : [{ x: PAD, y: BOX1_Y, w: COLW, h: BOX_H },
+       { x: PAD + COLW + GAP, y: BOX1_Y, w: COLW, h: BOX_H }],
+  // 底部要留出 15% 字幕带，962 会踩进去（QA 的框景检查会报）—— 提到 892
+  verdictY: PORTRAIT ? BOX2_Y + BOX_H + 96 * SF : 892 * SY,
+  spine: PORTRAIT ? null : { x: PAD + COLW + GAP / 2, y0: 430 * SY, y1: 810 * SY },
+};
+
+function roundRect(x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+/* 一栏：底板展开 → 标签 → 大数字 → 条目逐条
+   t 是当前时刻，t0 是这一栏的入场起点 —— 别把两者搞混（写错过一次，整栏永不出现） */
+function drawColumn(col, cfg, box, t, t0) {
+  const tone = cfg.tone === 'good' ? TH.good : TH.bad;
+
+  // 底板：从左边沿横向展开（宽度动画，不是淡入 —— 展开更有「对比」的节奏感）
+  const bp = outCubic(win(t, t0, t0 + 0.62));
+  if (bp <= 0) return;
+  g.save();
+  g.fillStyle = TH.panel;
+  roundRect(box.x, box.y, box.w * bp, box.h, 20 * SF);
+  g.fill();
+  g.strokeStyle = TH.faint;
+  g.lineWidth = 1.2 * SF;
+  g.stroke();
+  // 左侧色条：进度条一样从顶部长下来
+  g.fillStyle = tone;
+  const barH = box.h * smooth(win(t, t0 + 0.15, t0 + 0.95));
+  roundRect(box.x + 1 * SF, box.y + 18 * VSY, 4 * SF, Math.max(0, barH - 36 * VSY), 2 * SF);
+  g.fill();
+  g.restore();
+
+  const padX = 44 * SX;
+  const innerW = box.w - padX * 2;
+
+  // 栏标签
+  const lp = outExpo(win(t, t0 + 0.35, t0 + 0.85));
+  if (lp > 0) {
+    g.save();
+    g.globalAlpha = lp;
+    g.fillStyle = tone;
+    roundRect(box.x + padX, box.y + 44 * VSY, 10 * SF, 10 * SF, 5 * SF);
+    g.fill();
+    const labPx = fitOneLine(cfg.label, 27 * SF * FS, innerW - 30 * SF, px => `600 ${px}px ${SANS}`);
+    g.fillStyle = tone;
+    g.font = `600 ${labPx}px ${SANS}`;
+    g.fillText(cfg.label, box.x + padX + 24 * SF, box.y + 55 * VSY);
+    g.restore();
+  }
+
+  // 大数字
+  const mp = outCubic(win(t, t0 + 0.62, t0 + 1.15));
+  if (mp > 0) {
+    const basePx = 92 * SF * FS;
+    const mPx = fitOneLine(cfg.metric, basePx, innerW, px => `700 ${px}px ${MONO}`);
+    g.save();
+    g.globalAlpha = mp;
+    g.fillStyle = TH.ink;
+    g.font = `700 ${mPx}px ${MONO}`;
+    g.fillText(cfg.metric, box.x + padX, box.y + 152 * VSY + (1 - mp) * 14 * SF);
+    g.restore();
+
+    const mlPx = fitOneLine(cfg.metricLabel, 24 * SF * FS, innerW, px => `400 ${px}px ${SANS}`);
+    g.save();
+    g.globalAlpha = mp * 0.7;
+    g.fillStyle = TH.sub;
+    g.font = `400 ${mlPx}px ${SANS}`;
+    g.fillText(cfg.metricLabel, box.x + padX + 6 * SX, box.y + 198 * VSY);
+    g.restore();
+  }
+
+  // 条目：逐条淡入 + 左移
+  const rowH = 60 * VSY;
+  const rowY0 = box.y + 268 * VSY;
+  cfg.items.forEach((line, i) => {
+    const p = outExpo(win(t, t0 + 0.95 + i * 0.20, t0 + 1.45 + i * 0.20));
+    if (p <= 0) return;
+    const y = rowY0 + i * rowH;
+    g.save();
+    g.globalAlpha = p * 0.92;
+    // 短横线
+    g.fillStyle = tone;
+    g.globalAlpha = p * 0.55;
+    g.fillRect(box.x + padX + (1 - p) * -10 * SX, y - 9 * SF, 14 * SF, 2 * SF);
+    // 文字
+    const px = fitOneLine(line, 28 * SF * FS, innerW - 34 * SF, p2 => `400 ${p2}px ${SANS}`);
+    g.globalAlpha = p * 0.86;
+    g.fillStyle = TH.ink;
+    g.font = `400 ${px}px ${SANS}`;
+    g.fillText(line, box.x + padX + 26 * SF + (1 - p) * 12 * SX, y);
+    g.restore();
+  });
+}
+
+function drawFrame(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  if (!TRANSPARENT) {
+    const bg = g.createLinearGradient(0, 0, W * 0.5, H);
+    bg.addColorStop(0, TH.bg);
+    bg.addColorStop(1, TH.bgAlt || TH.bg);
+    g.fillStyle = bg;
+    g.fillRect(0, 0, W, H);
+
+    // 极淡网格：给画面一点「工程感」的纹理，不抢主体
+    g.save();
+    g.strokeStyle = TH.faint;
+    g.globalAlpha = 0.30;
+    g.lineWidth = 1 * SF;
+    const step = 160 * SF;
+    for (let x = 0; x < W; x += step) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+    for (let y = 0; y < H; y += step) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    g.restore();
+
+    // 顶部一道柔光，避免大片平灰
+    const glow = g.createRadialGradient(W * 0.18, -H * 0.1, 0, W * 0.18, -H * 0.1, W * 0.75);
+    glow.addColorStop(0, TH.glow || 'rgba(255,184,107,0.12)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = glow;
+    g.fillRect(0, 0, W, H);
+  }
+
+  // kicker
+  if (CFG.kicker) {
+    const p = outExpo(win(t, 0.12, 0.66));
+    g.save();
+    g.globalAlpha = p;
+    g.fillStyle = TH.sub;
+    const kPx = fitOneLine(CFG.kicker, 26 * SF, W - PAD * 2, px => `500 ${px}px ${SANS}`);
+    g.font = `500 ${kPx}px ${SANS}`;
+    g.letterSpacing = `${8 * SF}px`;
+    g.fillText(CFG.kicker, PAD + (1 - p) * -16 * SX, LAY.kickerY);
+    g.restore();
+  }
+
+  // 标题
+  const tp = outExpo(win(t, 0.30, 1.05));
+  if (tp > 0) {
+    const tPx = fitOneLine(CFG.title, (PORTRAIT ? 62 : 66) * SF, W - PAD * 2, px => `700 ${px}px ${SANS}`);
+    g.save();
+    g.globalAlpha = tp;
+    g.fillStyle = TH.ink;
+    g.font = `700 ${tPx}px ${SANS}`;
+    g.fillText(CFG.title, PAD + (1 - tp) * 18 * SX, LAY.titleY);
+    g.restore();
+  }
+
+  drawColumn(0, CFG.left, LAY.boxes[0], t, 0.78);
+  drawColumn(1, CFG.right, LAY.boxes[1], t, 1.02);
+
+  // 中间竖线：从中心向两端生长（横屏才有）
+  if (LAY.spine) {
+    const sp = smooth(win(t, 1.95, 2.75));
+    if (sp > 0) {
+      const { x, y0, y1 } = LAY.spine;
+      const mid = (y0 + y1) / 2;
+      const half = (y1 - y0) / 2 * sp;
+      g.save();
+      g.strokeStyle = TH.faint;
+      g.lineWidth = 1.4 * SF;
+      g.beginPath(); g.moveTo(x, mid - half); g.lineTo(x, mid + half); g.stroke();
+      g.restore();
+    }
+  }
+
+  // 结论条：左侧竖线 + 文字
+  const vp = outExpo(win(t, 3.10, 3.90));
+  if (vp > 0) {
+    const TXT_X = PAD + 28 * SX;
+    const vPx = fitOneLine(CFG.verdict, 34 * SF, W - TXT_X - PAD, px => `600 ${px}px ${SANS}`);
+    const barH = 34 * SF * smooth(win(t, 3.10, 3.55));
+    g.save();
+    g.globalAlpha = vp;
+    /* 竖线贴在文字**左侧**。原来放在文字上方 26px 处，正好被汉字的字身盖住，白画。 */
+    g.fillStyle = TH.accent;
+    g.fillRect(PAD, LAY.verdictY - 27 * VSY + (34 * SF - barH) / 2, 4 * SF, barH);
+    g.fillStyle = TH.ink;
+    g.font = `600 ${vPx}px ${SANS}`;
+    g.fillText(CFG.verdict, TXT_X + (1 - vp) * 14 * SX, LAY.verdictY);
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

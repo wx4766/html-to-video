@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>对照 · DOM 文字（多行段落不该误报）</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0a0c12; overflow: hidden;
+               font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+
+  /* ① 故意超出右边界 → 应报「半截字」 */
+  #over {
+    position: absolute; left: 1660px; top: 210px;
+    font-size: 56px; font-weight: 700; white-space: nowrap;
+    color: #F4F7FC; margin: 0;
+  }
+
+  /* ② 完整落在画面内的多行段落，行距偏紧 + 行内 span：
+        旧版按「每个行框推一条」量，段落的几行会和行内 span 互相被判成叠字 */
+  #para {
+    position: absolute; left: 160px; top: 520px; width: 640px;
+    font-size: 44px; line-height: 1.08; color: #F4F7FC; margin: 0;
+  }
+  #para .hi { color: #FFB86B; }
+
+  /* ③ 同一视觉行上的相邻文本节点（span + 裸文本），不该被判成两块 */
+  #inline {
+    position: absolute; left: 160px; top: 820px;
+    font-size: 40px; line-height: 1.1; color: #F4F7FC; margin: 0;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<p id="over">右侧出界的标题字幕</p>
+
+<p id="para">确定性渲染意味着<span class="hi">同一份代码</span>每次输出的像素完全一致，不需要靠剪辑软件手工对齐时间轴。</p>
+
+<p id="inline">前缀文字<span class="hi">中间强调</span>后缀文字</p>
+
+<script>
+/* 这个 fixture 只看 DOM 文字，画布只铺底，避免 canvas 侧的检出干扰判断。
+   所有文字位置固定，不随时间变化 —— QA 每次采样看到的是同一批框。 */
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+const g = cv.getContext('2d');
+
+function drawFrame(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = '#0a0c12';
+  g.fillRect(0, 0, W, H);
+}
+
+window.__seek = drawFrame;
+window.__ready = true;
+drawFrame(0);
+</script>
+</body>
+</html>

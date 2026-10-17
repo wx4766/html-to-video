@@ -55,6 +55,7 @@ const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { HIDE_CHROME_CSS, hideChromeInit } = require('./lib/hide-chrome.cjs');
 const { startServer } = require('./lib/local-server.cjs');
+const { loadCues, cueAt } = require('./lib/cues.cjs');
 
 function arg(name, def) {
   const p = process.argv.find(a => a.startsWith('--' + name + '='));
@@ -71,6 +72,7 @@ if (!HTML_FILE || HTML_FILE.startsWith('--')) {
   console.error('         ... --from=3 --to=5     # 只渲 3s–5s，快速试片');
   console.error('         ... --stills=1,3,5      # 只导出 1s/3s/5s 三张静帧');
   console.error('         ... --resume            # 上次中断了？接着渲，已完成的帧直接复用');
+  console.error('         ... --alpha             # 透明背景输出（ProRes 4444 .mov），用于叠加合成');
   process.exit(1);
 }
 
@@ -91,6 +93,30 @@ const KEEP_FRAMES = hasFlag('keep-frames');
 const ALLOW_ERRORS = hasFlag('allow-errors');
 const NO_SERVE     = hasFlag('no-serve');       // 默认走本地 http；见 lib/local-server.cjs 顶部说明
 const RESUME       = hasFlag('resume');         // 断点续渲：复用上一次留下的帧
+const ALPHA        = hasFlag('alpha');          // 透明背景输出（叠加合成用）
+const ALPHA_CODEC  = String(arg('alpha-codec', 'prores')).toLowerCase();
+const CUES_FILE    = arg('srt', null) || arg('cues', null);   // 字幕时间轴（SRT / VTT / JSON）
+const CUE_LOG      = arg('cue-log', null);      // 把「第几帧用了第几句」写成 CSV，用于核对时间误差
+
+/* 为什么只有 ProRes 4444，没有 VP9 alpha：
+   实测把 PNG 序列（rgba）编成 --pix_fmt yuva420p + -auto-alt-ref 0，文件体积从 7.8KB
+   涨到 16.8KB（alpha 数据确实写进去了），但 Chromium 播出来整帧 alpha 全 0 —— 连文字都透明。
+   换 lossless / 固定码率 / -lag-in-frames 0 都一样。ffmpeg 侧也解不出 alpha（webm 把 alpha
+   存在 BlockAdditional 里）。既然没法自证正确，就不把它作为可选项发布。
+   真需要小体积透明素材，用 ProRes 导入剪辑软件后导出 webm，那是那边的事。 */
+if (!ALPHA && ALPHA_CODEC !== 'prores') {
+  console.warn('⚠ --alpha-codec 只在 --alpha 时才有意义，当前按普通 H.264 输出。');
+}
+if (ALPHA && ALPHA_CODEC !== 'prores') {
+  console.error(`✗ --alpha-codec 目前只支持 prores（收到 "${ALPHA_CODEC}"）。`);
+  console.error('  原因：VP9 的 alpha 在本机 ffmpeg 上实测编不出可用结果（播放整帧透明），');
+  console.error('        与其给一个验不了的选项，不如只提供能自证的一种。');
+  console.error('  ProRes 4444 是 Premiere / DaVinci / Final Cut / 剪映 都能直接识别的透明格式。');
+  process.exit(1);
+}
+
+/* ProRes 4444：剪辑软件原生支持，10bit，体积约为 H.264 的 5–10 倍，但能直接拖进时间线用。 */
+const OUT_EXT = ALPHA ? '.mov' : '.mp4';
 
 const HTML_ABS = path.resolve(HTML_FILE);
 const BASENAME = path.basename(HTML_FILE, path.extname(HTML_FILE));
@@ -114,14 +140,33 @@ const STILLS = STILLS_RAW
 const RESUME_DIR = path.join(DIR, '.seek-tmp-resume');
 const TMP_DIR   = RESUME ? RESUME_DIR : path.join(DIR, '.seek-tmp-' + Date.now() + '-' + process.pid);
 
+/* 字幕时间轴：解析一次，之后每帧只是查表。
+   模板侧约定：读到 window.__cues 就用它，没有就退回自己 CFG 里写的时间。 */
+let CUES = null;
+if (CUES_FILE) {
+  try {
+    CUES = loadCues(CUES_FILE);
+  } catch (e) {
+    console.error(`✗ 字幕文件读不了：${CUES_FILE}`);
+    console.error('  ' + String((e && e.message) || e).split('\n')[0]);
+    process.exit(1);
+  }
+  if (!CUES.length) {
+    console.error(`✗ 字幕文件里没解析出任何一句：${CUES_FILE}`);
+    console.error('  SRT 需要形如「00:00:00,500 --> 00:00:02,300」的时间行，且下面跟着正文。');
+    process.exit(1);
+  }
+}
+
 const JOB = {
   html: HTML_ABS, fps: FPS, from: F0, to: F1,
   width: WIDTH, height: HEIGHT, settle: SETTLE, hideChrome: !KEEP_CHROME,
+  cues: CUES ? path.resolve(CUES_FILE) : null,
 };
 const STILL_DIR = path.join(DIR, BASENAME + '.stills');
 const MP4_OUT   = path.join(DIR, RANGE_GIVEN
-  ? `${BASENAME}.${trimNum(FROM)}-${trimNum(END)}s.mp4`
-  : BASENAME + '.mp4');
+  ? `${BASENAME}.${trimNum(FROM)}-${trimNum(END)}s${OUT_EXT}`
+  : BASENAME + OUT_EXT);
 
 function trimNum(v) { return String(Math.round(v * 1000) / 1000); }
 
@@ -215,6 +260,11 @@ if (STILLS) {
   console.log(`  size: ${WIDTH}x${HEIGHT} · stills: ${STILLS.join(', ')}s → ${STILL_DIR}`);
 } else {
   console.log(`  size: ${WIDTH}x${HEIGHT} · ${FPS}fps · ${trimNum(FROM)}–${trimNum(END)}s · frames: ${TOTAL_FRAMES} · workers: ${CONCURRENCY}`);
+  if (ALPHA) console.log(`  alpha: ProRes 4444 (.mov) —— 背景透明，供叠加合成`);
+  if (CUES) {
+    const last = CUES[CUES.length - 1];
+    console.log(`  字幕: ${CUES.length} 句 · ${CUES[0].start.toFixed(2)}–${last.end.toFixed(2)}s → window.__cues`);
+  }
   console.log(`  output: ${MP4_OUT}`);
 }
 
@@ -231,6 +281,32 @@ async function waitRaf(page, n) {
    这是最阴的坑：改了 --width/--height 而页面把 canvas 尺寸写死就中招，且不报错。
    所以每个 page 就绪后量一次，量到就明确说出来。 */
 const SIZE_WARN = new Set();
+
+/* --alpha 时把 html/body 的背景强制让开。
+   必须在页面加载完之后做：addInitScript 跑在文档解析之前，那时 documentElement 还是 null，
+   往它上面 appendChild 会直接抛 "Cannot read properties of null"。 */
+async function applyAlphaCss(page) {
+  if (!ALPHA) return;
+  try {
+    await page.addStyleTag({
+      content: 'html,body{background:transparent !important;background-color:transparent !important;}',
+    });
+  } catch (e) {
+    // 没有 head 的怪页面就跳过，模板自身读到 __transparent 也会跳过底色
+  }
+}
+
+/* 把整条时间轴交给页面。只注入一次，模板自己按 t 查句 —— 
+   逐帧注入会让 seek 变成两次 evaluate，白白多一轮往返。 */
+async function injectCues(page) {
+  if (!CUES) return;
+  try {
+    await page.evaluate(cs => { window.__cues = cs; }, CUES);
+  } catch (e) {
+    // 注入失败就让模板用自己 CFG 里的时间表，不阻断渲染
+  }
+}
+
 async function checkStageSize(page) {
   let msg = null;
   try {
@@ -258,6 +334,8 @@ function printSizeWarnings() {
 }
 
 // 一个 worker：开一个 page，goto，等 __seek 就绪，渲染分配给它的帧
+const CUE_HITS = CUE_LOG ? new Map() : null;
+
 async function renderFrames(context, url, frames, onPage) {
   const page = await context.newPage();
   onPage(page);
@@ -278,10 +356,16 @@ async function renderFrames(context, url, frames, onPage) {
   if (await page.evaluate(() => typeof window.__seek !== 'function')) {
     throw new Error('__ready 为 true 但没暴露 window.__seek');
   }
+  await applyAlphaCss(page);
+  await injectCues(page);
   await checkStageSize(page);
 
   for (const f of frames) {
     const t = f / FPS;
+    if (CUE_HITS) {
+      const c = cueAt(CUES, t);
+      CUE_HITS.set(f, c ? c.index : -1);
+    }
     await page.evaluate((tt) => window.__seek(tt), t);
     await waitRaf(page, SETTLE);
     const finalPath = path.join(TMP_DIR, 'frame-' + String(f).padStart(6, '0') + '.png');
@@ -291,9 +375,12 @@ async function renderFrames(context, url, frames, onPage) {
     // 注意：不能写 screenshot({ path: finalPath + '.part' })。
     // Playwright 按扩展名推断图片格式，'.part' 它认不出来，会抛
     // "unsupported mime type"。所以拿 Buffer 自己落盘，原子改名保留。
-    const buf = await page.screenshot({
-      clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT },
-    });
+    // 只在 --alpha 时才传 omitBackground：显式传 false 也会让 Chromium 走另一条
+    // PNG 编码路径（色彩标记从 icc 变成 unknown），画面 PSNR 只有 83dB 而不是 inf。
+    // 不用透明的人不该为此付出任何差异。
+    const shotOpts = { clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT } };
+    if (ALPHA) shotOpts.omitBackground = true;
+    const buf = await page.screenshot(shotOpts);
     fs.writeFileSync(partPath, buf);
     fs.renameSync(partPath, finalPath);
   }
@@ -312,6 +399,8 @@ async function renderStills(context, url, times, onPage) {
   );
   const bootFailed = await page.evaluate(() => window.__bootFailed || null);
   if (bootFailed) throw new Error('页面自报启动失败（window.__bootFailed）：\n' + bootFailed);
+  await applyAlphaCss(page);
+  await injectCues(page);
   await checkStageSize(page);
 
   fs.mkdirSync(STILL_DIR, { recursive: true });
@@ -319,10 +408,9 @@ async function renderStills(context, url, times, onPage) {
     await page.evaluate((tt) => window.__seek(tt), t);
     await waitRaf(page, SETTLE);
     const name = 't' + t.toFixed(3).padStart(8, '0') + '.png';
-    await page.screenshot({
-      path: path.join(STILL_DIR, name),
-      clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT },
-    });
+    const stillOpts = { path: path.join(STILL_DIR, name), clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT } };
+    if (ALPHA) stillOpts.omitBackground = true;
+    await page.screenshot(stillOpts);
     console.log('  · ' + name);
   }
   await page.close();
@@ -398,6 +486,15 @@ async function renderStills(context, url, times, onPage) {
     window.__recording = true;
     window.__seekRender = true;
   });
+
+  if (ALPHA) {
+    /* 透明输出要两件事同时成立，少一件就白底：
+       ① 页面自身背景透明（html/body 的 background 必须让开，模板也要跳过背景层绘制）
+       ② 截图时 omitBackground: true（Playwright 默认铺白底）
+       模板侧约定：读到 window.__transparent 为 true 就不画背景。
+       注意这里只置标志 —— 插 <style> 要等文档解析，放到 applyAlphaCss() 里做。 */
+    await context.addInitScript(() => { window.__transparent = true; });
+  }
 
   if (!KEEP_CHROME) {
     await context.addInitScript(hideChromeInit, HIDE_CHROME_CSS);
@@ -502,21 +599,55 @@ async function renderStills(context, url, times, onPage) {
     console.error('  加 --resume 重跑可补齐缺口，或删掉逐帧目录重来：' + TMP_DIR);
     process.exit(1);
   }
-  console.log(`▸ Captured ${pngCount}/${TOTAL_FRAMES} frames. Encoding H.264…`);
+  const CODEC_LABEL = ALPHA ? 'ProRes 4444' : 'H.264';
+  console.log(`▸ Captured ${pngCount}/${TOTAL_FRAMES} frames. Encoding ${CODEC_LABEL}…`);
 
-  // PNG 序列 → MP4。无 trim（本来就没黑帧），输入输出帧率都设 FPS。
-  const enc = [
-    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-    '-crf', '18', '-preset', 'medium',
-    '-r', String(FPS), '-movflags', '+faststart',
-  ];
-  if (GOP_RAW !== null) {
+  /* 字幕命中表：验证「画面里的句子和音频时间对得上」时，凭这张表就能算出误差，
+     不必靠肉眼看。列含义：帧号 / 该帧时刻 / 用到的第几句 / 该句起止。 */
+  if (CUE_HITS && CUE_HITS.size) {
+    const rows = ['frame,t,cue_index,cue_start,cue_end'];
+    [...CUE_HITS.keys()].sort((a, b) => a - b).forEach(f => {
+      const idx = CUE_HITS.get(f);
+      const c = idx >= 0 ? CUES[idx] : null;
+      rows.push([f, (f / FPS).toFixed(4), idx,
+        c ? c.start.toFixed(3) : '', c ? c.end.toFixed(3) : ''].join(','));
+    });
+    const p = path.resolve(CUE_LOG);
+    fs.writeFileSync(p, rows.join('\n') + '\n', 'utf8');
+    console.log(`  cue-log: ${p}（${CUE_HITS.size} 帧）`);
+  }
+
+  /* 编码参数
+     · 普通   H.264 yuv420p crf18，兼容性最高
+     · alpha  ProRes 4444 + yuva444p10le，剪辑软件直接拖进时间线就是透明背景 */
+  const enc = ALPHA
+    ? ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le',
+      '-vendor', 'apl0', '-qscale:v', '11', '-r', String(FPS), '-movflags', '+faststart']
+    : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'medium',
+      '-r', String(FPS), '-movflags', '+faststart'];
+
+  if (ALPHA) {
+    // prores_ks 不是所有 ffmpeg 构建都有（比如只开了 libx264 的精简版）。
+    // 让它跑到一半才报 "Unknown encoder" 不如提前说清楚。
+    const probe = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-hide_banner', '-encoders'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const list = probe.status === 0 && probe.stdout ? probe.stdout.toString() : '';
+    if (list && !list.includes(' prores_ks ')) {
+      console.error('✗ 这个 ffmpeg 构建里没有 prores_ks，输出不了透明视频。');
+      console.error('  装一个完整版：bash scripts/install-deps.sh');
+      console.error(`  帧已留在 ${TMP_DIR}，装好后可直接手动编码，不必重截。`);
+      process.exit(1);
+    }
+  }
+  if (GOP_RAW !== null && ALPHA) {
+    console.warn('⚠ --gop 只对 H.264 生效，透明输出时忽略。');
+  }
+  if (GOP_RAW !== null && !ALPHA) {
     // 每秒一个关键帧：后期剪辑按秒 seek 不会冻帧（搬运自 huashu render.py --spec）
     const g = Math.max(1, Math.round(parseFloat(GOP_RAW) * FPS));
     enc.push('-g', String(g), '-keyint_min', String(g), '-sc_threshold', '0');
   }
 
-  const audioTmp = AUDIO ? MP4_OUT + '.noaudio.mp4' : null;
+  const audioTmp = AUDIO ? MP4_OUT.replace(/\.[^.]+$/, '') + '.noaudio' + OUT_EXT : null;
   const encodeTarget = audioTmp || MP4_OUT;
 
   const ffmpegArgs = [
@@ -538,7 +669,7 @@ async function renderStills(context, url, times, onPage) {
     console.error('✗ ffmpeg failed:\n' + detail);
     console.error(`  帧已保留在 ${TMP_DIR}，修好 ffmpeg 后可手动编码，不必重截：`);
     console.error(`    ffmpeg -y -framerate ${FPS} -start_number ${F0} -i "${path.join(TMP_DIR, 'frame-%06d.png')}" \\`);
-    console.error(`      -c:v libx264 -pix_fmt yuv420p -crf 18 -preset medium -r ${FPS} -movflags +faststart out.mp4`);
+    console.error(`      ${enc.join(' ')} out${OUT_EXT}`);
     process.exit(1);
   }
 
