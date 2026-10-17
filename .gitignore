@@ -16,5 +16,6 @@ palette.png
 # 发布用凭证与本地配置，绝不入库
 _gh_token.txt
 _gh_*
+_wb-*
 oss-release.json
 RELEASE.md
