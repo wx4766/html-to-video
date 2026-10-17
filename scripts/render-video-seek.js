@@ -365,7 +365,28 @@ async function renderStills(context, url, times, onPage) {
     }
   }
 
-  const browser = await chromium.launch();
+  // 第一次用最常见的一堵墙：playwright 装了但没下浏览器内核。
+  // 它默认抛的是裸栈 trace（browserType.launch: Executable doesn't exist at ...），
+  // 对第一次点进来的人等于劝退 —— 这里换成一句人话加一条命令。
+  let browser;
+  try {
+    browser = await chromium.launch();
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    if (/Executable doesn't exist|playwright install|Looks like Playwright/i.test(msg)) {
+      console.error('');
+      console.error('✗ 浏览器内核还没装（截图要靠它）。装一次就行，之后不用再管：');
+      console.error('');
+      console.error('    npx playwright install chromium');
+      console.error('');
+      console.error('  没有 ffmpeg 的话，一条命令连它一起装好：');
+      console.error('    bash scripts/install-deps.sh');
+      console.error('');
+      console.error('  装完直接重跑刚才那条命令，不需要改任何配置。');
+      process.exit(1);
+    }
+    throw e;
+  }
 
   const context = await browser.newContext({
     viewport: { width: WIDTH, height: HEIGHT },

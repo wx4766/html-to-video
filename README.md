@@ -31,6 +31,25 @@
 适合：讲解动画、动态图解、产品演示、数据可视化动画、游戏宣传片。
 不适合：实拍感 / 氛围镜头（那个应该走 VideoGen）。
 
+### 和 Remotion / Motion Canvas 什么关系
+
+同类工具里最常被拿来比的三个，说清楚各自适合什么，省得你上手才发现选错：
+
+| | html-to-video | Remotion | Motion Canvas |
+|---|---|---|---|
+| 心智模型 | 一个 HTML 文件 + `frame(t)` 纯函数 | React 组件 + `useCurrentFrame()` | TS 生成器 + 场景图 |
+| 起步成本 | 复制模板、改顶部 `CFG` | 建 React 工程、学组件与 API | 装编辑器、学场景 API |
+| 构建步骤 | 无，浏览器直接跑 | 要打包 | 要构建 |
+| 工程化 | 测试 / CI / 六维 QA | 成熟生态、Lambda 云端渲染、播放器组件 | 编辑器体验好，适合手工精修 |
+| 许可 | MIT | 个人与 ≤3 人团队免费，4 人以上需商业许可 | MIT |
+
+**一句话选择**：要在 React 应用里内嵌视频编辑器、或大规模云端渲染 → Remotion 更合适；
+要手工一帧帧精修分镜 → Motion Canvas 更合适；
+**只想把一屏现成的 HTML 变成 mp4，不想为此建个工程 → 用这个**。
+
+尤其是「AI 写出来的 HTML 动画想变成视频」这种场景：不需要它懂框架，
+输出一个能跑的 HTML 就够了，剩下交给渲染器。
+
 ## 6 个开箱即用模板
 
 拷贝一个，改顶部 `CFG` 里的文案和数据，直接出片。
@@ -73,6 +92,20 @@ bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1280 --heigh
 
 需要 Node.js >= 18。
 
+**当普通 Node 工具用**（clone 到哪都行，三条命令）：
+
+```bash
+git clone https://github.com/wx4766/html-to-video.git
+cd html-to-video
+npm install
+npx playwright install chromium   # 首次必做：下载截图用的浏览器内核
+```
+
+另外需要 **ffmpeg 在 PATH 上**（`brew install ffmpeg` / `apt install ffmpeg` / `winget install ffmpeg`）。
+别用 Playwright 自带的那个：它是 `--disable-everything` 裁剪版，编不了 H.264。
+
+**当 WorkBuddy / Claude 技能用**（放进技能目录，AI 能直接调用）：
+
 ```bash
 git clone https://github.com/wx4766/html-to-video.git ~/.workbuddy/skills/html-to-video
 cd ~/.workbuddy/skills/html-to-video
@@ -82,7 +115,7 @@ bash scripts/install-deps.sh
 `install-deps.sh` 会自动做完三件事：
 
 1. 探测本机 Playwright 浏览器缓存，挑**匹配的** playwright 版本
-2. 装完整版 ffmpeg（Playwright 自带的那个是残废的，见下）
+2. 装完整版 ffmpeg（同上，避开裁剪版）
 3. 把工作区路径写进 `~/.workbuddy/.html2video-env`
 
 想自己指定工作区：`bash scripts/install-deps.sh /path/to/workspace`
