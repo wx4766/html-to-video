@@ -5,12 +5,12 @@
 <title>模板 · 片头标题卡</title>
 <style>
   html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
-  /* 画布必须正好铺满视口左上角 —— 渲染器按 (0,0,W,H) 裁剪截图 */
+  /* 画布尺寸由脚本按视口设定，正好铺满 —— 渲染器按 (0,0,W,H) 裁剪截图 */
   #stage { position: absolute; top: 0; left: 0; display: block; }
 </style>
 </head>
 <body>
-<canvas id="stage" width="1920" height="1080"></canvas>
+<canvas id="stage"></canvas>
 <script>
 /* =====================================================================
    模板 ①  ·  片头标题卡
@@ -18,8 +18,10 @@
    用途：视频开场 5–8 秒。主标题逐字弹入，配副标题与标签。
    改下面 CFG 里的字就够了，其余不用动。
 
-   出片：
+   出片（横屏 16:9）：
      bash ../render.sh title-card.html --duration=6 --fps=60
+   出片（竖屏 9:16）：
+     bash ../render.sh title-card.html --duration=6 --fps=60 --width=1080 --height=1920
    ===================================================================== */
 const CFG = {
   kicker: '逐帧渲染管线',                       // 上方小字（可留空 ''）
@@ -33,8 +35,21 @@ const CFG = {
 };
 /* ===================================================================== */
 
-const W = 1920, H = 1080, DUR = CFG.dur;
+/* ---------- 舞台：跟随视口，横竖屏都不用改 ---------- */
 const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const DUR = CFG.dur;
+
+/* 三档缩放：横向 SX、纵向 SY、字号 SF = √(SX·SY)
+   1920×1080 时三者都是 1 —— 输出与旧版逐像素一致；
+   换成 1080×1920 时 SX 收窄、SY 拉长、字号不变，版式按比例铺开且不会出框 */
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+
 const g = cv.getContext('2d');
 
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
@@ -47,8 +62,17 @@ const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);          // 时间窗 �
 const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);       // 快出慢停
 const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };  // 两端都停稳
 
+/* 单行自动收缩：字太长就等比缩小，绝不静默出框 */
+function fitOneLine(text, basePx, maxW, fontOf) {
+  g.save();
+  g.font = fontOf(basePx);
+  const w = g.measureText(text).width;
+  g.restore();
+  return w > maxW && w > 0 ? Math.max(basePx * 0.5, basePx * maxW / w) : basePx;
+}
+
 /* 逐字排版 + 逐字进度：返回整串宽度。progress(i,n) → 0..1 */
-function drawText(ctx, text, x, y, progress) {
+function drawText(ctx, text, x, y, progress, rise) {
   const chars = [...text];
   const widths = chars.map(c => ctx.measureText(c).width);
   const total = widths.reduce((a, b) => a + b, 0);
@@ -58,7 +82,7 @@ function drawText(ctx, text, x, y, progress) {
     if (p > 0) {
       ctx.save();
       ctx.globalAlpha *= clamp(p, 0, 1);
-      ctx.fillText(c, cx, y + (1 - p) * 46);                       // 从下方 46px 弹上来
+      ctx.fillText(c, cx, y + (1 - p) * rise);                    // 从下方弹上来
       ctx.restore();
     }
     cx += widths[i];
@@ -80,9 +104,9 @@ function drawFrame(T) {
   g.fillRect(0, 0, W, H);
 
   const glowPhase = win(T, 0, 1.6);
-  const gx = W * 0.72 + Math.sin(T * 0.35) * 40;
-  const gy = H * 0.30 + Math.cos(T * 0.28) * 24;
-  const rad = g.createRadialGradient(gx, gy, 0, gx, gy, 780);
+  const gx = W * 0.72 + Math.sin(T * 0.35) * 40 * SX;
+  const gy = H * 0.30 + Math.cos(T * 0.28) * 24 * SY;
+  const rad = g.createRadialGradient(gx, gy, 0, gx, gy, 780 * SF);
   rad.addColorStop(0, `rgba(255,184,107,${0.16 * glowPhase})`);
   rad.addColorStop(0.55, `rgba(255,138,61,${0.05 * glowPhase})`);
   rad.addColorStop(1, 'rgba(0,0,0,0)');
@@ -90,8 +114,8 @@ function drawFrame(T) {
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
-  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200) - 600;
-  const sweep = g.createLinearGradient(scx - 620, 0, scx + 620, H);
+  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
+  const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
   sweep.addColorStop(0, 'rgba(255,255,255,0)');
   sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
   sweep.addColorStop(1, 'rgba(255,255,255,0)');
@@ -102,34 +126,55 @@ function drawFrame(T) {
   const lineP = smooth(win(T, 0.15, 1.0));
   g.fillStyle = CFG.accent;
   g.globalAlpha = 0.85 * lineP;
-  g.fillRect(140, lerp(H * 0.5, 300, lineP), 3, lerp(0, 300, lineP));
+  g.fillRect(140 * SX, lerp(H * 0.5, 300 * SY, lineP), 3 * SF, lerp(0, 300 * SY, lineP));
   g.globalAlpha = 1;
 
-  const LX = 200;   // 内容左边距
+  const LX = 200 * SX;                 // 内容左边距
+  const MAXW = W - LX - 140 * SX;      // 文字可用宽度
+
+  /* 版式锚点：横屏沿用原设计（逐像素不变）；竖屏把主标题上提、标签下移，
+     免得副标题几乎占满宽度时和右下角标签贴在一起 */
+  const A_KICKER = PORTRAIT ? H * 0.300 : 386 * SY;
+  const A_TITLE  = PORTRAIT ? H * 0.395 : 540 * SY;
+  const A_SUB    = PORTRAIT ? H * 0.700 : 868 * SY;
+  const A_TAG    = PORTRAIT ? H * 0.800 : H - 190 * SY;
 
   /* 小字 kicker */
   if (CFG.kicker) {
     const p = outExpo(win(T, 0.30, 0.95));
+    const kPx = fitOneLine(CFG.kicker, 28 * SF, MAXW, px => `500 ${px}px ${SANS}`);
     g.save();
     g.globalAlpha = p;
     g.fillStyle = 'rgba(244,247,252,0.62)';
-    g.font = `500 28px ${SANS}`;
-    g.letterSpacing = '10px';                                     // 现代浏览器支持
-    g.fillText(CFG.kicker, LX + (1 - p) * -22, 386);
+    g.font = `500 ${kPx}px ${SANS}`;
+    g.letterSpacing = `${10 * SF}px`;                             // 现代浏览器支持
+    g.fillText(CFG.kicker, LX + (1 - p) * -22 * SX, A_KICKER);
     g.restore();
   }
+
+  /* 主标题字号：以最宽的一行为准，保证多行等大且不出框 */
+  let titlePx = 132 * SF;
+  {
+    let widest = 0;
+    g.save();
+    g.font = `700 ${titlePx}px ${SANS}`;
+    CFG.title.forEach(line => { widest = Math.max(widest, g.measureText(line).width); });
+    g.restore();
+    if (widest > MAXW) titlePx = Math.max(24, titlePx * MAXW / widest);
+  }
+  const gap = 168 * SY * (titlePx / (132 * SF));                  // 行距随字号一起收
 
   /* 主标题：逐字 */
   g.save();
   g.fillStyle = CFG.ink;
-  g.font = `700 132px ${SANS}`;
+  g.font = `700 ${titlePx}px ${SANS}`;
   g.textBaseline = 'alphabetic';
   CFG.title.forEach((line, li) => {
-    const y = 540 + li * 168;
+    const y = A_TITLE + li * gap;
     g.save();
     g.globalAlpha = 1;
     const start = 0.55 + li * 0.22;
-    drawText(g, line, LX, y, (i) => outExpo(clamp((T - start - i * 0.055) / 0.55, 0, 1)));
+    drawText(g, line, LX, y, (i) => outExpo(clamp((T - start - i * 0.055) / 0.55, 0, 1)), 46 * SF);
     g.restore();
   });
   g.restore();
@@ -138,29 +183,31 @@ function drawFrame(T) {
   const ruleP = smooth(win(T, 1.45, 2.05));
   if (ruleP > 0) {
     g.fillStyle = CFG.accent;
-    g.fillRect(LX, 540 + (CFG.title.length - 1) * 168 + 62, lerp(0, 210, ruleP), 6);
+    g.fillRect(LX, A_TITLE + (CFG.title.length - 1) * gap + 62 * SY, lerp(0, 210 * SX, ruleP), 6 * SF);
   }
 
   /* 副标题 */
   const subP = outExpo(win(T, 1.70, 2.35));
   if (subP > 0) {
+    const sPx = fitOneLine(CFG.sub, 34 * SF, MAXW, px => `400 ${px}px ${SANS}`);
     g.save();
     g.globalAlpha = subP * 0.86;
     g.fillStyle = CFG.ink;
-    g.font = `400 34px ${SANS}`;
-    g.fillText(CFG.sub, LX + (1 - subP) * 18, 868);
+    g.font = `400 ${sPx}px ${SANS}`;
+    g.fillText(CFG.sub, LX + (1 - subP) * 18 * SX, A_SUB);
     g.restore();
   }
 
   /* 右下角标签 */
   const tagP = smooth(win(T, 2.25, 2.85));
   if (tagP > 0) {
+    const tPx = fitOneLine(CFG.tag, 24 * SF, W * 0.6, px => `400 ${px}px ${MONO}`);
     g.save();
     g.globalAlpha = tagP * 0.5;
     g.fillStyle = CFG.ink;
-    g.font = `400 24px ${MONO}`;
+    g.font = `400 ${tPx}px ${MONO}`;
     g.textAlign = 'right';
-    g.fillText(CFG.tag, W - 140, H - 190);
+    g.fillText(CFG.tag, W - 140 * SX, A_TAG);
     g.restore();
   }
 }

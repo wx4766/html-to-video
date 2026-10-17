@@ -9,7 +9,7 @@
 </style>
 </head>
 <body>
-<canvas id="stage" width="1920" height="1080"></canvas>
+<canvas id="stage"></canvas>
 <script>
 /* =====================================================================
    模板 ②  ·  横向条形图对比 / 排名
@@ -17,8 +17,9 @@
    用途：业绩对比、排名、份额拆分。条形依次生长，数值同步滚动。
    改 CFG.data 即可（按数值从大到小排，第一条会高亮）。
 
-   出片：
+   出片（横屏 / 竖屏都直接用，模板按视口自适应）：
      bash ../render.sh bar-chart.html --duration=6 --fps=60
+     bash ../render.sh bar-chart.html --duration=6 --fps=60 --width=1080 --height=1920
    ===================================================================== */
 const CFG = {
   title:    '上半年各渠道新增用户',
@@ -39,8 +40,18 @@ const CFG = {
 };
 /* ===================================================================== */
 
-const W = 1920, H = 1080, DUR = CFG.dur;
+/* ---------- 舞台：跟随视口 ---------- */
 const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const DUR = CFG.dur;
+/* 三档缩放：1920×1080 时 SX=SY=SF=1（与旧版逐像素一致） */
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+
 const g = cv.getContext('2d');
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
@@ -52,10 +63,24 @@ const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
 const outCubic = t => 1 - Math.pow(1 - t, 3);
 const fmt = v => v.toLocaleString('zh-CN', { maximumFractionDigits: 1 });
 
-/* 图表几何 */
-const X0 = 560, X1 = 1700;                     // 条形起点 / 最大终点
-const Y0 = 286, ROW = 116, BAR = 56;           // 底部留白 >15%，避免落进烧录字幕带
+/* 图表几何（设计稿 1920×1080 坐标系，再按 SX/SY 落到实际画布） */
+const X0 = 560 * SX, X1 = 1700 * SX;               // 条形起点 / 最大终点
+const Y0 = 286 * SY, ROW = 116 * SY, BAR = 56 * SY; // 底部留白 >15%，避免落进烧录字幕带
 const MAXV = Math.max(...CFG.data.map(d => d.value));
+const LEFT = 160 * SX;                             // 左页边距
+const GAP_LABEL = 40 * SX;                         // 标签与条形的间距
+
+/* 标签列太窄时自动缩字号，不压到边、不撞条形 */
+const LABEL_MAXW = Math.max(20, X0 - GAP_LABEL - LEFT);
+let LABEL_PX = 36 * SF;
+{
+  let widest = 0;
+  g.save();
+  g.font = `500 ${LABEL_PX}px ${SANS}`;
+  CFG.data.forEach(d => { widest = Math.max(widest, g.measureText(d.label).width); });
+  g.restore();
+  if (widest > LABEL_MAXW) LABEL_PX = Math.max(12, LABEL_PX * LABEL_MAXW / widest);
+}
 
 function drawFrame(T) {
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -70,8 +95,8 @@ function drawFrame(T) {
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
-  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200) - 600;
-  const sweep = g.createLinearGradient(scx - 620, 0, scx + 620, H);
+  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
+  const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
   sweep.addColorStop(0, 'rgba(255,255,255,0)');
   sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
   sweep.addColorStop(1, 'rgba(255,255,255,0)');
@@ -83,11 +108,11 @@ function drawFrame(T) {
   g.save();
   g.globalAlpha = tiP;
   g.fillStyle = CFG.ink;
-  g.font = `700 62px ${SANS}`;
-  g.fillText(CFG.title, 160, 168 + (1 - tiP) * 24);
+  g.font = `700 ${62 * SF}px ${SANS}`;
+  g.fillText(CFG.title, LEFT, 168 * SY + (1 - tiP) * 24 * SY);
   g.globalAlpha = tiP * 0.55;
-  g.font = `400 30px ${SANS}`;
-  g.fillText(CFG.sub, 160, 226);
+  g.font = `400 ${30 * SF}px ${SANS}`;
+  g.fillText(CFG.sub, LEFT, 226 * SY);
   g.restore();
 
   /* 基线 */
@@ -95,7 +120,7 @@ function drawFrame(T) {
   g.save();
   g.globalAlpha = 0.16 * axP;
   g.fillStyle = CFG.ink;
-  g.fillRect(X0, Y0 - 26, 2, CFG.data.length * ROW + 20);
+  g.fillRect(X0, Y0 - 26 * SY, 2 * SF, CFG.data.length * ROW + 20 * SY);
   g.restore();
 
   /* 条形 */
@@ -134,19 +159,29 @@ function drawFrame(T) {
     g.save();
     g.globalAlpha = fade * 0.92;
     g.fillStyle = CFG.ink;
-    g.font = `500 36px ${SANS}`;
+    g.font = `500 ${LABEL_PX}px ${SANS}`;
     g.textAlign = 'right';
-    g.fillText(d.label, X0 - 40, cy + 13);
+    g.fillText(d.label, X0 - GAP_LABEL, cy + 13 * SF);
     g.restore();
 
-    /* 数值（跟着条尾走） */
+    /* 数值（跟着条尾走；条太靠右就挪到条内右端，绝不越界） */
     if (grow > 0.02) {
+      const vPx = 40 * SF;
       g.save();
       g.globalAlpha = clamp(fade * grow * 1.4, 0, 1);
-      g.fillStyle = isTop ? CFG.accent : 'rgba(95,224,192,0.95)';
-      g.font = `700 40px ${MONO}`;
+      g.font = `700 ${vPx}px ${MONO}`;
       const shown = d.value * grow;
-      g.fillText(fmt(shown) + CFG.unit, X0 + w + 26, cy + 14);
+      const label = fmt(shown) + CFG.unit;
+      const tw = g.measureText(label).width;
+      if (X0 + w + 26 * SX + tw > W - 40 * SX) {
+        /* 放不下：进条内，深色字 */
+        g.textAlign = 'right';
+        g.fillStyle = 'rgba(10,12,18,0.88)';
+        g.fillText(label, X0 + w - 18 * SX, cy + 14 * SF);
+      } else {
+        g.fillStyle = isTop ? CFG.accent : 'rgba(95,224,192,0.95)';
+        g.fillText(label, X0 + w + 26 * SX, cy + 14 * SF);
+      }
       g.restore();
     }
   });
@@ -157,8 +192,8 @@ function drawFrame(T) {
     g.save();
     g.globalAlpha = noP * 0.42;
     g.fillStyle = CFG.ink;
-    g.font = `400 24px ${SANS}`;
-    g.fillText(CFG.note, 160, H - 190);
+    g.font = `400 ${24 * SF}px ${SANS}`;
+    g.fillText(CFG.note, LEFT, H - 190 * SY);
     g.restore();
   }
 }

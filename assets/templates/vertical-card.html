@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 竖屏卡片 9:16</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+/* =====================================================================
+   模板 ⑥  ·  竖屏卡片（原生 9:16）
+   ---------------------------------------------------------------------
+   用途：抖音 / 视频号 / Reels / Shorts 的竖屏片头或数据卡。
+   这不是把横屏拉长 —— 版式是按 1080×1920 重新排的：
+   大字标题在上、大数字在下、脚注避开底部字幕带。
+
+   出片（默认就是竖屏尺寸）：
+     bash ../render.sh vertical-card.html --duration=6 --fps=60 --width=1080 --height=1920
+   横屏下也能渲染（会等比缩小、守在画面里），但不建议 —— 这是给竖屏用的。
+   ===================================================================== */
+const CFG = {
+  kicker: '2026 · 竖屏样本',
+  title:  ['一条视频', '三分钟做完'],          // 1–3 行，一行一个字符串
+  sub:    '改几行字就出片，不用开剪辑软件',
+  label:  '全网播放量',                        // 大数字下面的说明
+  value:  3600,                               // 大数字（会滚动到目标值）
+  unit:   '万',                               // 单位，不要就 ''
+  decimals: 0,
+  foot:   '9:16 · 1080×1920',
+  dur:    6.0,
+  accent: '#FFB86B',
+  ink:    '#F4F7FC',
+  bg:     '#080A10',
+};
+/* ===================================================================== */
+
+/* ---------- 舞台：跟随视口 ---------- */
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const DUR = CFG.dur;
+
+/* 这是一张竖屏卡：以 1080 宽为设计基准，U 是统一的尺寸单位。
+   9:16 下 U = 1；被塞进横屏时 U < 1，内容整体缩小但仍守在画面里。 */
+const U = Math.min(W, H * (1080 / 1920)) / 1080;
+const PAD = 96 * U;                       // 左右页边距
+
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const outCubic = t => 1 - Math.pow(1 - t, 3);
+const smooth = t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); };
+const quintOut = t => 1 - Math.pow(1 - t, 5);
+
+const fmt = v => v.toLocaleString('zh-CN', {
+  minimumFractionDigits: CFG.decimals,
+  maximumFractionDigits: CFG.decimals,
+});
+
+/* ---------- 版式（按行数动态排，不写死） ---------- */
+const MAXW = W - PAD * 2;
+const TITLE_TOP = H * 0.225;
+const TITLE_GAP = H * 0.090;
+
+/* 标题字号：以最宽一行为准自动收，最多收到设计值的 55% */
+let TITLE_PX = 104 * U;
+{
+  let widest = 0;
+  g.save();
+  g.font = `700 ${TITLE_PX}px ${SANS}`;
+  CFG.title.forEach(l => { widest = Math.max(widest, g.measureText(l).width); });
+  g.restore();
+  if (widest > MAXW) TITLE_PX = Math.max(104 * U * 0.55, TITLE_PX * MAXW / widest);
+}
+
+const LAST_TITLE_Y = TITLE_TOP + (CFG.title.length - 1) * TITLE_GAP;
+const RULE_Y = LAST_TITLE_Y + H * 0.050;
+const SUB_Y = RULE_Y + H * 0.072;
+const NUM_Y = H * 0.660;
+const LABEL_Y = NUM_Y + H * 0.058;
+const FOOT_Y = H * 0.835;                 // 底部 15% 留给烧录字幕，不压字
+
+/* 大数字字号：连同单位一起量，超宽就缩 */
+const { NUM_PX, UNIT_PX } = (() => {
+  let npx = 208 * U;
+  const upx = 64 * U;
+  g.save();
+  g.font = `700 ${npx}px ${MONO}`;
+  const nw = g.measureText(fmt(CFG.value)).width;
+  g.font = `700 ${upx}px ${SANS}`;
+  const uw = CFG.unit ? g.measureText(CFG.unit).width + 18 * U : 0;
+  g.restore();
+  const total = nw + uw;
+  if (total > MAXW) npx = Math.max(npx * 0.5, npx * (MAXW - uw) / nw);
+  return { NUM_PX: npx, UNIT_PX: upx * (npx / (208 * U)) };
+})();
+
+function drawFrame(T) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  /* 背景：深色渐变 */
+  const bg = g.createLinearGradient(0, 0, W * 0.4, H);
+  bg.addColorStop(0, CFG.bg);
+  bg.addColorStop(1, '#0E1420');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+
+  /* 呼吸暖光：右下角，慢慢起伏 */
+  const glowP = outCubic(win(T, 0, 1.4));
+  const gx = W * 0.82, gy = H * 0.72 + Math.sin(T * 0.5) * 18 * U;
+  const rad = g.createRadialGradient(gx, gy, 0, gx, gy, W * 0.92);
+  rad.addColorStop(0, `rgba(255,184,107,${0.17 * glowP})`);
+  rad.addColorStop(0.5, `rgba(255,138,61,${0.06 * glowP})`);
+  rad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = rad;
+  g.fillRect(0, 0, W, H);
+
+  /* 环境光扫：极淡光带缓慢下移 —— 定格待读时画面不死 */
+  const scy = (T / DUR * 1.7 - 0.35) * (H + 1400 * U) - 700 * U;
+  const sweep = g.createLinearGradient(0, scy - 700 * U, W, scy + 700 * U);
+  sweep.addColorStop(0, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0.5, 'rgba(255,255,255,0.045)');
+  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = sweep;
+  g.fillRect(0, 0, W, H);
+
+  /* 顶部左侧短竖线（生长） */
+  const barP = smooth(win(T, 0.10, 0.85));
+  g.fillStyle = CFG.accent;
+  g.globalAlpha = 0.9 * barP;
+  g.fillRect(PAD, H * 0.150 - 28 * U, 4 * U, lerp(0, 46 * U, barP));
+  g.globalAlpha = 1;
+
+  /* kicker */
+  const kP = outExpo(win(T, 0.22, 0.85));
+  g.save();
+  g.globalAlpha = kP * 0.66;
+  g.fillStyle = CFG.ink;
+  g.font = `500 ${28 * U}px ${MONO}`;
+  g.letterSpacing = `${6 * U}px`;
+  g.fillText(CFG.kicker, PAD + 22 * U + (1 - kP) * -14 * U, H * 0.150);
+  g.restore();
+
+  /* 主标题：逐行升起 */
+  g.save();
+  g.fillStyle = CFG.ink;
+  g.font = `700 ${TITLE_PX}px ${SANS}`;
+  CFG.title.forEach((line, i) => {
+    const p = outExpo(clamp((T - (0.42 + i * 0.17)) / 0.62, 0, 1));
+    if (p <= 0) return;
+    g.globalAlpha = p;
+    g.fillText(line, PAD, TITLE_TOP + i * TITLE_GAP + (1 - p) * 40 * U);
+  });
+  g.restore();
+
+  /* 强调色短线 */
+  const ruleP = smooth(win(T, 1.05, 1.65));
+  if (ruleP > 0) {
+    g.fillStyle = CFG.accent;
+    g.fillRect(PAD, RULE_Y, lerp(0, 132 * U, ruleP), 5 * U);
+  }
+
+  /* 副标题 */
+  const sP = outExpo(win(T, 1.30, 1.95));
+  if (sP > 0) {
+    let spx = 38 * U;
+    g.save();
+    g.font = `400 ${spx}px ${SANS}`;
+    const w = g.measureText(CFG.sub).width;
+    if (w > MAXW) spx = Math.max(spx * 0.6, spx * MAXW / w);
+    g.globalAlpha = sP * 0.72;
+    g.fillStyle = CFG.ink;
+    g.font = `400 ${spx}px ${SANS}`;
+    g.fillText(CFG.sub, PAD, SUB_Y + (1 - sP) * 16 * U);
+    g.restore();
+  }
+
+  /* 分隔细线 */
+  const divP = outCubic(win(T, 1.75, 2.35));
+  g.save();
+  g.globalAlpha = 0.14 * divP;
+  g.fillStyle = CFG.ink;
+  g.fillRect(PAD, H * 0.560, (MAXW) * divP, 2 * U);
+  g.restore();
+
+  /* 大数字：滚动 */
+  const nP = quintOut(win(T, 1.95, 4.30));
+  const shown = CFG.value * nP;
+  const numStr = fmt(shown);
+  const popP = outExpo(win(T, 1.85, 2.55));
+
+  g.save();
+  g.globalAlpha = popP;
+  g.textBaseline = 'alphabetic';
+  g.fillStyle = CFG.accent;
+  g.font = `700 ${NUM_PX}px ${MONO}`;
+  const nw = g.measureText(numStr).width;
+  g.fillText(numStr, PAD, NUM_Y);
+  if (CFG.unit) {
+    g.fillStyle = 'rgba(244,247,252,0.62)';
+    g.font = `700 ${UNIT_PX}px ${SANS}`;
+    g.fillText(CFG.unit, PAD + nw + 18 * U, NUM_Y - 18 * U);
+  }
+  g.restore();
+
+  /* 数字说明 */
+  const labP = outExpo(win(T, 3.55, 4.15));
+  if (labP > 0) {
+    g.save();
+    g.globalAlpha = labP * 0.6;
+    g.fillStyle = CFG.ink;
+    g.font = `400 ${32 * U}px ${SANS}`;
+    g.fillText(CFG.label, PAD + (1 - labP) * 14 * U, LABEL_Y);
+    g.restore();
+  }
+
+  /* 脚注（在底部安全区之上） */
+  const fP = outCubic(win(T, 4.20, 4.90));
+  if (fP > 0) {
+    g.save();
+    g.globalAlpha = fP * 0.34;
+    g.fillStyle = CFG.ink;
+    g.font = `400 ${24 * U}px ${MONO}`;
+    g.fillText(CFG.foot, PAD, FOOT_Y);
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约：这段不要改 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

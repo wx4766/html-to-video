@@ -9,16 +9,18 @@
 </style>
 </head>
 <body>
-<canvas id="stage" width="1920" height="1080"></canvas>
+<canvas id="stage"></canvas>
 <script>
 /* =====================================================================
    模板 ④  ·  大数字 / KPI 卡
    ---------------------------------------------------------------------
    用途：年报、成绩单、KPI、里程碑。一个数字从 0 滚到目标值，
    配同比涨跌标签与进度条。改 CFG 即可。
+   数字过长会自动缩字号（竖屏尤其需要），不会撑出画面。
 
    出片：
      bash ../render.sh number-counter.html --duration=7 --fps=60
+     bash ../render.sh number-counter.html --duration=7 --fps=60 --width=1080 --height=1920
    ===================================================================== */
 const CFG = {
   label:   '年度总营收',
@@ -36,8 +38,18 @@ const CFG = {
 };
 /* ===================================================================== */
 
-const W = 1920, H = 1080, DUR = CFG.dur;
+/* ---------- 舞台：跟随视口 ---------- */
 const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const DUR = CFG.dur;
+/* 三档缩放：1920×1080 时 SX=SY=SF=1（与旧版逐像素一致） */
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+
 const g = cv.getContext('2d');
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
@@ -55,6 +67,31 @@ const fmt = v => v.toLocaleString('zh-CN', {
   maximumFractionDigits: CFG.decimals,
 });
 
+/* 数字区自动适配：按最终值（最长的一帧）量宽度，超了就整体缩字号 */
+const MAXW = W * 0.84;
+const NUM_BASE = 232 * SF, SMALL_BASE = 64 * SF;
+const {
+  k: FIT_K, numPx: NUM_PX, smallPx: SMALL_PX, preGap: PRE_GAP, unitGap: UNIT_GAP,
+} = (() => {
+  const full = fmt(CFG.value);
+  g.save();
+  g.font = `700 ${NUM_BASE}px ${MONO}`;
+  const nw = g.measureText(full).width;
+  g.font = `700 ${SMALL_BASE}px ${SANS}`;
+  const uw = CFG.unit ? g.measureText(CFG.unit).width + 26 * SX : 0;
+  const pw = CFG.prefix ? g.measureText(CFG.prefix).width + 20 * SX : 0;
+  g.restore();
+  const total = pw + nw + uw;
+  const k = total > MAXW && total > 0 ? MAXW / total : 1;
+  return {
+    k,
+    numPx: NUM_BASE * k,
+    smallPx: SMALL_BASE * k,
+    preGap: 20 * SX * k,
+    unitGap: 26 * SX * k,
+  };
+})();
+
 function drawFrame(T) {
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.globalAlpha = 1;
@@ -67,15 +104,15 @@ function drawFrame(T) {
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
   const gxp = outCubic(win(T, 0, 1.2));
-  const rad = g.createRadialGradient(W / 2, H * 0.5, 0, W / 2, H * 0.5, 820);
+  const rad = g.createRadialGradient(W / 2, H * 0.5, 0, W / 2, H * 0.5, 820 * SF);
   rad.addColorStop(0, `rgba(255,184,107,${0.13 * gxp})`);
   rad.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = rad;
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
-  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200) - 600;
-  const sweep = g.createLinearGradient(scx - 620, 0, scx + 620, H);
+  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
+  const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
   sweep.addColorStop(0, 'rgba(255,255,255,0)');
   sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
   sweep.addColorStop(1, 'rgba(255,255,255,0)');
@@ -87,9 +124,9 @@ function drawFrame(T) {
   g.save();
   g.globalAlpha = labP * 0.7;
   g.fillStyle = CFG.ink;
-  g.font = `500 38px ${SANS}`;
+  g.font = `500 ${38 * SF}px ${SANS}`;
   g.textAlign = 'center';
-  g.fillText(CFG.label, W / 2, 372 + (1 - labP) * 20);
+  g.fillText(CFG.label, W / 2, 372 * SY + (1 - labP) * 20 * SY);
   g.restore();
 
   /* 大数字：滚动 */
@@ -100,35 +137,35 @@ function drawFrame(T) {
   g.save();
   g.textAlign = 'center';
   g.textBaseline = 'alphabetic';
-  g.font = `700 232px ${MONO}`;
+  g.font = `700 ${NUM_PX}px ${MONO}`;
   const numW = g.measureText(numStr).width;
-  g.font = `700 64px ${SANS}`;
-  const unitW = CFG.unit ? g.measureText(CFG.unit).width + 26 : 0;
-  const preW = CFG.prefix ? g.measureText(CFG.prefix).width + 20 : 0;
+  g.font = `700 ${SMALL_PX}px ${SANS}`;
+  const unitW = CFG.unit ? g.measureText(CFG.unit).width + UNIT_GAP : 0;
+  const preW = CFG.prefix ? g.measureText(CFG.prefix).width + PRE_GAP : 0;
   const totalW = preW + numW + unitW;
   const startX = W / 2 - totalW / 2;
 
   /* 轻微数字弹入 */
   const pop = outExpo(win(T, 0.45, 1.15));
   g.globalAlpha = clamp(pop, 0, 1);
-  const yBase = 640;
+  const yBase = 640 * SY;
   g.fillStyle = CFG.ink;
 
   let x = startX;
   if (CFG.prefix) {
-    g.font = `700 64px ${SANS}`;
+    g.font = `700 ${SMALL_PX}px ${SANS}`;
     g.fillStyle = 'rgba(244,247,252,0.55)';
-    g.fillText(CFG.prefix, x + g.measureText(CFG.prefix).width / 2, yBase - 96);
+    g.fillText(CFG.prefix, x + g.measureText(CFG.prefix).width / 2, yBase - 96 * SF * FIT_K);
     g.fillStyle = CFG.ink;
     x += preW;
   }
-  g.font = `700 232px ${MONO}`;
+  g.font = `700 ${NUM_PX}px ${MONO}`;
   g.fillText(numStr, x + numW / 2, yBase);
   x += numW;
   if (CFG.unit) {
-    g.font = `700 64px ${SANS}`;
+    g.font = `700 ${SMALL_PX}px ${SANS}`;
     g.fillStyle = 'rgba(244,247,252,0.55)';
-    g.fillText(CFG.unit, x + unitW / 2, yBase - 22);
+    g.fillText(CFG.unit, x + unitW / 2, yBase - 22 * SF * FIT_K);
   }
   g.restore();
 
@@ -140,23 +177,23 @@ function drawFrame(T) {
       const tint = CFG.delta.up ? 'rgba(255,107,107,0.16)' : 'rgba(95,224,192,0.16)';
       g.save();
       g.globalAlpha = p;
-      g.font = `600 34px ${SANS}`;
+      g.font = `600 ${34 * SF}px ${SANS}`;
       const tw = g.measureText(CFG.delta.text).width;
-      const bw = tw + 56, bh = 62;
-      const bx = W / 2 - bw / 2, by = 730 + (1 - p) * 16;
+      const bw = tw + 56 * SX, bh = 62 * SF;
+      const bx = W / 2 - bw / 2, by = 730 * SY + (1 - p) * 16 * SY;
       g.fillStyle = tint;
       g.beginPath();
-      if (g.roundRect) g.roundRect(bx, by, bw, bh, 31); else g.rect(bx, by, bw, bh);
+      if (g.roundRect) g.roundRect(bx, by, bw, bh, 31 * SF); else g.rect(bx, by, bw, bh);
       g.fill();
       g.fillStyle = color;
       g.textAlign = 'center';
-      g.fillText(CFG.delta.text, W / 2, by + 43);
+      g.fillText(CFG.delta.text, W / 2, by + 43 * SF);
       g.restore();
     }
   }
 
   /* 底部进度条 */
-  const barW = 900, barX = (W - barW) / 2, barY = 830, barH = 8;
+  const barW = 900 * SX, barX = (W - barW) / 2, barY = 830 * SY, barH = 8 * SF;
   const barIn = outCubic(win(T, 3.30, 4.30));
   g.save();
   g.globalAlpha = 0.12 * barIn;
@@ -173,9 +210,9 @@ function drawFrame(T) {
     g.save();
     g.globalAlpha = noP * 0.42;
     g.fillStyle = CFG.ink;
-    g.font = `400 24px ${SANS}`;
+    g.font = `400 ${24 * SF}px ${SANS}`;
     g.textAlign = 'center';
-    g.fillText(CFG.foot, W / 2, H - 180);
+    g.fillText(CFG.foot, W / 2, H - 180 * SY);
     g.restore();
   }
 }

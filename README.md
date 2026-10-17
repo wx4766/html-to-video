@@ -1,5 +1,9 @@
 # html-to-video · 用代码逐帧做视频
 
+[![CI](https://github.com/wx4766/html-to-video/actions/workflows/ci.yml/badge.svg)](https://github.com/wx4766/html-to-video/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
+
 把 HTML / Canvas 动画**逐帧渲染成 MP4**（可配乐、可出 GIF）。
 
 不是 AI 文生视频，而是：
@@ -21,12 +25,13 @@
 | **文字完美** | 中文字体渲染正常，不会像文生视频那样糊成一团或错别字 |
 | **零费用** | 本地跑，不调任何 API |
 | **有质量门** | 内置自动化验收：确定性、卡顿、跳变、半截字、叠字、字幕带、字体回退 |
-| **开箱即用** | 5 个模板改个配置块就出片，不用从零学 canvas |
+| **开箱即用** | 6 个模板改个配置块就出片，不用从零学 canvas |
+| **横竖屏都行** | 模板跟视口自适应，16:9 / 9:16 换 `--width/--height` 即可，不裁切 |
 
 适合：讲解动画、动态图解、产品演示、数据可视化动画、游戏宣传片。
 不适合：实拍感 / 氛围镜头（那个应该走 VideoGen）。
 
-## 5 个开箱即用模板
+## 6 个开箱即用模板
 
 拷贝一个，改顶部 `CFG` 里的文案和数据，直接出片。
 
@@ -37,8 +42,9 @@
 | [![](docs/demo-line-chart.gif)](docs/demo-line-chart.mp4) | `assets/templates/line-chart.html` | **折线趋势**：折线生长 + 数据点亮起 + 末点数值浮标 |
 | [![](docs/demo-number-counter.gif)](docs/demo-number-counter.mp4) | `assets/templates/number-counter.html` | **大数字 / KPI**：从 0 滚到目标值 + 涨跌标签 + 进度条 |
 | [![](docs/demo-timeline.gif)](docs/demo-timeline.mp4) | `assets/templates/timeline.html` | **时间线 / 流程**：中轴生长，节点逐个点亮 |
+| [<img src="docs/demo-vertical-card.gif" width="150" alt="竖屏卡">](docs/demo-vertical-card.mp4) | `assets/templates/vertical-card.html` | **竖屏 9:16 卡**：大字标题 + 大数字，抖音 / 视频号 / Reels 用 |
 
-> 动图 400×225 / 10fps，只为让你看见「它在动」；**点动图打开 1080p 原片**看真实画质。
+> 动图只为让你看见「它在动」；**点动图打开原片**看真实画质（横屏 1080p，竖屏 1080×1920）。
 > 静帧大图在 `docs/preview-*.png`。
 
 ```bash
@@ -46,6 +52,22 @@ cp assets/templates/bar-chart.html my-video.html
 # 改 my-video.html 顶部的 CFG：title / data / note
 bash assets/render.sh my-video.html --duration=6 --fps=60
 ```
+
+### 横屏 / 竖屏：换两个参数就行
+
+模板都按视口设画布，**不用改代码**：
+
+```bash
+bash assets/render.sh title-card.html --duration=6 --fps=60                              # 1920×1080
+bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1080 --height=1920   # 9:16
+bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1280 --height=720    # 720p
+```
+
+模板内部用三档缩放落版：`SX = W/1920`（横向）、`SY = H/1080`（纵向）、
+`SF = √(SX·SY)`（字号 / 线宽）。1920×1080 下三者都是 1，所以默认输出保持不变；
+换竖屏时字号不缩、版式铺开。自己写的动画照这三行来，就不会出现「改了 --width 只截到左上角」。
+
+> 渲染器现在会主动量画布尺寸，比视口小会明确告警，不再静默出半张图。
 
 ## 安装
 
@@ -262,26 +284,62 @@ Playwright 版本和浏览器缓存 build 号不匹配。跑 `node scripts/detec
 ```
 html-to-video/
 ├── SKILL.md                       技能说明（WorkBuddy 读取）
+├── package.json                   可 npm install；engines: node >= 18
+├── CONTRIBUTING.md                贡献指南（加模板的四条硬约定在这里）
 ├── scripts/
 │   ├── render-video-seek.js       渲染器内核：冻结时钟 + 逐帧 seek + ffmpeg 编码 + 报错判定
 │   ├── qa.js                      自动化验收：确定性/动感/流畅/框景/字体/报错
 │   ├── lib/hide-chrome.cjs        隐藏播放控件的共享规则（渲染器与验收器同一份）
 │   ├── lib/local-server.cjs       本地 http 静态服务器（解锁 ESM / fetch，零新依赖）
+│   ├── lib/testing.mjs            测试公用件（依赖路径解析 / 子进程 / PSNR 探针）
 │   ├── detect-env.js              探测浏览器缓存，输出该装哪个 playwright 版本
 │   └── install-deps.sh            一键装依赖并写配置
+├── test/
+│   ├── render-smoke.test.mjs      真渲两段（16:9 / 9:16），验分辨率与尺寸告警
+│   ├── qa-clean.test.mjs          正常模板必须 PASS
+│   ├── qa-detects.test.mjs        对照组必须 FAIL（六类缺陷）
+│   ├── templates-contract.test.mjs 模板契约静态检查
+│   └── fixtures/broken.html       故意做坏的对照组页面
+├── .github/workflows/ci.yml       PR 自动跑 npm test
 └── assets/
     ├── render.sh                  全量渲染包装器
     ├── qa.sh                      验收包装器
     ├── smoke.sh / smoke.cjs       冒烟测试：验证契约 + 试截关键帧
     ├── animation-skeleton.html    动画骨架模板（已实现完整渲染契约）
     ├── lib/motion.js              动效时间库（缓动/弹簧/步进/错开）
-    └── templates/                 5 个开箱即用模板
+    └── templates/                 6 个开箱即用模板
         ├── title-card.html        片头标题卡
         ├── bar-chart.html         条形图 / 排名
         ├── line-chart.html        折线趋势
         ├── number-counter.html    大数字 / KPI
-        └── timeline.html          时间线 / 流程
+        ├── timeline.html          时间线 / 流程
+        └── vertical-card.html     竖屏 9:16 卡片
 ```
+
+## 开发与测试
+
+```bash
+npm install          # 装 playwright（ffmpeg 见上面「安装」，必须是完整版）
+npm test             # 10 个用例，约 1 分钟
+```
+
+测试里有一对**对照组**，这是整个项目最该守住的东西：
+
+| 用例 | 断言 | 防的是什么 |
+|---|---|---|
+| `qa-clean` | 正常模板必须 PASS | 判据过严 → 天天误报，人就不看了 |
+| `qa-detects` | `test/fixtures/broken.html` 必须 FAIL | 判据过松 → 质量门变成装饰 |
+
+只调松不放对照组，等于把质量门拆了。改 `scripts/qa.js` 时两个都跑一遍。
+
+## 贡献
+
+欢迎 PR。**最需要的是新模板**（逐句解说卡、前后对比图、流程图动画都很缺）。
+
+加模板的四条硬约定（渲染契约 / 画布跟随视口 / 字幕安全区 / 别定格太久）写在
+[CONTRIBUTING.md](CONTRIBUTING.md)，照 `assets/templates/title-card.html` 抄骨架最快。
+
+提 Bug 请带上**复现命令**和 `qa/qa.md` —— 比贴截图有用得多。
 
 ## License
 

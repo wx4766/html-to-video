@@ -153,6 +153,36 @@ async function waitRaf(page, n) {
   }), n);
 }
 
+/* 画布比视口小 → 截图按 (0,0,W,H) 裁，右下角会被静默裁掉，画面照样出、只是缺一块。
+   这是最阴的坑：改了 --width/--height 而页面把 canvas 尺寸写死就中招，且不报错。
+   所以每个 page 就绪后量一次，量到就明确说出来。 */
+const SIZE_WARN = new Set();
+async function checkStageSize(page) {
+  let msg = null;
+  try {
+    msg = await page.evaluate(() => {
+      const c = document.querySelector('canvas');
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      const cw = Math.round(r.width), ch = Math.round(r.height);
+      if (cw + 1 >= window.innerWidth && ch + 1 >= window.innerHeight) return null;
+      return `画布 ${cw}×${ch} 小于视口 ${window.innerWidth}×${window.innerHeight}，截图只取左上角，右下会被裁掉`;
+    });
+  } catch (e) { return; }
+  if (msg) SIZE_WARN.add(msg);
+}
+
+function printSizeWarnings() {
+  if (!SIZE_WARN.size) return;
+  console.warn('');
+  console.warn('⚠ 画面尺寸和视口对不上（成片会缺右下角，但不会报错）：');
+  for (const m of SIZE_WARN) console.warn('  · ' + m);
+  console.warn('  修法：canvas 尺寸跟随视口 ——');
+  console.warn('    cv.width = window.innerWidth; cv.height = window.innerHeight;');
+  console.warn('  （assets/templates/*.html 都已这样写，可直接照抄）');
+  console.warn('');
+}
+
 // 一个 worker：开一个 page，goto，等 __seek 就绪，渲染分配给它的帧
 async function renderFrames(context, url, frames, onPage) {
   const page = await context.newPage();
@@ -174,6 +204,7 @@ async function renderFrames(context, url, frames, onPage) {
   if (await page.evaluate(() => typeof window.__seek !== 'function')) {
     throw new Error('__ready 为 true 但没暴露 window.__seek');
   }
+  await checkStageSize(page);
 
   for (const f of frames) {
     const t = f / FPS;
@@ -199,6 +230,7 @@ async function renderStills(context, url, times, onPage) {
   );
   const bootFailed = await page.evaluate(() => window.__bootFailed || null);
   if (bootFailed) throw new Error('页面自报启动失败（window.__bootFailed）：\n' + bootFailed);
+  await checkStageSize(page);
 
   fs.mkdirSync(STILL_DIR, { recursive: true });
   for (const t of times) {
@@ -303,6 +335,7 @@ async function renderStills(context, url, times, onPage) {
 
   await browser.close();
   if (server) { try { await server.close(); } catch (e) { /* 关不掉也不影响成片 */ } }
+  printSizeWarnings();
 
   // ── 报错检查：在编码之前，先把「画面可能是坏的」这件事说清楚 ──
   // 保留成片（能直接看）但最终非零退出，让脚本/CI 能感知失败。

@@ -1,6 +1,6 @@
 ---
 name: html-to-video
-description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可出 GIF）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」时使用。自带渲染器与 5 个开箱即用模板，装好依赖后一条命令出片。
+description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可出 GIF）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」时使用。自带渲染器与 6 个开箱即用模板（含竖屏 9:16），装好依赖后一条命令出片。
 agent_created: true
 ---
 
@@ -21,7 +21,7 @@ agent_created: true
 最适合做：讲解动画、动态图解、产品演示、数据可视化动画、宣传片片头。
 不适合：实拍感/氛围镜头（那种走 VideoGen）。
 
-**能拿它做什么**（`assets/templates/` 里 5 个模板直接改字就能出片）：
+**能拿它做什么**（`assets/templates/` 里 6 个模板直接改字就能出片）：
 
 | 模板 | 用途 | 出片 |
 |---|---|---|
@@ -30,9 +30,44 @@ agent_created: true
 | `line-chart.html` | 折线趋势：折线生长 + 数据点亮起 + 末点浮标 | `--duration=8` |
 | `number-counter.html` | 大数字/KPI：从 0 滚到目标值 + 涨跌标签 | `--duration=7` |
 | `timeline.html` | 时间线/流程：中轴生长，节点逐个点亮 | `--duration=7` |
+| `vertical-card.html` | **竖屏 9:16 卡片**：大字标题 + 大数字，抖音/视频号/Reels 用 | `--duration=6 --width=1080 --height=1920` |
 
 每个模板**单文件自包含**，顶部有一个显眼的 `CFG` 配置块，改文案/数据即可 ——
 不用懂 canvas 也能出片。想做别的，再看 `assets/animation-skeleton.html` 从零写。
+
+### 尺寸：模板跟视口走，不用手改
+
+6 个模板都按 `window.innerWidth/innerHeight` 设画布，所以**换任何尺寸都不裁切**：
+
+```bash
+# 横屏 1080p（默认）
+bash assets/render.sh title-card.html --duration=6 --fps=60
+# 竖屏 9:16
+bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1080 --height=1920
+# 720p / 4K 同理
+bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1280 --height=720
+```
+
+模板内部用三档缩放把设计稿落到实际画布：
+
+| 变量 | 含义 | 1920×1080 | 1080×1920 |
+|---|---|---|---|
+| `SX = W/1920` | 横向尺寸、左右边距 | 1 | 0.5625 |
+| `SY = H/1080` | 纵向尺寸、行距 | 1 | 1.7778 |
+| `SF = √(SX·SY)` | 字号、线宽、圆角、模糊 | 1 | 1 |
+
+字号用面积等比（`SF`）而不是跟宽度走 —— 换成竖屏时字**不会变小**，只是版式铺开。
+`1920×1080` 下三者都等于 1，所以**默认输出与旧版逐像素一致**（实测 PSNR = inf）。
+
+**自己写的动画也照这个来**，否则改 `--width/--height` 会静默裁掉右下角：
+
+```js
+const cv = document.getElementById('stage');
+cv.width  = window.innerWidth;      // ← 不要写死 1920
+cv.height = window.innerHeight;     // ← 不要写死 1080
+```
+
+渲染器现在会主动量一次画布尺寸，比视口小就明确告警（不再静默出半张图）。
 
 ## 先装依赖（只需一次）
 
@@ -314,7 +349,7 @@ bash assets/qa.sh animation.html --duration=12 --fps=30
 | `assets/smoke.sh` / `smoke.cjs` | 冒烟测试：验证 `__seek` 契约 + 试截关键帧 |
 | `assets/qa.sh` | 验收包装器，环境解析同上 |
 | `assets/animation-skeleton.html` | 动画骨架模板，已实现完整渲染契约 |
-| `assets/templates/*.html` | 5 个开箱即用模板（片头/条形图/折线/大数字/时间线），改 CFG 即用 |
+| `assets/templates/*.html` | 6 个开箱即用模板（片头/条形图/折线/大数字/时间线/竖屏卡），改 CFG 即用 |
 | `assets/lib/motion.js` | 动效时间库（缓动/弹簧/步进/错开），纯函数、零依赖 |
 
 ## 设计品味另找专业分工
