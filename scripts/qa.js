@@ -48,9 +48,11 @@
  *
  * ── 已知盲区（看报告时心里有数）─────────────────────────────────────
  *   ① 采样从 --skip 之后开始，段首和出场瞬间的问题看不到；
- *   ② 画进离屏 canvas 再 drawImage 上来的文字，外框追踪不到（只追直接 fillText/strokeText）；
- *   ③ 被图形挡住的文字查不到；两串都被盖住时可能误报「叠字」；
- *   ④ DOM 文字按行框量，一个 <p> 换行会算成两块。
+ *   ② 被图形挡住的文字查不到；两串都被盖住时可能误报「叠字」；
+ *   ③ 3D / WebGL 画布里的文字完全没有外框（不是 2D context，hook 不到）；
+ *   ④ 离屏 canvas 的文字靠 drawImage 映射追（2026-10 补），嵌套超过两三层仍可能丢；
+ *   ⑤ DOM 文字按「视觉行」分块，同一行上的多个片段合并；两个字距极近（<2.5 倍行高）
+ *      的独立文本块仍可能被合到一行里，此时「叠字」查不出它们之间的压字。
  */
 
 const { chromium } = require('playwright');
@@ -92,7 +94,7 @@ const OUT_DIR  = path.resolve(arg('out', path.join(path.dirname(HTML_ABS), 'qa')
 
 /* ── 页内：文字外框钩子 ────────────────────────────────────────────
  * 包一层 fillText/strokeText，记下每个字符串画到屏幕上的外框（含当前变换）。
- * 只记「直接画」的；画进离屏缓冲再 drawImage 上来的记不到（见文件头的盲区②）。
+ * 画进离屏缓冲再 drawImage 上来的，靠 drawImage 钩子做坐标映射补回来（见下方）。
  */
 const TEXT_HOOK = `(() => {
   const P = CanvasRenderingContext2D.prototype;
@@ -134,6 +136,43 @@ const TEXT_HOOK = `(() => {
       return orig.apply(this, arguments);
     };
   }
+
+  /* 盲区修复：画进离屏 canvas 再 drawImage 上来的文字。
+     Three.js、图表库、文字预渲染都走这条路，原来完全追不到（等于对这些画面「不设防」）。
+     做法：drawImage 时把源 canvas 记下的文字框，按这次绘制的缩放/偏移映射到目标 canvas。
+     递归映射（离屏 A → 离屏 B → 主画布）也成立，因为映射后的框会被 B 记下来。 */
+  const di = P.drawImage;
+  P.drawImage = function (src) {
+    const ret = di.apply(this, arguments);
+    try {
+      if (!src || src === this.canvas || !src.__tb || !src.__tb.length) return ret;
+      const a = arguments;
+      let sx0 = 0, sy0 = 0, sw = src.width, sh = src.height, dx, dy, dw, dh;
+      if (a.length <= 5) {
+        dx = a[1] || 0; dy = a[2] || 0;
+        dw = a.length >= 5 && a[3] != null ? a[3] : src.width;
+        dh = a.length >= 5 && a[4] != null ? a[4] : src.height;
+      } else {
+        sx0 = a[1]; sy0 = a[2]; sw = a[3]; sh = a[4];
+        dx = a[5]; dy = a[6];
+        dw = a[7] != null ? a[7] : sw;
+        dh = a[8] != null ? a[8] : sh;
+      }
+      if (!sw || !sh) return ret;
+      const kx = dw / sw, ky = dh / sh, T = this.getTransform();
+      for (const [txt, xs, ys, clipped] of src.__tb) {
+        const nx = [], ny = [];
+        for (let i = 0; i < xs.length; i++) {
+          const px = dx + (xs[i] - sx0) * kx;
+          const py = dy + (ys[i] - sy0) * ky;
+          nx.push(T.a * px + T.c * py + T.e);
+          ny.push(T.b * px + T.d * py + T.f);
+        }
+        push(this, [txt, nx, ny, !!clipped]);
+      }
+    } catch (e) { /* 映射失败就算了，宁可漏报也不要让 QA 自己崩 */ }
+    return ret;
+  };
 })();`;
 
 /* ── 页内：seek 一帧并回收文字外框 ─────────────────────────────── */
@@ -152,7 +191,13 @@ async function captureFrame([t, settle]) {
       out.push([txt, Math.min(...X), Math.min(...Y), Math.max(...X), Math.max(...Y), !!clipped]);
     }
   });
-  // DOM 文字：按行框取（渲染器支持 DOM/CSS 动画，fillText 钩子看不到这些）
+  // ── DOM 文字：按「视觉行」分块 ──────────────────────────────────
+  // 粒度试过三种，只有第三种对：
+  //   ① 一个行框一块 —— 同一行上的 <span> 和裸文字成了两块，互相判成「叠字」；
+  //   ② 一个文本节点一块（取所有行框并集）—— 多行段落的并集框会把行内 <span>
+  //      整个包进去，段落和自己的强调词必然误报「叠字」（实测 100% 复现）；
+  //   ③ 一行一块 —— 同一行的片段合并，跨行不合并。既不误报，也不丢行。
+  const frags = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let node;
   while ((node = walker.nextNode())) {
@@ -166,10 +211,21 @@ async function captureFrame([t, settle]) {
     if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) continue;
     const range = document.createRange();
     range.selectNodeContents(node);
+    const label = s.trim().slice(0, 24);
     for (const r of range.getClientRects()) {
       if (r.width < 8 || r.height < 8) continue;
-      out.push([s.trim().slice(0, 24), r.left / W, r.top / H, r.right / W, r.bottom / H, false]);
+      frags.push([label, r.left, r.top, r.right, r.bottom]);
     }
+  }
+  // 合并同行：竖直方向重叠 > 较矮者一半即视为同一行（行距再紧也不会跨行合并）；
+  // 同时要求水平间隙不超过 2.5 倍行高，否则左右两栏会被错并成一行。
+  // 具体实现放在 lib/qa-rules.cjs 里（initScript 注入到 window.__wbMergeLines），
+  // 这样同一份逻辑能被 node --test 单测覆盖，不会出现「页面里一份、测试里一份」。
+  const lines = window.__wbMergeLines
+    ? window.__wbMergeLines(frags)
+    : frags.map(f => f.slice());
+  for (const [txt, x0, y0, x1, y1] of lines) {
+    out.push([txt, x0 / W, y0 / H, x1 / W, y1 / H, false]);
   }
   return out;
 }
@@ -292,64 +348,11 @@ const HELPER_SETUP = (w) => {
   };
 };
 
-/* ── 框景判定（纯几何，移植自 huashu qa.py 的算法，去掉 numpy） ── */
-function frameIssues(boxes, band) {
-  const out = [], vis = [];
-  for (const [txt, x0, y0, x1, y1, clipped] of boxes) {
-    const w = x1 - x0, h = y1 - y0;
-    if (w <= 0 || h <= 0 || h < 0.008) continue;              // 太小（<~9px）不管
-    const ix0 = Math.max(x0, 0), iy0 = Math.max(y0, 0);
-    const ix1 = Math.min(x1, 1), iy1 = Math.min(y1, 1);
-    if (ix1 <= ix0 || iy1 <= iy0) continue;                    // 整个在画外（镜头没拍到）
-    const frac = (ix1 - ix0) * (iy1 - iy0) / (w * h);
-    if (frac < 0.9 && frac > 0.1) out.push(['半截字', txt]);
-    if (band > 0 && iy1 > 1 - band + 0.004 && frac > 0.1) out.push(['进字幕带', txt]);
-    if (!clipped) vis.push([txt, x0, y0, x1, y1]);
-  }
-  // 叠字：两串不同的字外框重叠面积占小块面积 > 30%
-  for (let i = 0; i < vis.length; i++) {
-    for (let j = i + 1; j < vis.length; j++) {
-      const A = vis[i], B = vis[j];
-      if (A[0] === B[0]) continue;                             // 同一串画两遍（描边＋填色、投影）
-      const ow = Math.min(A[3], B[3]) - Math.max(A[1], B[1]);
-      const oh = Math.min(A[4], B[4]) - Math.max(A[2], B[2]);
-      if (ow <= 0 || oh <= 0) continue;
-      const small = Math.min((A[3] - A[1]) * (A[4] - A[2]), (B[3] - B[1]) * (B[4] - B[2]));
-      if (small > 0 && ow * oh / small > 0.3) out.push(['叠字', A[0] + '｜' + B[0]]);
-    }
-  }
-  return out;
-}
-/** 同一个问题连续出现够久才报（镜头摇过去那几帧的半截字是正常的）。
- *  minS 跟着采样间隔走：采得稀时报得保守些，免得把一帧的偶然当问题。
- *  单帧闪一下就过的穿帮交给「跳变」指标，不在这里报。 */
-function persistent(ts, perFrame, minS) {
-  const runs = [], open = new Map();
-  perFrame.forEach((list, k) => {
-    const cur = new Set(list.map(x => x[0] + '\u0000' + x[1]));
-    for (const key of [...open.keys()]) {
-      if (!cur.has(key)) {
-        const [t0, t1] = open.get(key); open.delete(key);
-        if (t1 - t0 >= minS) runs.push([key, t0, t1]);
-      }
-    }
-    for (const key of cur) {
-      if (open.has(key)) open.set(key, [open.get(key)[0], ts[k]]);
-      else open.set(key, [ts[k], ts[k]]);
-    }
-  });
-  for (const [key, [t0, t1]] of open) if (t1 - t0 >= minS) runs.push([key, t0, t1]);
-  return runs.sort((a, b) => a[1] - b[1]).map(([k, t0, t1]) => {
-    const [kind, txt] = k.split('\u0000');
-    return { kind, text: txt, lt: [+t0.toFixed(2), +t1.toFixed(2)] };
-  });
-}
-function mean(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0; }
-function median(a) {
-  if (!a.length) return 0;
-  const s = [...a].sort((x, y) => x - y), m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
+/* ── 框景 / 持续性 / 统计工具 ──────────────────────────────────────
+ * 已抽到 lib/qa-rules.cjs：这些是纯几何与纯计数，不该和浏览器绑在一起。
+ * 抽出来的直接好处是能被 test/qa-rules.test.mjs 单测覆盖 ——
+ * 在此之前，qa.js 605 行判据一行测试都没有，改个阈值没人知道是修好还是漏掉。 */
+const { frameIssues, persistent, mean, median, mergeLines } = require('./lib/qa-rules.cjs');
 
 (async () => {
   const t0 = Date.now();
@@ -369,6 +372,9 @@ function median(a) {
   });
   await context.addInitScript(() => { window.__recording = true; window.__seekRender = true; });
   await context.addInitScript(TEXT_HOOK);
+  // DOM 文字按行合并的逻辑复用 lib/qa-rules.cjs 的那一份（见 captureFrame 里的注释）：
+  // 直接 toString 注入，页面里跑的和单测跑的是同一个函数体。
+  await context.addInitScript(`window.__wbMergeLines = ${mergeLines.toString()};`);
   if (!KEEP_CHROME) await context.addInitScript(hideChromeInit, HIDE_CHROME_CSS);
 
   const page = await context.newPage();

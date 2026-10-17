@@ -52,6 +52,10 @@ const PORTRAIT = H > W;
 
 const g = cv.getContext('2d');
 
+/* 透明输出（渲染器加 --alpha 时会置 true）：跳过不透明底色，只留文字与光效，
+   这样导进剪辑软件叠在任意背景上都是干净的。 */
+const TRANSPARENT = !!window.__transparent;
+
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
 
@@ -96,31 +100,35 @@ function drawFrame(T) {
   g.globalAlpha = 1;
   g.clearRect(0, 0, W, H);
 
-  /* 背景：深色渐变 + 缓慢呼吸的暖光斑 */
-  const bg = g.createLinearGradient(0, 0, W * 0.6, H);
-  bg.addColorStop(0, CFG.bg);
-  bg.addColorStop(1, '#0E1420');
-  g.fillStyle = bg;
-  g.fillRect(0, 0, W, H);
+  /* 背景：深色渐变 + 缓慢呼吸的暖光斑。
+     --alpha 输出时整层跳过（含光斑与光扫）—— 它们都是全屏 fillRect，哪怕 alpha 只有 5%，
+     叠到实拍上也会让整片区域泛白，剪辑师会以为素材「脏」。透明输出只保留文字与装饰。 */
+  if (!TRANSPARENT) {
+    const bg = g.createLinearGradient(0, 0, W * 0.6, H);
+    bg.addColorStop(0, CFG.bg);
+    bg.addColorStop(1, '#0E1420');
+    g.fillStyle = bg;
+    g.fillRect(0, 0, W, H);
 
-  const glowPhase = win(T, 0, 1.6);
-  const gx = W * 0.72 + Math.sin(T * 0.35) * 40 * SX;
-  const gy = H * 0.30 + Math.cos(T * 0.28) * 24 * SY;
-  const rad = g.createRadialGradient(gx, gy, 0, gx, gy, 780 * SF);
-  rad.addColorStop(0, `rgba(255,184,107,${0.16 * glowPhase})`);
-  rad.addColorStop(0.55, `rgba(255,138,61,${0.05 * glowPhase})`);
-  rad.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = rad;
-  g.fillRect(0, 0, W, H);
+    const glowPhase = win(T, 0, 1.6);
+    const gx = W * 0.72 + Math.sin(T * 0.35) * 40 * SX;
+    const gy = H * 0.30 + Math.cos(T * 0.28) * 24 * SY;
+    const rad = g.createRadialGradient(gx, gy, 0, gx, gy, 780 * SF);
+    rad.addColorStop(0, `rgba(255,184,107,${0.16 * glowPhase})`);
+    rad.addColorStop(0.55, `rgba(255,138,61,${0.05 * glowPhase})`);
+    rad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rad;
+    g.fillRect(0, 0, W, H);
 
-  /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
-  const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
-  const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
-  sweep.addColorStop(0, 'rgba(255,255,255,0)');
-  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
-  sweep.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = sweep;
-  g.fillRect(0, 0, W, H);
+    /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+    const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
+    const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
+    sweep.addColorStop(0, 'rgba(255,255,255,0)');
+    sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+    sweep.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = sweep;
+    g.fillRect(0, 0, W, H);
+  }
 
   /* 左侧竖直装饰线（生长） */
   const lineP = smooth(win(T, 0.15, 1.0));

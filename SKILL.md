@@ -1,6 +1,6 @@
 ---
 name: html-to-video
-description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可出 GIF）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」时使用。自带渲染器与 6 个开箱即用模板（含竖屏 9:16），装好依赖后一条命令出片。
+description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」时使用。自带渲染器与 10 个开箱即用模板（含竖屏 9:16、前后对比、流程图、字幕卡），支持透明输出与外部字幕时间轴，装好依赖后一条命令出片。
 agent_created: true
 ---
 
@@ -21,7 +21,7 @@ agent_created: true
 最适合做：讲解动画、动态图解、产品演示、数据可视化动画、宣传片片头。
 不适合：实拍感/氛围镜头（那种走 VideoGen）。
 
-**能拿它做什么**（`assets/templates/` 里 6 个模板直接改字就能出片）：
+**能拿它做什么**（`assets/templates/` 里 10 个模板直接改字就能出片）：
 
 | 模板 | 用途 | 出片 |
 |---|---|---|
@@ -31,13 +31,18 @@ agent_created: true
 | `number-counter.html` | 大数字/KPI：从 0 滚到目标值 + 涨跌标签 | `--duration=7` |
 | `timeline.html` | 时间线/流程：中轴生长，节点逐个点亮 | `--duration=7` |
 | `vertical-card.html` | **竖屏 9:16 卡片**：大字标题 + 大数字，抖音/视频号/Reels 用 | `--duration=6 --width=1080 --height=1920` |
+| `compare.html` | **前后对比**：左右两栏对照，结论条收口 | `--duration=7` |
+| `flow-steps.html` | **流程图动画**：步骤依次点亮，当前步高亮 | `--duration=7` |
+| `subtitle-card.html` | **逐句解说卡**：一句话一句地出，底部带进度条 | `--duration=8` + `--srt` |
+| `vertical-subtitle.html` | **竖屏字幕卡**：关键词高亮，9:16 原生版式 | `--duration=8 --width=1080 --height=1920` + `--srt` |
 
 每个模板**单文件自包含**，顶部有一个显眼的 `CFG` 配置块，改文案/数据即可 ——
-不用懂 canvas 也能出片。想做别的，再看 `assets/animation-skeleton.html` 从零写。
+不用懂 canvas 也能出片。最后四个模板还支持换主题（见「换配色」一节）。
+想做别的，再看 `assets/animation-skeleton.html` 从零写。
 
 ### 尺寸：模板跟视口走，不用手改
 
-6 个模板都按 `window.innerWidth/innerHeight` 设画布，所以**换任何尺寸都不裁切**：
+10 个模板都按 `window.innerWidth/innerHeight` 设画布，所以**换任何尺寸都不裁切**：
 
 ```bash
 # 横屏 1080p（默认）
@@ -195,6 +200,9 @@ bash assets/render.sh animation.html --duration=12 --fps=60 --width=1920 --heigh
 | `--gop=<秒>` | 关键帧间隔，如 `--gop=1` 每秒一个关键帧，方便后期按秒 seek |
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码时不必重截） |
 | `--resume` | 上次渲到一半被打断？接着渲，已渲好的帧直接复用（参数和上次不一致会拒绝，见下） |
+| `--alpha` | 透明背景输出（ProRes 4444 `.mov`），叠到实拍 / AI 生成画面上用，见下 |
+| `--srt=<file>` | 外部字幕时间轴（SRT / VTT / JSON），注入 `window.__cues`，见下。同义参数 `--cues` |
+| `--cue-log=<file>` | 导出 `frame,t,cue_index,cue_start,cue_end` CSV，用来核对字幕到底对不对轴 |
 | `--allow-errors` | 页面报错不判失败（默认：有报错 → 非零退出） |
 | `--keep-chrome` | 不隐藏播放控件（调试用） |
 | `--readytimeout=8` | 等 `__seek` 就绪的秒数（启动慢的大字体/大数据可调大） |
@@ -232,6 +240,103 @@ bash assets/render.sh animation.html --fps=60 --duration=30 --resume
 渲完自动清掉；中途想留着就配 `--keep-frames`。
 这是故意的：页面报错常常意味着「整片黑屏 / 缺了半屏内容」，以前的版本会一路说成功，
 直到你回抽帧才发现——现在它会在编码前就把报错打出来，并在最后判失败。
+
+### 透明输出：把文字层叠到别人拍的画面上
+
+AI 生成的背景 + 代码生成的文字层，是现在最省钱的组合（模型画文字必糊，代码画文字精确到像素）。
+`--alpha` 就是为这条路准备的：
+
+```bash
+bash assets/render.sh animation.html --duration=6 --fps=30 --alpha
+# → animation.mov（ProRes 4444 / yuva444p12le，背景透明）
+```
+
+**模板侧要配合一件事**：读到 `window.__transparent` 为真时跳过背景层绘制。
+目前 `title-card`、`compare`、`flow-steps`、`subtitle-card`、`vertical-subtitle` 这 5 个已经这样写，
+直接加 `--alpha` 就有透明效果；其余 5 个是满版图表，本来就要底色，加了也只会得到不透明的片子。
+自己写的动画照这个来：
+
+```js
+const TRANSPARENT = !!window.__transparent;
+function drawFrame(t) {
+  g.clearRect(0, 0, W, H);
+  if (!TRANSPARENT) {
+    // 底色 / 全屏渐变 / 光斑 —— 这些都要跳过
+    g.fillStyle = '#080A10';
+    g.fillRect(0, 0, W, H);
+  }
+  // 文字、图形照常画
+}
+```
+
+**全屏的半透明光晕也要一起跳过**。哪怕它只有 5% 不透明度，叠到实拍上会让整片区域泛白，
+剪辑师第一反应是「这素材脏」。实测：只跳底色、留着光斑时，四角 alpha=12（不是 0）；
+全跳之后四角 alpha=0、只有 3.7% 的像素不透明（全是文字）。
+
+**体积代价**（960×540 / 2s / 20 帧实测）：
+
+| 输出 | 体积 | 用途 |
+|---|---|---|
+| H.264 `.mp4` | 118 KB | 成片直接发 |
+| ProRes 4444 `.mov` | 760 KB（6.5×） | 拖进剪辑软件叠层 |
+
+**只有 ProRes，没有 VP9**。试过 `--pix_fmt yuva420p` + `-auto-alt-ref 0`，文件确实从 7.8KB
+涨到 16.8KB（alpha 数据写进去了），但 Chromium 播出来整帧 alpha 全 0 —— 连文字都透明；
+换 lossless、固定码率、`-lag-in-frames 0` 都一样。既然没法自证正确，就不把它作为选项发布。
+要小体积透明素材，用 ProRes 导入剪辑软件后再导 webm，那是那边的活。
+
+### 字幕挂外部时间轴：配音改了，字幕跟着走
+
+字幕文案写在模板的 `CFG.lines` 里最省事，但一旦要配音，时间点就得跟着音频走 ——
+总不能每改一句都回去手数秒数。所以支持直接喂一坨字幕文件：
+
+```bash
+bash assets/render.sh subtitle-card.html --duration=8 --srt=voice.srt --cue-log=cues.csv
+```
+
+- 支持 **SRT**（`HH:MM:SS,mmm`）、**WebVTT**（`MM:SS.mmm` 也行）、**JSON**（`[{start,end,text}]`）。
+- 解析一次，注入 `window.__cues`，模板按当前帧的 `t` 自己去查该显示哪句。
+  模板里用 `--srt` 时**优先读 `__cues`，没有才回退 `CFG.lines`**，所以同一个模板两种用法都成立。
+- `--cue-log` 输出 `frame,t,cue_index,cue_start,cue_end` 的 CSV。把「字幕时间对不对」
+  变成一个能算的数：拿每句的首帧时间减 SRT 的起点，就是误差。
+  实测 4 句 / 80 帧，每句误差 **0 ms**，帧覆盖数与理论值完全一致。
+
+模板侧只要两行就能支持：
+
+```js
+const cues = (window.__cues && window.__cues.length) ? window.__cues : CFG.lines;
+const cur = cues.find(c => t >= c.start && t < c.end) || cues[cues.length - 1];
+```
+
+**字幕别踩进底部 15%**。那是各平台的进度条 / 点赞按钮区，写进去等于白写。
+`qa.js` 会提示「进字幕带」，四个新模板的竖屏版式都留出了这条安全带。
+
+### 换配色：改一个字段，不用碰画布代码
+
+`assets/templates/themes.js` 里有三套调色板，模板只要写 `CFG.theme`：
+
+```js
+const CFG = {
+  theme: 'paper',   // midnight（默认，暗色）| paper（浅色）| neon（黑紫霓虹）
+  ...
+};
+```
+
+| 主题 | 观感 | 适合 |
+|---|---|---|
+| `midnight` | 近黑底 + 暖橙强调 | 通用，默认 |
+| `paper` | 米白底 + 深墨文字 | 文档、教学、要打印或投影的场合 |
+| `neon` | 黑紫底 + 紫/青霓虹 | 科技、发布会、社区宣传 |
+
+要微调就传对象，缺的字段自动从 `midnight` 补：
+
+```js
+theme: { bg: '#0B1020', accent: '#22D3EE' }
+```
+
+四个新模板（`compare` / `flow-steps` / `subtitle-card` / `vertical-subtitle`）已经接入。
+**`themes.js` 是外部脚本，拷模板时连它一起拷**；只拷 HTML 也能跑（模板里有兜底色板），
+只是换不了主题。`test/templates-contract.test.mjs` 会检查「登记了主题能力就必须真的引入 themes.js」。
 
 ### 第 4 步：配乐 / 派生格式
 
@@ -370,7 +475,10 @@ bash assets/qa.sh animation.html --duration=12 --fps=30
 | `assets/smoke.sh` / `smoke.cjs` | 冒烟测试：验证 `__seek` 契约 + 试截关键帧 |
 | `assets/qa.sh` | 验收包装器，环境解析同上 |
 | `assets/animation-skeleton.html` | 动画骨架模板，已实现完整渲染契约 |
-| `assets/templates/*.html` | 6 个开箱即用模板（片头/条形图/折线/大数字/时间线/竖屏卡），改 CFG 即用 |
+| `scripts/lib/cues.cjs` | 字幕时间轴解析（SRT / VTT / JSON），会自动排序并修掉时长非正、首尾重叠的 cue |
+| `scripts/lib/qa-rules.cjs` | 验收判据的纯函数（框景 / 持续 / 分块 / 统计），可脱离浏览器单测 |
+| `assets/templates/*.html` | 10 个开箱即用模板（片头/条形图/折线/大数字/时间线/竖屏卡/前后对比/流程图/解说卡/竖屏字幕卡），改 CFG 即用 |
+| `assets/templates/themes.js` | 三套内置主题（midnight / paper / neon），新模板用它换配色 |
 | `assets/lib/motion.js` | 动效时间库（缓动/弹簧/步进/错开），纯函数、零依赖 |
 
 ## 设计品味另找专业分工
