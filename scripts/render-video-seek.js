@@ -70,6 +70,7 @@ if (!HTML_FILE || HTML_FILE.startsWith('--')) {
   console.error('Example: NODE_PATH=$(npm root -g) node render-video-seek.js my-animation.html --fps=60 --duration=12');
   console.error('         ... --from=3 --to=5     # 只渲 3s–5s，快速试片');
   console.error('         ... --stills=1,3,5      # 只导出 1s/3s/5s 三张静帧');
+  console.error('         ... --resume            # 上次中断了？接着渲，已完成的帧直接复用');
   process.exit(1);
 }
 
@@ -89,6 +90,7 @@ const KEEP_CHROME = hasFlag('keep-chrome');
 const KEEP_FRAMES = hasFlag('keep-frames');
 const ALLOW_ERRORS = hasFlag('allow-errors');
 const NO_SERVE     = hasFlag('no-serve');       // 默认走本地 http；见 lib/local-server.cjs 顶部说明
+const RESUME       = hasFlag('resume');         // 断点续渲：复用上一次留下的帧
 
 const HTML_ABS = path.resolve(HTML_FILE);
 const BASENAME = path.basename(HTML_FILE, path.extname(HTML_FILE));
@@ -105,7 +107,17 @@ const STILLS = STILLS_RAW
   ? STILLS_RAW.split(',').map(s => parseFloat(s.trim())).filter(v => Number.isFinite(v))
   : null;
 
-const TMP_DIR   = path.join(DIR, '.seek-tmp-' + Date.now() + '-' + process.pid);
+/* 逐帧目录
+   默认用「时间戳 + pid」的一次性目录，多个渲染并发也不会互相踩。
+   --resume 时改用一个**固定**目录，这样重启后能认回上次的帧。
+   固定目录靠 job.json 认参数：fps/尺寸/范围一变就拒绝续渲，否则会拼出前后不一致的片子。 */
+const RESUME_DIR = path.join(DIR, '.seek-tmp-resume');
+const TMP_DIR   = RESUME ? RESUME_DIR : path.join(DIR, '.seek-tmp-' + Date.now() + '-' + process.pid);
+
+const JOB = {
+  html: HTML_ABS, fps: FPS, from: F0, to: F1,
+  width: WIDTH, height: HEIGHT, settle: SETTLE, hideChrome: !KEEP_CHROME,
+};
 const STILL_DIR = path.join(DIR, BASENAME + '.stills');
 const MP4_OUT   = path.join(DIR, RANGE_GIVEN
   ? `${BASENAME}.${trimNum(FROM)}-${trimNum(END)}s.mp4`
@@ -135,6 +147,68 @@ if (!STILLS && TOTAL_FRAMES === 0) {
   console.error(`✗ 渲染范围为空（from=${FROM} to=${END} fps=${FPS}）。检查 --from/--to/--duration。`);
   process.exit(1);
 }
+
+/* ---------- 断点续渲 ---------- */
+
+/**
+ * 认参数。续渲最怕的是「上次 30fps、这次 60fps」却把两批帧混着编码 ——
+ * 片子会前后抖，而且不报错。所以参数不一致直接拒绝，让人自己决定删不删。
+ */
+function checkResumeJob() {
+  const p = path.join(RESUME_DIR, 'job.json');
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { prev = null; }
+  if (prev && JSON.stringify(prev) !== JSON.stringify(JOB)) {
+    console.error('✗ 续渲参数和上次不一致，混在一起会拼出前后不一致的片子。');
+    console.error('  上次：' + JSON.stringify(prev));
+    console.error('  这次：' + JSON.stringify(JOB));
+    console.error('  处理：删掉这个目录重来，或换个参数从零开始 —— ' + RESUME_DIR);
+    process.exit(1);
+  }
+  fs.mkdirSync(RESUME_DIR, { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(JOB));
+}
+
+/**
+ * 扫已有帧。三条都满足才算「可复用」：
+ *   ① 文件名是 frame-XXXXXX.png
+ *   ② 体积够大
+ *   ③ 头 8 字节是 PNG 魔数
+ * 截图时先写 .part 再改名，所以被 kill 的那一帧不会是 .png；
+ * 但历史遗留或磁盘异常仍可能留下截断文件，多验一次不亏。
+ */
+function scanDoneFrames() {
+  const done = new Set();
+  let names = [];
+  try { names = fs.readdirSync(RESUME_DIR); } catch (e) { return done; }
+  const PNG_MAGIC = '89504e470d0a1a0a';
+  for (const name of names) {
+    if (name.endsWith('.part')) {
+      try { fs.rmSync(path.join(RESUME_DIR, name), { force: true }); } catch (e) { /* 清不掉就留着 */ }
+      continue;
+    }
+    const m = /^frame-(\d+)\.png$/.exec(name);
+    if (!m) continue;
+    const p = path.join(RESUME_DIR, name);
+    try {
+      if (fs.statSync(p).size < 512) continue;
+      const fd = fs.openSync(p, 'r');
+      const buf = Buffer.alloc(8);
+      fs.readSync(fd, buf, 0, 8, 0);
+      fs.closeSync(fd);
+      if (buf.toString('hex') !== PNG_MAGIC) continue;
+      done.add(parseInt(m[1], 10));
+    } catch (e) { /* 读不了就当没渲过 */ }
+  }
+  return done;
+}
+
+const DONE_FRAMES = (!STILLS && RESUME) ? scanDoneFrames() : new Set();
+const PENDING = STILLS ? [] : (() => {
+  const list = [];
+  for (let f = F0; f < F1; f++) if (!DONE_FRAMES.has(f)) list.push(f);
+  return list;
+})();
 
 console.log(`▸ Seek-rendering: ${HTML_FILE}`);
 if (STILLS) {
@@ -210,10 +284,18 @@ async function renderFrames(context, url, frames, onPage) {
     const t = f / FPS;
     await page.evaluate((tt) => window.__seek(tt), t);
     await waitRaf(page, SETTLE);
-    await page.screenshot({
-      path: path.join(TMP_DIR, 'frame-' + String(f).padStart(6, '0') + '.png'),
+    const finalPath = path.join(TMP_DIR, 'frame-' + String(f).padStart(6, '0') + '.png');
+    // 先写 .part 再改名：渲染中途被 kill 时，不会留下半个 PNG 冒充「已完成」的帧，
+    // --resume 才能只认真正画完的那些。
+    const partPath = finalPath + '.part';
+    // 注意：不能写 screenshot({ path: finalPath + '.part' })。
+    // Playwright 按扩展名推断图片格式，'.part' 它认不出来，会抛
+    // "unsupported mime type"。所以拿 Buffer 自己落盘，原子改名保留。
+    const buf = await page.screenshot({
       clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT },
     });
+    fs.writeFileSync(partPath, buf);
+    fs.renameSync(partPath, finalPath);
   }
   await page.close();
 }
@@ -258,7 +340,13 @@ async function renderStills(context, url, times, onPage) {
     });
   };
 
-  if (!STILLS) fs.mkdirSync(TMP_DIR, { recursive: true });
+  if (!STILLS) {
+    if (RESUME) {
+      checkResumeJob();
+      // 放在校验之后：参数对不上就直接退出了，不该先说「还需渲 N 帧」让人以为要开跑。
+      if (DONE_FRAMES.size) console.log(`  resume: 已复用 ${DONE_FRAMES.size} 帧，还需渲 ${PENDING.length} 帧`);
+    } else fs.mkdirSync(TMP_DIR, { recursive: true });
+  }
 
   // 默认走本地 http：file:// 下 <script type="module"> 和 fetch() 会被 CORS 拦死，
   // 用 ESM / 读本地 JSON 的动画项目在 file:// 下根本起不来。http 是 file:// 的超集。
@@ -300,13 +388,15 @@ async function renderStills(context, url, times, onPage) {
       console.log(`▸ Capturing ${STILLS.length} still(s)…`);
       await renderStills(context, url, STILLS, p => onPage(p, 0));
       captured = STILLS.length;
+    } else if (!PENDING.length) {
+      console.log(`▸ ${TOTAL_FRAMES} 帧全在，跳过截图，直接编码`);
     } else {
-      // 把帧 round-robin 分给 CONCURRENCY 个 worker（每个 page 独立 window，seek 互不干扰）
+      // 把待渲帧 round-robin 分给 CONCURRENCY 个 worker（每个 page 独立 window，seek 互不干扰）
       const buckets = Array.from({ length: CONCURRENCY }, () => []);
-      for (let f = F0; f < F1; f++) buckets[(f - F0) % CONCURRENCY].push(f);
-      console.log(`▸ Capturing ${TOTAL_FRAMES} frames across ${CONCURRENCY} workers…`);
+      PENDING.forEach((f, i) => buckets[i % CONCURRENCY].push(f));
+      console.log(`▸ Capturing ${PENDING.length} frames across ${CONCURRENCY} workers…`);
       await Promise.all(buckets.map((b, i) => b.length ? renderFrames(context, url, b, p => onPage(p, i)) : Promise.resolve()));
-      captured = TOTAL_FRAMES;
+      captured = PENDING.length;
     }
   } catch (e) {
     const msg = String(e && e.message || e);
@@ -371,13 +461,24 @@ async function renderStills(context, url, times, onPage) {
     return;
   }
 
-  const pngCount = fs.readdirSync(TMP_DIR).filter(f => f.endsWith('.png')).length;
+  /* 帧完整性：ffmpeg 的 -start_number 从 F0 起按序号连读，中间缺一张就会提前收尾，
+     而且不报错 —— 成片会莫名变短。所以按「帧号必须连续覆盖 [F0,F1)」来验，
+     而不是只数个数（续渲时最可能出现空洞）。 */
+  const present = new Set();
+  for (const f of fs.readdirSync(TMP_DIR)) {
+    const m = /^frame-(\d+)\.png$/.exec(f);
+    if (m) present.add(parseInt(m[1], 10));
+  }
+  const pngCount = present.size;
   if (pngCount === 0) {
     console.error('✗ 没有截到任何帧');
     process.exit(1);
   }
-  if (pngCount !== TOTAL_FRAMES) {
-    console.error(`✗ 帧数不符：期望 ${TOTAL_FRAMES}，实得 ${pngCount}`);
+  const missing = [];
+  for (let f = F0; f < F1; f++) if (!present.has(f)) missing.push(f);
+  if (missing.length) {
+    console.error(`✗ 缺帧 ${missing.length} / ${TOTAL_FRAMES}（如 ${missing.slice(0, 5).join(', ')}），不能编码。`);
+    console.error('  加 --resume 重跑可补齐缺口，或删掉逐帧目录重来：' + TMP_DIR);
     process.exit(1);
   }
   console.log(`▸ Captured ${pngCount}/${TOTAL_FRAMES} frames. Encoding H.264…`);
