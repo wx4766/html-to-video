@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>demo-en · 10s silent promo</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #05070C; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+/* =====================================================================
+   10 秒英文演示片（无声）· 1920×1080
+   ---------------------------------------------------------------------
+   分镜：
+     0.00–0.60  强调色短线展开；底部时间轴标尺整体淡入
+     0.55–1.95  "HTML in." / "MP4 out." 逐字升起
+     1.30–1.95  等宽小字：one HTML file · no framework · no GPU
+     1.80–3.60  右侧面板滑入，柱状图逐根长起
+     3.60–5.60  扫描带横掠 + 帧计数跳动（强调「逐帧」）
+     5.80–6.45  左栏淡出、面板淡出，分割线拉到满宽
+     6.50–7.40  字标 "html-to-video" 升起
+     7.00–8.00  仓库地址淡入
+     7.40–8.60  四枚能力胶囊依次弹出
+     8.60–10.0  定格
+
+   渲染：
+     node scripts/render-video-seek.js demo-en.html --duration=10 --fps=60
+   ===================================================================== */
+const CFG = {
+  dur:  10.0,
+  url:  'github.com/wx4766/html-to-video',
+  chips: ['--fps=60', 'deterministic', '--alpha', 'no GPU'],
+  mech: 'seek to t   ·   screenshot   ·   encode',
+};
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+const g = cv.getContext('2d');
+
+/* 虚拟画布 1920×1080，等比缩放居中 —— 只用一套坐标设计，换分辨率不变形 */
+const VW = 1920, VH = 1080;
+const S  = Math.min(W / VW, H / VH);
+const OX = (W - VW * S) / 2;
+const OY = (H - VH * S) / 2;
+
+const C = {
+  bg0:    '#05070C',
+  bg1:    '#0B1018',
+  ink:    '#F2F5FA',
+  sub:    'rgba(242,245,250,.52)',
+  faint:  'rgba(255,255,255,.09)',
+  accent: '#FFB86B',
+  accent2:'#6E8BFF',
+};
+
+const SANS = '"Inter", "Segoe UI", system-ui, -apple-system, sans-serif';
+const MONO = 'ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace';
+const DUR  = CFG.dur;
+
+const clamp  = (v, a, b) => v < a ? a : v > b ? b : v;
+const win    = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = p => p >= 1 ? 1 : 1 - Math.pow(2, -10 * p);
+const outCubic = p => 1 - Math.pow(1 - p, 3);
+const smooth = p => { p = clamp(p, 0, 1); return p * p * p * (10 - 15 * p + 6 * p * p); };
+
+/* 版式常量（虚拟坐标） */
+const M       = 140;
+const RULE_Y  = 322;
+const RULE_W0 = 96;
+const RULE_W1 = VW - M * 2;
+const HEAD_PX = 120;
+const HEAD_1  = 486;
+const HEAD_2  = 618;
+const CAP_Y   = 714;
+const PANEL   = { x: 1092, y: 250, w: 688, h: 560 };
+const RULER_Y = 880;
+const MARK_Y  = 470;
+const URL_Y   = 566;
+const CHIP_Y  = 648;
+const MECH_Y  = 762;
+
+/* ---------- 通用绘制 ---------- */
+function roundRect(x, y, w, h, r) {
+  g.beginPath();
+  if (g.roundRect) { g.roundRect(x, y, w, h, r); return; }
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+/* 柱子只圆上两角 —— 底角圆了看着像悬空 */
+function barPath(x, yTop, w, h, r) {
+  r = Math.min(r, w / 2, Math.max(0, h));
+  g.beginPath();
+  g.moveTo(x, yTop + h);
+  g.lineTo(x, yTop + r);
+  g.quadraticCurveTo(x, yTop, x + r, yTop);
+  g.lineTo(x + w - r, yTop);
+  g.quadraticCurveTo(x + w, yTop, x + w, yTop + r);
+  g.lineTo(x + w, yTop + h);
+  g.closePath();
+}
+
+/* 逐字升起：起点错开，比整行一起动更有节奏 */
+function drawStagger(text, x, y, px, color, t, t0, stagger, dur, weight) {
+  g.save();
+  g.font = `${weight || 700} ${px}px ${SANS}`;
+  g.textBaseline = 'alphabetic';
+  g.fillStyle = color;
+  g.textAlign = 'left';
+  g.letterSpacing = '0px';
+  let cx = x;
+  let i = 0;
+  for (const ch of [...text]) {
+    const p = outExpo(win(t, t0 + i * stagger, t0 + i * stagger + dur));
+    if (p > 0.001) {
+      g.globalAlpha = clamp(p, 0, 1);
+      g.fillText(ch, cx, y + (1 - p) * 26);
+    }
+    cx += g.measureText(ch).width;
+    i++;
+  }
+  g.restore();
+  return cx - x;
+}
+
+/* 底部时间轴标尺：一直走，说明「时间就是参数」 */
+function drawRuler(t) {
+  const a = smooth(win(t, 0.05, 0.85)) * (1 - smooth(win(t, 5.80, 6.35)));
+  if (a <= 0.001) return;
+  const x0 = M, x1 = VW - M, span = x1 - x0;
+
+  g.save();
+  g.globalAlpha = a;
+
+  /* 基线 */
+  g.strokeStyle = 'rgba(255,255,255,.10)';
+  g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(x0, RULER_Y); g.lineTo(x1, RULER_Y); g.stroke();
+
+  /* 刻度：每 5 格一根主刻度 */
+  const N = 48, step = span / N;
+  for (let i = 0; i <= N; i++) {
+    const major = i % 5 === 0;
+    const hh = major ? 16 : 8;
+    const passed = (i / N) <= (t / DUR);
+    g.strokeStyle = passed ? 'rgba(255,184,107,.55)' : 'rgba(255,255,255,.16)';
+    g.lineWidth = major ? 2 : 1.2;
+    g.beginPath();
+    g.moveTo(x0 + i * step, RULER_Y - hh);
+    g.lineTo(x0 + i * step, RULER_Y);
+    g.stroke();
+  }
+
+  /* 已播放段：一条细高亮盖过去 */
+  const prog = clamp(t / DUR, 0, 1);
+  g.strokeStyle = 'rgba(255,184,107,.85)';
+  g.lineWidth = 2.5;
+  g.beginPath(); g.moveTo(x0, RULER_Y); g.lineTo(x0 + span * prog, RULER_Y); g.stroke();
+
+  /* 播放头 */
+  const ph = x0 + span * prog;
+  g.strokeStyle = C.accent;
+  g.lineWidth = 2;
+  g.beginPath(); g.moveTo(ph, RULER_Y - 34); g.lineTo(ph, RULER_Y + 8); g.stroke();
+  g.fillStyle = C.accent;
+  g.beginPath(); g.arc(ph, RULER_Y - 38, 5.5, 0, Math.PI * 2); g.fill();
+
+  /* 时间码 */
+  g.fillStyle = 'rgba(242,245,250,.42)';
+  g.font = `500 18px ${MONO}`;
+  g.letterSpacing = '1.5px';
+  g.textAlign = 'right';
+  g.fillText(t.toFixed(2).padStart(5, '0') + 's / ' + DUR.toFixed(2) + 's', x1, RULER_Y - 24);
+  g.textAlign = 'left';
+  g.letterSpacing = '0px';
+  g.restore();
+}
+
+/* 已排好序的柱值，最大那根用强调色 */
+const BARS = [0.28, 0.42, 0.34, 0.55, 0.47, 0.68, 0.62, 0.86, 0.74];
+
+function drawPanel(t) {
+  const inP  = outExpo(win(t, 1.80, 2.62));
+  const fade = 1 - smooth(win(t, 5.80, 6.35));
+  if (inP <= 0.001 || fade <= 0.001) return;
+
+  const { x, y, w, h } = PANEL;
+  g.save();
+  g.globalAlpha = inP * fade;
+  g.translate((1 - inP) * 90, 0);   // 从右侧滑入
+
+  /* 面板底：接近实色，别让背后的网格透上来 */
+  roundRect(x, y, w, h, 20);
+  g.fillStyle = 'rgba(10,14,22,.95)';
+  g.fill();
+  g.strokeStyle = C.faint;
+  g.lineWidth = 1.5;
+  g.stroke();
+
+  /* 顶部等宽标签：帧计数 */
+  const frame = Math.min(599, Math.round(t * 60));
+  g.fillStyle = C.sub;
+  g.font = `500 17px ${MONO}`;
+  g.letterSpacing = '2.5px';
+  g.fillText('FRAME ' + String(frame).padStart(3, '0') + ' / 600', x + 40, y + 56);
+  g.letterSpacing = '0px';
+
+  /* 柱顶参考线 */
+  const baseY = y + h - 96;
+  const topY  = baseY - 320;
+  g.strokeStyle = 'rgba(255,255,255,.055)';
+  g.lineWidth = 1;
+  g.setLineDash([5, 7]);
+  g.beginPath(); g.moveTo(x + 40, topY); g.lineTo(x + w - 40, topY); g.stroke();
+  g.setLineDash([]);
+
+  /* 柱状图：逐根长起 */
+  const IW = w - 80;
+  const barW = 51, gap = 18;
+  const totalW = BARS.length * barW + (BARS.length - 1) * gap;
+  const bx = x + 40 + (IW - totalW) / 2;
+  const maxH = 300;
+  let tallest = 0;
+  for (let i = 1; i < BARS.length; i++) if (BARS[i] > BARS[tallest]) tallest = i;
+
+  for (let i = 0; i < BARS.length; i++) {
+    const p = outExpo(win(t, 2.00 + i * 0.07, 2.00 + i * 0.07 + 0.70));
+    if (p <= 0.001) continue;
+    const bh = BARS[i] * maxH * p;
+    const cx = bx + i * (barW + gap);
+    g.fillStyle = i === tallest ? C.accent : 'rgba(242,245,250,.20)';
+    barPath(cx, baseY - bh, barW, bh, 7);
+    g.fill();
+  }
+
+  /* 柱顶数值：柱长完之后淡入 */
+  g.font = `500 16px ${MONO}`;
+  g.textAlign = 'center';
+  for (let i = 0; i < BARS.length; i++) {
+    const p  = outExpo(win(t, 2.00 + i * 0.07, 2.00 + i * 0.07 + 0.70));
+    const lp = smooth(win(t, 2.55 + i * 0.05, 2.85 + i * 0.05));
+    if (lp <= 0.001) continue;
+    const bh = BARS[i] * maxH * p;
+    const cx = bx + i * (barW + gap) + barW / 2;
+    g.globalAlpha = inP * fade * lp * 0.82;
+    g.fillStyle = i === tallest ? C.accent : 'rgba(242,245,250,.55)';
+    g.fillText(String(Math.round(BARS[i] * 100)), cx, baseY - bh - 15);
+  }
+  g.textAlign = 'left';
+  g.globalAlpha = inP * fade;
+
+  /* 扫描带：一条竖直高光横掠，说明「逐帧扫过去」 */
+  const sp = win(t, 3.40, 4.90);
+  if (sp > 0 && sp < 1) {
+    const sx = x + w * outCubic(sp) - 70;
+    g.save();
+    roundRect(x, y, w, h, 20);
+    g.clip();
+    const grad = g.createLinearGradient(sx - 130, 0, sx + 130, 0);
+    grad.addColorStop(0,   'rgba(255,184,107,0)');
+    grad.addColorStop(0.5, 'rgba(255,184,107,.075)');
+    grad.addColorStop(1,   'rgba(255,184,107,0)');
+    g.fillStyle = grad;
+    g.fillRect(sx - 130, y, 260, h);
+    g.restore();
+  }
+
+  g.restore();
+}
+
+function drawFrame(t) {
+  /* 先按物理像素清屏，再切到虚拟坐标系 */
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+  g.setTransform(S, 0, 0, S, OX, OY);
+
+  /* 底色 */
+  const bg = g.createLinearGradient(0, 0, VW * 0.42, VH);
+  bg.addColorStop(0, C.bg1);
+  bg.addColorStop(1, C.bg0);
+  g.fillStyle = bg;
+  g.fillRect(0, 0, VW, VH);
+
+  /* 极淡网格：给空旷画面一点结构，进片尾时压暗让位给字 */
+  const gridA = 1 - 0.55 * smooth(win(t, 5.80, 6.60));
+  g.save();
+  g.globalAlpha = gridA;
+  g.strokeStyle = 'rgba(255,255,255,.022)';
+  g.lineWidth = 1;
+  g.beginPath();
+  for (let x = 0; x <= VW; x += 80) { g.moveTo(x, 0); g.lineTo(x, VH); }
+  for (let y = 0; y <= VH; y += 80) { g.moveTo(0, y); g.lineTo(VW, y); }
+  g.stroke();
+  g.restore();
+
+  /* 左上琥珀色光晕 */
+  const glow = g.createRadialGradient(M + 160, HEAD_1, 0, M + 160, HEAD_1, 1180);
+  glow.addColorStop(0,    'rgba(255,184,107,.085)');
+  glow.addColorStop(0.55, 'rgba(110,139,255,.035)');
+  glow.addColorStop(1,    'rgba(0,0,0,0)');
+  g.fillStyle = glow;
+  g.fillRect(0, 0, VW, VH);
+
+  /* 边缘压暗 */
+  const vig = g.createRadialGradient(VW / 2, VH / 2, VH * 0.35, VW / 2, VH / 2, VH * 1.05);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,.55)');
+  g.fillStyle = vig;
+  g.fillRect(0, 0, VW, VH);
+
+  /* ---- 强调短线：先展开，后当分割线拉满 ---- */
+  const ruleIn  = outExpo(win(t, 0.00, 0.60));
+  const expand  = smooth(win(t, 5.90, 6.45));
+  const ruleOut = 1 - smooth(win(t, 6.45, 6.90));
+  if (ruleIn > 0.001) {
+    const rw = RULE_W0 + (RULE_W1 - RULE_W0) * expand;
+    g.save();
+    g.globalAlpha = ruleIn * (expand > 0.5 ? ruleOut : 1);
+    g.fillStyle = C.accent;
+    g.fillRect(M, RULE_Y, rw * (expand > 0.5 ? 1 : ruleIn), 4);
+    g.restore();
+  }
+
+  /* ---- 左栏：标题组（5.80 起淡出并上移） ---- */
+  const leftOut = 1 - smooth(win(t, 5.80, 6.35));
+  if (leftOut > 0.001) {
+    g.save();
+    g.globalAlpha = leftOut;
+    g.translate(0, -smooth(win(t, 5.80, 6.35)) * 26);
+
+    drawStagger('HTML in.', M, HEAD_1, HEAD_PX, C.ink,    t, 0.55, 0.035, 0.50, 700);
+    drawStagger('MP4 out.', M, HEAD_2, HEAD_PX, C.accent, t, 0.95, 0.035, 0.50, 700);
+
+    const cp = outCubic(win(t, 1.30, 1.95));
+    if (cp > 0.001) {
+      g.save();
+      g.globalAlpha = cp * 0.95;
+      g.fillStyle = C.sub;
+      g.font = `500 24px ${MONO}`;
+      g.letterSpacing = '4px';
+      g.fillText('one HTML file · no framework · no GPU', M + 4, CAP_Y + (1 - cp) * 12);
+      g.letterSpacing = '0px';
+      g.restore();
+    }
+    g.restore();
+  }
+
+  /* ---- 右侧面板 ---- */
+  drawPanel(t);
+
+  /* ---- 底部时间轴标尺 ---- */
+  drawRuler(t);
+
+  /* ---- 片尾字标 ---- */
+  if (win(t, 6.50, 7.40) > 0.001) {
+    drawStagger('html-to-video', M, MARK_Y, 100, C.ink, t, 6.50, 0.030, 0.55, 700);
+
+    /* 仓库地址 */
+    const up = outCubic(win(t, 7.00, 7.75));
+    if (up > 0.001) {
+      g.save();
+      g.globalAlpha = up;
+      g.fillStyle = C.accent2;
+      g.font = `500 27px ${MONO}`;
+      g.letterSpacing = '1.5px';
+      g.fillText(CFG.url, M + 4, URL_Y + (1 - up) * 14);
+      g.letterSpacing = '0px';
+      g.restore();
+    }
+
+    /* 能力胶囊 */
+    const CHIP_H = 58, PADX = 26, GAP = 16, CPX = 21;
+    g.font = `500 ${CPX}px ${MONO}`;
+    g.letterSpacing = '1px';
+    let cx = M + 4;
+    for (let i = 0; i < CFG.chips.length; i++) {
+      const label = CFG.chips[i];
+      const cw = g.measureText(label).width + PADX * 2;
+      const p = outExpo(win(t, 7.40 + i * 0.11, 7.40 + i * 0.11 + 0.50));
+      if (p > 0.001) {
+        g.save();
+        g.globalAlpha = clamp(p, 0, 1);
+        g.translate(0, (1 - p) * 16);
+        roundRect(cx, CHIP_Y, cw, CHIP_H, CHIP_H / 2);
+        g.fillStyle = 'rgba(255,255,255,.045)';
+        g.fill();
+        g.strokeStyle = i === CFG.chips.length - 1 ? 'rgba(255,184,107,.42)' : C.faint;
+        g.lineWidth = 1.5;
+        g.stroke();
+        g.fillStyle = i === CFG.chips.length - 1 ? C.accent : 'rgba(242,245,250,.78)';
+        g.textAlign = 'center';
+        g.fillText(label, cx + cw / 2, CHIP_Y + CHIP_H / 2 + 7.5);
+        g.textAlign = 'left';
+        g.restore();
+      }
+      cx += cw + GAP;
+    }
+    g.letterSpacing = '0px';
+
+    /* 机制一行：把「怎么做的」写在最下面 */
+    const mp = outCubic(win(t, 8.15, 8.85));
+    if (mp > 0.001) {
+      g.save();
+      g.globalAlpha = mp * 0.5;
+      g.fillStyle = C.ink;
+      g.font = `500 22px ${MONO}`;
+      g.letterSpacing = '2.5px';
+      g.fillText(CFG.mech, M + 4, MECH_Y + (1 - mp) * 10);
+      g.letterSpacing = '0px';
+      g.restore();
+    }
+  }
+}
+
+/* ---------- 渲染契约 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now;
+    renderAt(cur);
+    requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

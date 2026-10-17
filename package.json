@@ -1,12 +1,16 @@
 {
   "name": "html-to-video",
   "version": "1.2.0",
-  "description": "把 HTML/Canvas 动画逐帧渲染成 MP4 —— 确定性、可复现、可控到帧",
+  "description": "Render HTML/Canvas animations to MP4 frame by frame — deterministic, frame-accurate, no GPU. · 用代码逐帧做视频：HTML / Canvas → MP4 / GIF / 透明层",
   "keywords": [
     "html-to-video",
+    "html-to-mp4",
+    "programmatic-video",
+    "video-rendering",
     "video",
     "canvas",
     "animation",
+    "kinetic-typography",
     "ffmpeg",
     "playwright",
     "deterministic",

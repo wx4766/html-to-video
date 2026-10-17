@@ -6,6 +6,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
 
+[![10 秒演示：HTML in，MP4 out —— 这段片子本身就是一份 HTML 文件渲出来的](docs/demo-hero.gif)](docs/demo-hero.mp4)
+
+<sub>这段片子就是 [`docs/demo-hero.html`](docs/demo-hero.html)（447 行、零依赖）渲出来的。自己复现一遍：<br>
+`node scripts/render-video-seek.js docs/demo-hero.html --duration=10 --fps=60`</sub>
+
 把 HTML / Canvas 动画**逐帧渲染成 MP4**（可配乐、可出 GIF）。
 
 不是 AI 文生视频，而是：
@@ -419,6 +424,10 @@ html-to-video/
 │   ├── templates-contract.test.mjs 模板契约 + 能力登记表双向校验
 │   └── fixtures/                  对照组页面（broken / offscreen-text / dom-text）
 ├── .github/workflows/ci.yml       PR 自动跑 npm test
+├── docs/                          README 里用的演示动图 / 原片 / 静帧
+│   ├── demo-hero.html             首页那支 10 秒演示片的源文件（447 行，零依赖）
+│   ├── demo-*.gif / demo-*.mp4    10 个模板的演示动图与原片
+│   └── preview-*.png              静帧大图
 └── assets/
     ├── render.sh                  全量渲染包装器
     ├── qa.sh                      验收包装器
