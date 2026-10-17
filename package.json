@@ -1,0 +1,37 @@
+{
+  "name": "html-to-video",
+  "version": "1.1.0",
+  "description": "把 HTML/Canvas 动画逐帧渲染成 MP4 —— 确定性、可复现、可控到帧",
+  "keywords": [
+    "html-to-video",
+    "video",
+    "canvas",
+    "animation",
+    "ffmpeg",
+    "playwright",
+    "deterministic",
+    "agent-skill"
+  ],
+  "license": "MIT",
+  "author": "wx4766",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wx4766/html-to-video.git"
+  },
+  "homepage": "https://github.com/wx4766/html-to-video#readme",
+  "bugs": {
+    "url": "https://github.com/wx4766/html-to-video/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:smoke": "node --test test/render-smoke.test.mjs",
+    "render": "node scripts/render-video-seek.js",
+    "qa": "node scripts/qa.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

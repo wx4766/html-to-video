@@ -1,0 +1,92 @@
+name: Bug 报告
+description: 渲染出错、成片不对、验收误报 —— 请带复现命令和日志
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先确认两件事，能省一轮来回：
+        - ffmpeg 是不是**完整版**（带 libx264）？`ffmpeg -hide_banner -encoders | grep libx264`
+        - `npm test` 能不能过？过不了说明是环境问题，不是你的用法问题
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 一句话说清现象。比如「渲出来右下角是黑的」「文字跑到画面外了」「qa 说没问题但成片是黑屏」
+      placeholder: 渲出来的 MP4 只有左上角一块有内容，右下是黑的
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现命令
+      description: 从渲染到出片的**完整**命令，别省略参数
+      render: bash
+      placeholder: |
+        bash assets/render.sh my-video.html --duration=6 --fps=30 --width=1080 --height=1920
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望 vs 实际
+      placeholder: |
+        期望：1080×1920 满屏
+        实际：只有左上角 1080×1080 有画面，下面全黑
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: 渲染日志 / QA 报告
+      description: |
+        渲染器的完整输出（尤其 `⚠` 和 `✗` 开头的行）。
+        如果能跑 `bash assets/qa.sh 你的文件.html`，把 `qa/qa.md` 的指标行贴上来 —— 这比截图有用得多。
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      placeholder: Windows 11 / macOS 14 / Ubuntu 22.04
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: node -v
+      placeholder: v20.11.0
+    validations:
+      required: true
+
+  - type: input
+    id: ffmpeg
+    attributes:
+      label: ffmpeg -version 第一行
+      placeholder: ffmpeg version 6.1.1
+    validations:
+      required: true
+
+  - type: input
+    id: playwright
+    attributes:
+      label: npx playwright --version
+      placeholder: Version 1.49.1
+    validations:
+      required: false
+
+  - type: textarea
+    id: html
+    attributes:
+      label: 最小复现 HTML（可选但强烈建议）
+      description: 能删的都删掉，只留还出问题的部分。很多时候删到一半你自己就找到原因了。
+      render: html
+    validations:
+      required: false
