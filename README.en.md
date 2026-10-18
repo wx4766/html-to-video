@@ -288,6 +288,15 @@ worse than no checker:
 
 ---
 
+## Read more
+
+A long-form write-up of the design decisions, the four bugs that cost the most time, and
+the numbers behind the claims:
+[Your HTML page is already a video renderer — it just needs one global function](https://dev.to/wx4766/your-html-page-is-already-a-video-renderer-it-just-needs-one-global-function-k31)
+(dev.to)
+
+---
+
 ## License
 
 MIT.
