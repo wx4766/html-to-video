@@ -24,4 +24,11 @@ RELEASE.md
 _*.log
 _commitmsg.txt
 scripts/_*
+_demo/
 test/fixtures/qa/
+
+# 性能基线产物（各机器数字不同，不入库）
+bench/
+
+# 派生输出（--poster 抽的封面）
+*.poster.jpg

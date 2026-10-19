@@ -83,12 +83,13 @@ node scripts/render-video-seek.js my-video.html --duration=6 --fps=30 --width=10
 
 ---
 
-## 10 templates you can ship today
+## 11 templates you can ship today
 
 Copy one, edit `CFG`, render. Each template is a single self-contained HTML file.
 
 | Template | What it does |
 |---|---|
+| `explainer.html` | **Multi-shot explainer** — hook → character + speech → bullet points → bar comparison → outro, with real transitions between shots. Can be driven entirely by a JSON shot list. Exactly three points in landscape switch to a three-column layout; portrait (1080×1920) gets its own stacked layout. |
 | `title-card.html` | Title card — characters pop in, then subtitle and tag |
 | `bar-chart.html` | Bar chart / ranking — bars grow in sequence, numbers count up, leader highlighted |
 | `line-chart.html` | Line trend — line draws itself, points light up, value bubble at the end |
@@ -107,7 +108,7 @@ the viewport, so `--width/--height` is the only switch.
 
 ## Project status
 
-`v1.2.0` — used daily, 55 automated tests, MIT. Not a startup, not a framework, no
+`v1.3.0` — used daily, 100+ automated tests, MIT. Not a startup, not a framework, no
 roadmap theatre. It does one thing and reports its own defects:
 
 - **Deterministic** — same input → byte-identical output, verified by re-rendering
@@ -121,6 +122,10 @@ roadmap theatre. It does one thing and reports its own defects:
   font fallback.
 - **Resumable** — `--resume` continues an interrupted render and reuses finished frames
   atomically.
+- **Multi-shot** — several shots with real transitions in one HTML file (see below).
+- **Built-in assets** — 40+ line icons, parameterised cartoon figures, cards/arrows/
+  connectors and background textures as plain code. No image packs, no licences, no
+  extra bytes.
 
 ---
 
@@ -189,6 +194,61 @@ first frame of each cue and you have the alignment error as a number. Measured o
 Keep text out of the bottom 15% — that's the platform UI band. `qa.js` flags
 "inside caption band" when you forget.
 
+### Multi-shot: one HTML file, a whole clip
+
+A watchable clip is several shots with transitions, not one long animation. Previously you
+rendered segments and concatenated them with ffmpeg (and computed the offsets yourself).
+Now the shot list lives in the page and transitions are composited in-page:
+
+```bash
+node scripts/render-video-seek.js assets/templates/explainer.html --duration=17.6 --fps=30 \
+  --gif --poster=6.0
+```
+
+Transitions: `fade` · `dip` (through the base colour) · `slide` · `push` · `rise` · `zoom`
+(zoom-through) · `wipe` (with a scan line) · `cut`. They **overlap**: total length is
+Σ shot durations − Σ transition durations, so adding transitions never makes the clip
+longer. Only transition frames go through an offscreen composite; everything else is drawn
+straight to the main canvas.
+
+The shot list can be supplied as JSON — much more reliable for an LLM than a few hundred
+lines of canvas code:
+
+```bash
+node scripts/render-video-seek.js assets/templates/explainer.html --duration=17.6 --fps=30 \
+  --story=shots.json --scene-log=shots.csv
+```
+
+```json
+[{ "kind": "title", "id": "hook", "dur": 3.0, "title": "Why is your build so slow?" },
+ { "kind": "talk",  "id": "why",  "dur": 3.5, "say": "Don't blame the tool",
+   "who": "dev", "pose": "wave", "trans": { "in": "slide", "dur": 0.5 } }]
+```
+
+`--scene-log` writes the shot table (`index,id,start,end,dur,trans_in,trans_dur`) and
+**warns when the shot list length disagrees with `--duration`** — otherwise the tail of the
+clip is silently dead air.
+
+### Built-in assets — icons, figures, camera
+
+```js
+SH.icon(g, 'bolt', x, y, 48, { color: TH.accent, width: 2.5 });            // 40+ line icons
+SH.card(g, { x, y, w, h }, { fill: TH.panel, radius: 18 });                // cards / arrows / connectors
+FIG.draw(g, FIG.preset('dev', { x, y, h, t, pose: 'wave' }));              // parameterised figure + speech bubble
+CAM.withCam(g, CAM.at(CAM.breath(), t, W, H), W, H, () => drawContent(g)); // continuous camera drift
+```
+
+| Library | Provides |
+|---|---|
+| `shapes.js` | 40+ icons, cards, pills, arrows, orthogonal connectors, dashed frames, progress arcs, grids, dot fields, glows, vignette, flowing aurora background, film grain (seeded, deterministic) |
+| `figures.js` | Parameterised flat characters: 6 hairstyles × 6 moods × 6 poses, any palette, 4 presets, plus `FIG.say()` speech bubbles |
+| `camera.js` | `breath` (subtle scale drift — fixes "the frame looks frozen"), `kenburns`, `handheld` (seeded pseudo-noise, **not** `Math.random()`), `shake` (decaying impact) |
+
+These are drawn in code on purpose: no licence questions, one visual language shared with
+the theme palette, sharp at any resolution, zero bytes to download. There is deliberately
+**no** bitmap character pack or landmark photo pack — those bring licence risk, clash with
+whatever look you already have, and turn the repo into a binary blob.
+
 ### Themes — change one field
 
 `assets/templates/themes.js` ships `midnight` (default, dark), `paper` (light, for docs and
@@ -233,7 +293,7 @@ silently end early.
 | `--duration` / `--from` / `--to` | length in seconds, or a sub-range (output name keeps the range) |
 | `--stills=0.5,2.0` | export PNGs at these timestamps, skip encoding |
 | `--fps` / `--width` / `--height` | frame rate and resolution |
-| `--concurrency` | parallel workers (one Chromium page each) |
+| `--concurrency` | parallel workers (one Chromium page each); `auto` picks from CPU count and free memory |
 | `--audio=<file>` | mux audio after encoding (video stream is copied) |
 | `--gop=<sec>` | keyframe interval (`--gop=1` for frame-accurate scrubbing) |
 | `--keep-frames` | keep the PNG sequence on success |
@@ -241,8 +301,21 @@ silently end early.
 | `--alpha` | transparent ProRes 4444 output |
 | `--srt=<file>` / `--cues=<file>` | external subtitle timeline |
 | `--cue-log=<file>` | write the cue alignment CSV |
+| `--story=<file>` | shot list as JSON — replaces the whole script (`window.__story`) |
+| `--scene-log=<file>` | write the shot table CSV; warns if it disagrees with `--duration` |
+| `--gif[=fps,width]` | also produce a GIF (default 15 fps / 960 px), two-pass palette, no re-render |
+| `--poster=<sec>` | also grab a still as `.jpg` for a thumbnail |
+| `--batch=<file.json>` | render a queue of jobs in order, print a summary; one failure doesn't discard the rest |
+| `--headed` | render with a visible browser window (concurrency drops to 1) |
 | `--allow-errors` | don't fail on page errors (default: page errors → non-zero exit) |
 | `--no-serve` | load via `file://` instead of the built-in local HTTP server |
+
+Render once, publish everywhere:
+
+```bash
+node scripts/render-video-seek.js explainer.html --duration=17.6 --fps=30 --gif=15,960 --poster=6.0
+node scripts/render-video-seek.js --batch=jobs.json
+```
 
 Page errors cause a non-zero exit on purpose. A console error usually means a blank frame
 or missing content, and an earlier version would happily report "done" until you pulled a
@@ -272,7 +345,8 @@ installs a full ffmpeg, and records the workspace path.
 ## Tests
 
 ```bash
-npm test     # 55 cases, ~3 minutes
+npm test       # 100+ cases, ~4 minutes
+npm run bench  # measure your own s/frame → bench/bench.md
 ```
 
 The most important ones are the **control pairs** — a checker that always says "fine" is

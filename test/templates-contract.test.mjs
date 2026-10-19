@@ -27,6 +27,7 @@ import { TEMPLATES } from '../scripts/lib/testing.mjs';
 const CAPS = {
   'bar-chart.html':         { theme: false, cues: false, alpha: false },
   'compare.html':           { theme: true,  cues: false, alpha: true  },
+  'explainer.html':         { theme: true,  cues: true,  alpha: true  },
   'flow-steps.html':        { theme: true,  cues: false, alpha: true  },
   'line-chart.html':        { theme: false, cues: false, alpha: false },
   'number-counter.html':    { theme: false, cues: false, alpha: false },
@@ -80,8 +81,32 @@ test('模板引用的同目录脚本都存在', () => {
     for (const m of code.matchAll(/<script[^>]+src\s*=\s*["']\.\/([^"']+)["']/g)) {
       if (!fs.existsSync(path.join(TEMPLATES, m[1]))) broken.push(`${f} → ./${m[1]}`);
     }
+    // ../lib/*.js 是素材库（motion / scenes / camera / shapes / figures），
+    // 拷模板时最容易漏，同样要查
+    for (const m of code.matchAll(/<script[^>]+src\s*=\s*["']\.\.\/lib\/([^"']+)["']/g)) {
+      const p = path.resolve(TEMPLATES, '..', 'lib', m[1]);
+      if (!fs.existsSync(p)) broken.push(`${f} → ../lib/${m[1]}`);
+    }
   }
   assert.deepEqual(broken, [], `引用了不存在的脚本：\n${broken.join('\n')}`);
+});
+
+/** 素材库是多个模板共用的公共资产，缺一个就会有一批模板白屏 */
+test('素材库文件齐全（motion / scenes / camera / shapes / figures）', () => {
+  const LIB = path.resolve(TEMPLATES, '..', 'lib');
+  const need = [
+    ['motion.js', 'MO'], ['scenes.js', 'SC'], ['camera.js', 'CAM'],
+    ['shapes.js', 'SH'], ['figures.js', 'FIG'],
+  ];
+  const missing = [];
+  for (const [file, globalName] of need) {
+    const p = path.join(LIB, file);
+    if (!fs.existsSync(p)) { missing.push(file + '（文件不存在）'); continue; }
+    const src = fs.readFileSync(p, 'utf8');
+    if (!src.includes(`root.${globalName} = ${globalName}`)) missing.push(`${file} 没导出 ${globalName}`);
+    if (!src.includes('module.exports')) missing.push(`${file} 没导出 module.exports（测试没法单测）`);
+  }
+  assert.deepEqual(missing, [], `素材库有问题：\n${missing.join('\n')}`);
 });
 
 /* ---------------------------- 基础契约 ---------------------------- */

@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 讲解片（多镜头）</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script src="../lib/motion.js"></script>
+<script src="../lib/scenes.js"></script>
+<script src="../lib/camera.js"></script>
+<script src="../lib/shapes.js"></script>
+<script src="../lib/figures.js"></script>
+<script>
+/* =====================================================================
+   模板 ⑪  ·  讲解片（多镜头 + 转场 + 人物 + 图标）
+   ---------------------------------------------------------------------
+   这是本仓库唯一「多镜头」的模板：一份 CFG 写一组镜头，镜头之间带转场，
+   一条命令出整支片子 —— 不用渲几段再拼，也不用学剪辑软件。
+
+   改 CFG.story 就够：每个镜头给 kind / dur / 文案，转场写在 trans 里。
+   可用转场：fade（溶解）· dip（经底色）· slide（推入）· push（推拉）
+             rise（上推）· zoom（变焦穿过）· wipe（扫擦）· cut（硬切）
+
+   ⚠ 转场别乱选：文字为主的深色版式只用 fade / dip。
+     带位移的转场会把上一镜的文字从中间切一半推走，看着像「画面坏了」。
+     slide / push / rise / wipe / zoom 留给满幅图形、照片、色块这类边缘无语义的镜头。
+     默认的五个镜头全用 fade 0.45s —— 这是实测下来最稳的一套。
+
+   出片（横屏）：
+     bash ../render.sh explainer.html --duration=24 --fps=30
+   出片（竖屏）：
+     bash ../render.sh explainer.html --duration=24 --fps=30 --width=1080 --height=1920
+   透明叠加（人物+文字浮在实拍上）：
+     bash ../render.sh explainer.html --duration=24 --fps=30 --alpha
+   挂字幕时间轴（每句一条，talk 镜头按序取用）：
+     bash ../render.sh explainer.html --duration=24 --fps=30 --srt=voice.srt
+   镜头表也可整份外置（LLM 写 JSON 最省事）：
+     bash ../render.sh explainer.html --duration=24 --fps=30 --story=shots.json
+   ===================================================================== */
+const CFG = {
+  theme: 'midnight',            // midnight | paper | neon，或传对象覆盖
+  kicker: '两分钟讲清楚',
+  story: [
+    {
+      kind: 'title', id: 'hook', dur: 3.4,
+      title: '为什么你的构建这么慢',
+      sub: '一次改造，把等待时间压到原来的四分之一',
+    },
+    {
+      kind: 'talk', id: 'why', dur: 3.8, trans: { in: 'fade', dur: 0.45 },
+      who: 'dev', pose: 'wave', mood: 'happy',
+      say: '先别急着换工具 —— 慢的不是工具，是每次都从零开始。',
+      icon: 'bulb',
+    },
+    {
+      kind: 'points', id: 'how', dur: 4.6, trans: { in: 'fade', dur: 0.45 },
+      title: '三件事，按顺序做',
+      items: [
+        { icon: 'database', title: '持久化缓存', desc: '第二次构建只算变化的部分' },
+        { icon: 'layers',   title: '拆分子任务', desc: '并行跑，别让 CPU 闲着' },
+        { icon: 'trend',    title: '量出来再改', desc: '先有基线，才知道改对了没' },
+      ],
+    },
+    {
+      kind: 'bars', id: 'result', dur: 4.4, trans: { in: 'fade', dur: 0.45 },
+      title: '改造前后',
+      unit: 's',
+      data: [
+        { label: '改造前', value: 42, color: 'bad' },
+        { label: '缓存',   value: 21, color: 'accent' },
+        { label: '并行',   value: 13, color: 'accent2' },
+        { label: '改造后', value: 9,  color: 'good' },
+      ],
+    },
+    {
+      kind: 'outro', id: 'end', dur: 3.2, trans: { in: 'fade', dur: 0.45 },
+      title: '同样的产出，少等 79%',
+      sub: 'html-to-video · 用代码逐帧做视频',
+      marks: ['bolt', 'check', 'layers', 'code'],
+    },
+  ],
+  // --srt 缺失时，talk 镜头的解说按序从这里取（有 --srt 就用字幕文案）
+  lines: [
+    '先别急着换工具 —— 慢的不是工具，是每次都从零开始。',
+  ],
+  lead: 0.3,                    // 开场从底色淡入
+  tail: 0.6,                    // 收尾淡出到底色
+  camera: true,                 // 持续运镜（关掉画面会「死」，除非你另有持续动效）
+};
+/* ===================================================================== */
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+const TH = window.h2vTheme ? h2vTheme(CFG.theme) : {
+  bg: '#0A0C12', bgAlt: '#0E1218', ink: '#F4F7FC', sub: 'rgba(244,247,252,.58)',
+  faint: 'rgba(244,247,252,.10)', panel: 'rgba(255,255,255,.045)',
+  accent: '#FFB86B', accent2: '#4ADE80', good: '#4ADE80', bad: '#FF6B6B', glow: 'rgba(255,184,107,0.12)',
+};
+const TRANSPARENT = !!window.__transparent;
+const SAFE_BOTTOM = H * 0.85;            // 底部 15% 是字幕带，内容不进这个区
+const g = cv.getContext('2d');
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const ease = MO ? MO.expoOut : (t => 1 - Math.pow(1 - clamp(t, 0, 1), 3));
+const smooth = MO ? MO.smooth : (t => { t = clamp(t, 0, 1); return t * t * t * (10 - 15 * t + 6 * t * t); });
+const PAD = (PORTRAIT ? 0.085 : 0.075) * W;
+
+function fitOneLine(text, basePx, maxW, fontOf) {
+  g.save(); g.font = fontOf(basePx);
+  const w = g.measureText(text).width;
+  g.restore();
+  return w > maxW && w > 0 ? Math.max(basePx * 0.55, basePx * maxW / w) : basePx;
+}
+
+/** 按字数均衡换行（中文按字切，英文按词切），返回行数组 */
+function wrapText(text, maxW, px, fontOf) {
+  g.save(); g.font = fontOf(px);
+  const src = String(text || '');
+  const tokens = src.split(/(\s+)/).filter(s => s.length);
+  const lines = [];
+  let cur = '';
+  for (const tk of tokens) {
+    const probe = cur + tk;
+    if (g.measureText(probe).width > maxW && cur) { lines.push(cur.trim()); cur = tk.replace(/^\s+/, ''); }
+    else cur = probe;
+  }
+  if (cur.trim()) lines.push(cur.trim());
+  g.restore();
+  return lines.length ? lines : [''];
+}
+
+/* ── 背景层：每个镜头自己画一遍（转场时两张画要各自完整） ────────── */
+function bgLayer(g2, t) {
+  if (TRANSPARENT) return;
+  const bg = g2.createLinearGradient(0, 0, W * 0.45, H);
+  bg.addColorStop(0, TH.bg);
+  bg.addColorStop(1, TH.bgAlt || TH.bg);
+  g2.fillStyle = bg;
+  g2.fillRect(0, 0, W, H);
+
+  // 极淡网格 + 两团缓慢流动的柔光：画面不死，也不抢戏
+  SH.grid(g2, W, H, { step: 150 * SF, color: TH.faint, alpha: 0.5, width: 1 * SF });
+  SH.mesh(g2, W, H, [TH.glow || 'rgba(255,184,107,0.16)', TH.accent2 || '#4ADE80', TH.accent], t,
+    { alpha: PORTRAIT ? 0.13 : 0.17, radius: 0.42 });
+  SH.vignette(g2, W, H, 0.35);
+}
+
+/* ── 内容层的运镜：极轻的呼吸缩放，治「画面死了」 ────────────────── */
+const CAM_DEF = CAM.breath({ dur: 4.2, loop: 4.2 });
+function withCam(g2, t, fn) {
+  if (!CFG.camera) { fn(); return; }
+  CAM.withCam(g2, CAM.at(CAM_DEF, t, W, H), W, H, fn);
+}
+
+/* ── 通用：小标题（kicker） ─────────────────────────────────────── */
+function kicker(g2, text, x, y, p, color) {
+  if (!text) return;
+  g2.save();
+  g2.globalAlpha = p;
+  g2.fillStyle = color || TH.sub;
+  const px = fitOneLine(text, 24 * SF, W - PAD * 2, s => `600 ${s}px ${SANS}`);
+  g2.font = `600 ${px}px ${SANS}`;
+  g2.letterSpacing = `${6 * SF}px`;
+  g2.fillText(text, x, y);
+  g2.restore();
+}
+
+/* ══════════════ 镜头 ①：片头 ══════════════ */
+function drawTitle(g2, lt, s) {
+  withCam(g2, s.global, () => {
+    /* cy 是标题基线。整块墨迹（kicker 顶 → 副标题底）的中心比基线高约 28px，
+       取 cy = 0.52H 让墨迹中心落在 0.47H —— 视觉居中偏上一点，才是「稳」的。 */
+    const cy = H * (PORTRAIT ? 0.40 : 0.52);
+
+    /* 右半边（竖屏是下半张）留白太多会显得「没做完」。放一个极淡的图形水印：
+       既填了空，又不抢标题。 */
+    const wp = ease(win(lt, 0.35, 1.4));
+    const icon = (s.icon && SH.hasIcon(s.icon)) ? s.icon : 'layers';
+    if (!PORTRAIT) {
+      const size = H * 0.44;
+      const wx = W - PAD - size * 0.55, wy = H * 0.5 - size * 0.5;
+      g2.save();
+      g2.globalAlpha = 0.22 * wp;
+      SH.icon(g2, icon, wx, wy, size, { color: TH.accent, width: 1.6 * SF });
+      g2.restore();
+    } else {
+      /* 竖屏标题只占上三分之一，下半张靠「大号淡图标 + 取景角标」托住 ——
+         和横屏是同一套语言，不是另画一张。 */
+      const size = W * 0.44;
+      const wx = W * 0.5 - size * 0.5, wy = H * 0.64 - size * 0.5;
+      g2.save();
+      g2.globalAlpha = 0.20 * wp;
+      SH.icon(g2, icon, wx, wy, size, { color: TH.accent, width: 1.4 * SF });
+      g2.restore();
+      g2.save();
+      g2.globalAlpha = 0.42 * wp;
+      SH.corners(g2, { x: wx - 34 * SF, y: wy - 34 * SF, w: size + 68 * SF, h: size + 68 * SF },
+        { color: TH.accent, len: 30 * SF, width: 2 * SF });
+      g2.restore();
+    }
+
+    kicker(g2, CFG.kicker, PAD, cy - 150 * SF, ease(win(lt, 0.1, 0.7)), TH.sub);
+
+    // 主标题：逐字升起（比整块淡入更有「出来」的感觉）
+    const title = String(s.title || '');
+    const chars = [...title];
+    const px = fitOneLine(title, (PORTRAIT ? 84 : 98) * SF, W - PAD * 2, s2 => `700 ${s2}px ${SANS}`);
+    g2.save();
+    g2.font = `700 ${px}px ${SANS}`;
+    g2.fillStyle = TH.ink;
+    g2.textAlign = 'left';
+    let x = PAD;
+    let maxRight = PAD;
+    chars.forEach((ch, i) => {
+      const p = MO ? MO.stagger(lt, 1, { t0: 0.25 + i * 0.055, dur: 0.55, ease: MO.expoOut })[0]
+                   : ease(win(lt, 0.25 + i * 0.055, 0.8 + i * 0.055));
+      g2.save();
+      g2.globalAlpha = p;
+      g2.translate(x, cy + (1 - p) * 26 * SF);
+      g2.fillText(ch, 0, 0);
+      g2.restore();
+      x += g2.measureText(ch).width;
+      maxRight = Math.max(maxRight, x);
+    });
+    g2.restore();
+
+    // 下方那道线：跟着标题长度长出来
+    const lp = smooth(win(lt, 0.5, 1.5));
+    if (lp > 0) {
+      g2.save();
+      g2.strokeStyle = TH.accent;
+      g2.lineWidth = 3 * SF;
+      g2.lineCap = 'round';
+      g2.beginPath();
+      g2.moveTo(PAD, cy + 46 * SF);
+      g2.lineTo(PAD + (Math.min(maxRight, W - PAD) - PAD) * lp, cy + 46 * SF);
+      g2.stroke();
+      g2.restore();
+    }
+
+    // 副标题
+    const sp = ease(win(lt, 0.75, 1.5));
+    if (sp > 0 && s.sub) {
+      const spx = fitOneLine(s.sub, (PORTRAIT ? 34 : 40) * SF, W - PAD * 2, s2 => `400 ${s2}px ${SANS}`);
+      g2.save();
+      g2.globalAlpha = sp * 0.9;
+      g2.fillStyle = TH.sub;
+      g2.font = `400 ${spx}px ${SANS}`;
+      g2.fillText(s.sub, PAD, cy + 104 * SF + (1 - sp) * 12 * SF);
+      g2.restore();
+    }
+
+    /* 底部细线（+ 可选 s.foot 小字）：给画面一个「落地」的锚点。
+       没有它，标题块以下的半张画布是纯空的，看着像没渲完。 */
+    const fp = smooth(win(lt, 0.85, 1.75));
+    if (fp > 0) {
+      const fy = H * 0.885;
+      g2.save();
+      g2.globalAlpha = 0.30 * fp;
+      g2.strokeStyle = TH.sub;
+      g2.lineWidth = 2 * SF;
+      g2.beginPath();
+      g2.moveTo(PAD, fy);
+      g2.lineTo(PAD + (W - PAD * 2) * fp, fy);
+      g2.stroke();
+      g2.restore();
+      if (s.foot) {
+        const fpx = Math.min(24 * SF, fitOneLine(s.foot, 24 * SF, W - PAD * 2, s2 => `500 ${s2}px ${MONO}`));
+        g2.save();
+        g2.globalAlpha = 0.7 * fp;
+        g2.fillStyle = TH.sub;
+        g2.font = `500 ${fpx}px ${MONO}`;
+        g2.fillText(s.foot, PAD, fy - 16 * SF);
+        g2.restore();
+      }
+    }
+  });
+}
+
+/* ══════════════ 镜头 ②：人物 + 对话气泡 ══════════════ */
+function drawTalk(g2, lt, s) {
+  const text = s.say || '';
+  /* 1080p 下 30px 的字在手机上看等于 6pt —— 偏小。38px 才是「视频里讲一句话」的字号。 */
+  const bodyPx = (PORTRAIT ? 44 : 46) * SF;
+
+  /* 版式：横屏两栏（人物在左，气泡在右，尾巴从气泡左缘指回人物），
+     竖屏上下（人物在下，气泡贴着人物头顶，尾巴朝下）。
+     两栏比「气泡悬在人物头顶」稳得多 —— 后者右边会空掉一大块。 */
+  let figH = 0.58 * H;
+  const figX = PORTRAIT ? W * 0.5 : W * 0.26;
+  const figY = PORTRAIT ? SAFE_BOTTOM : Math.min(SAFE_BOTTOM, H * 0.92);
+
+  /* 气泡起步铺满右栏（右边缘落在 PAD 上），折行后再按「最长那行」收边。
+     不收边的话，短句子会在气泡里留一大块右边白 —— 看着像输入框。 */
+  const bx = PORTRAIT ? PAD : Math.max(figX + figH * 0.30, W * 0.40);
+  let bw = PORTRAIT ? W - PAD * 2 : W - PAD - bx;
+  const bhMin = PORTRAIT ? 168 : 176;
+  const lines = wrapText(text, bw - 68 * SF, bodyPx, s2 => `500 ${s2}px ${SANS}`);
+  const bh = Math.max(bhMin * SF, lines.length * bodyPx * 1.55 + 80 * SF);
+  {
+    const pad2 = 68 * SF;
+    g.save();
+    g.font = `500 ${bodyPx}px ${SANS}`;
+    let tw = 0;
+    for (const l of lines) tw = Math.max(tw, g.measureText(l).width);
+    g.restore();
+    /* 最窄不低于 0.52 栏宽：收得太窄会变成一条竖长条，反而更怪 */
+    const minW = PORTRAIT ? W - PAD * 2 : Math.min(bw, (W - PAD - bx) * 0.52);
+    bw = Math.min(bw, Math.max(minW, tw + pad2));
+  }
+  /* 竖屏：气泡就落在人物头顶上方一个尾巴的距离，多余的高度全部让给人物。
+     以前写死 H*0.17，气泡和脑袋之间会空出一条 15% 的「无人区」，
+     尾巴悬在半空、指不到人。 */
+  let by;
+  if (PORTRAIT) {
+    /* 间距必须大于尾巴长度（32*SF），否则尾巴尖正好戳在头顶上，像长了只角 */
+    const gap = 60 * SF;
+    const top0 = H * 0.07;
+    by = figY - figH - gap - bh;          // 先按「头顶贴着气泡」摆
+    if (by < top0) by = top0;             // 太挤就把人物缩一点，别顶出画面
+  } else {
+    by = clamp(H * 0.46 - bh / 2, PAD, SAFE_BOTTOM - bh - 20 * SF);
+  }
+  /* 气泡太占地方时把人物缩到刚好放得下，别顶出画面 */
+  if (PORTRAIT) figH = Math.min(figH, figY - by - 60 * SF - bh);
+
+  const walked = MO ? MO.clamp(win(lt, 0, 0.6)) : win(lt, 0, 0.6);
+  const pose = lt < 1.6 ? 'wave' : (s.pose || 'idle');
+
+  withCam(g2, s.global, () => {
+    // 人物身后一团柔光：把人从背景里「托」出来，也补掉左栏的空
+    SH.glow(g2, figX, figY - figH * 0.55, figH * 0.95, TH.glow || 'rgba(255,184,107,0.16)', 0.9);
+
+    // 人物：入场时从左侧走进来（walked 结束前用 walk 姿势）
+    FIG.draw(g2, Object.assign({}, FIG.preset(s.who || 'guide', {
+      x: figX, y: figY, h: figH, t: lt, mood: s.mood || 'happy',
+      top: TH.accent, accent: TH.accent2,
+    }), {
+      flip: !!s.flip,
+      pose: walked < 0.85 ? 'walk' : pose,
+    }));
+
+    const bp = MO ? MO.expoOut(win(lt, 0.35, 1.05)) : ease(win(lt, 0.35, 1.05));
+    if (bp > 0) {
+      g2.save();
+      g2.globalAlpha = bp;
+      g2.translate((1 - bp) * 22 * (PORTRAIT ? 0 : 1), (1 - bp) * 12 * SF);
+      FIG.say(g2, { x: bx, y: by, w: bw, h: bh }, lines, {
+        fill: TH.bubble || 'rgba(255,255,255,.95)',
+        color: TH.bubbleInk || '#151922',
+        size: bodyPx, radius: 22 * SF,
+        font: SANS,
+        align: 'left',
+        padX: 32 * SF,
+        tailSide: PORTRAIT ? 'bottom' : 'left',
+        tailSize: 32 * SF,
+        /* tailX 是画布绝对坐标，不是相对气泡左边 —— 传 bw*0.5 会让尾巴偏到画面 43% 处 */
+        tailX: PORTRAIT ? figX : 0,
+        tailY: by + bh * 0.46,
+        tailLean: 0,
+      });
+      g2.restore();
+    }
+
+    // 右上角图标徽章：给画面一个视觉锚点
+    if (s.icon && SH.hasIcon(s.icon)) {
+      const ip = ease(win(lt, 0.5, 1.2));
+      if (ip > 0) {
+        const size = 54 * SF;
+        const bx2 = W - PAD - size, by2 = PAD + 8 * SF;
+        g2.save();
+        g2.globalAlpha = ip;
+        SH.card(g2, { x: bx2 - 14 * SF, y: by2 - 14 * SF, w: size + 28 * SF, h: size + 28 * SF },
+          { fill: TH.panel, stroke: TH.faint, radius: 16 * SF });
+        SH.icon(g2, s.icon, bx2, by2, size, { color: TH.accent, width: 2.4 * SF });
+        g2.restore();
+      }
+    }
+  });
+}
+
+/* ══════════════ 镜头 ③：分条要点 ══════════════ */
+
+/* 横屏恰好三条时走「并排三栏」。竖排三张满宽卡片在 16:9 里就是一张表格，
+   每张卡右边空掉一半；三条并排才撑得住画幅。 */
+function drawPointsCols(g2, lt, s, items) {
+  const topY = H * 0.20;
+  const gap = 26 * SF;
+  const cw = (W - PAD * 2 - gap * (items.length - 1)) / items.length;
+  const ch = H * 0.46;
+  const y0 = H * 0.32;
+  const pad = 30 * SF;
+
+  const tp = ease(win(lt, 0.05, 0.7));
+  if (s.title) {
+    const px = fitOneLine(s.title, 64 * SF, W - PAD * 2, s2 => `700 ${s2}px ${SANS}`);
+    g2.save();
+    g2.globalAlpha = tp;
+    g2.fillStyle = TH.ink;
+    g2.font = `700 ${px}px ${SANS}`;
+    g2.fillText(s.title, PAD, topY + (1 - tp) * 16 * SF);
+    g2.restore();
+  }
+
+  items.forEach((it, i) => {
+    const p = MO ? MO.expoOut(MO.clamp((lt - 0.32 - i * 0.14) / 0.75)) : ease(win(lt, 0.32 + i * 0.14, 1.07 + i * 0.14));
+    if (p <= 0) return;
+    const x = PAD + i * (cw + gap);
+    g2.save();
+    g2.globalAlpha = p;
+    g2.translate(0, (1 - p) * 26 * SF);
+    SH.card(g2, { x, y: y0, w: cw, h: ch }, { fill: TH.panel, stroke: TH.faint, radius: 20 * SF });
+
+    const isz = Math.min(cw * 0.26, ch * 0.30);
+    SH.card(g2, { x: x + pad, y: y0 + pad, w: isz, h: isz },
+      { fill: TH.iconBg || 'rgba(255,184,107,.14)', radius: isz * 0.28 });
+    if (it.icon && SH.hasIcon(it.icon)) {
+      SH.icon(g2, it.icon, x + pad + isz * 0.18, y0 + pad + isz * 0.18, isz * 0.64,
+        { color: TH.accent, width: 2.4 * SF });
+    }
+
+    g2.save();
+    g2.fillStyle = TH.sub;
+    g2.font = `600 ${24 * SF}px ${MONO}`;
+    g2.textAlign = 'right';
+    g2.fillText(String(i + 1).padStart(2, '0'), x + cw - pad, y0 + pad + 26 * SF);
+    g2.restore();
+
+    const tpx = fitOneLine(it.title || '', 46 * SF, cw - pad * 2, s2 => `700 ${s2}px ${SANS}`);
+    g2.save();
+    g2.fillStyle = TH.ink;
+    g2.font = `700 ${tpx}px ${SANS}`;
+    g2.fillText(it.title || '', x + pad, y0 + ch * 0.60);
+    g2.restore();
+
+    if (it.desc) {
+      const dpx = 28 * SF;
+      const dl = wrapText(it.desc, cw - pad * 2, dpx, s2 => `400 ${s2}px ${SANS}`).slice(0, 3);
+      g2.save();
+      g2.fillStyle = TH.sub;
+      g2.font = `400 ${dpx}px ${SANS}`;
+      dl.forEach((l, k) => g2.fillText(l, x + pad, y0 + ch * 0.60 + 56 * SF + k * dpx * 1.5));
+      g2.restore();
+    }
+    g2.restore();
+  });
+}
+
+function drawPoints(g2, lt, s) {
+  const items = s.items || [];
+  if (!PORTRAIT && items.length === 3) return drawPointsCols(g2, lt, s, items);
+  const topY = H * (PORTRAIT ? 0.16 : 0.20);
+  const rowH = Math.min(H * (PORTRAIT ? 0.22 : 0.20), (SAFE_BOTTOM - topY - 40 * SF) / Math.max(1, items.length));
+  const boxH = rowH * 0.82;
+
+  withCam(g2, s.global, () => {
+    // 标题
+    const tp = ease(win(lt, 0.05, 0.7));
+    if (s.title) {
+      const px = fitOneLine(s.title, (PORTRAIT ? 58 : 64) * SF, W - PAD * 2, s2 => `700 ${s2}px ${SANS}`);
+      g2.save();
+      g2.globalAlpha = tp;
+      g2.fillStyle = TH.ink;
+      g2.font = `700 ${px}px ${SANS}`;
+      g2.fillText(s.title, PAD, topY + (1 - tp) * 16 * SF);
+      g2.restore();
+    }
+
+    items.forEach((it, i) => {
+      const p = MO ? MO.expoOut(MO.clamp((lt - 0.28 - i * 0.26) / 0.6)) : ease(win(lt, 0.28 + i * 0.26, 0.88 + i * 0.26));
+      if (p <= 0) return;
+      const y = topY + 60 * SF + i * rowH;
+      const box = { x: PAD, y, w: W - PAD * 2, h: boxH };
+      g2.save();
+      g2.globalAlpha = p;
+      g2.translate((1 - p) * 26 * SX, 0);
+      SH.card(g2, box, { fill: TH.panel, stroke: TH.faint, radius: 18 * SF });
+
+      // 图标方块
+      const isz = boxH * 0.56;
+      const ix = box.x + 26 * SF, iy = box.y + (boxH - isz) / 2;
+      SH.card(g2, { x: ix, y: iy, w: isz, h: isz },
+        { fill: TH.iconBg || 'rgba(255,184,107,.14)', radius: isz * 0.28 });
+      if (it.icon && SH.hasIcon(it.icon)) {
+        SH.icon(g2, it.icon, ix + isz * 0.18, iy + isz * 0.18, isz * 0.64, { color: TH.accent, width: 2.2 * SF });
+      }
+
+      // 序号 + 标题 + 说明
+      const tx = ix + isz + 26 * SF;
+      g2.save();
+      g2.fillStyle = TH.sub;
+      g2.font = `600 ${(PORTRAIT ? 26 : 22) * SF}px ${MONO}`;
+      g2.fillText(String(i + 1).padStart(2, '0'), box.x + box.w - 64 * SF, box.y + boxH * 0.42);
+      g2.restore();
+
+      const tpx = fitOneLine(it.title || '', (PORTRAIT ? 46 : 42) * SF, box.w - (tx - box.x) - 90 * SF, s2 => `700 ${s2}px ${SANS}`);
+      g2.save();
+      g2.fillStyle = TH.ink;
+      g2.font = `700 ${tpx}px ${SANS}`;
+      g2.fillText(it.title || '', tx, box.y + boxH * 0.44);
+      g2.restore();
+
+      if (it.desc) {
+        const dpx = fitOneLine(it.desc, (PORTRAIT ? 32 : 28) * SF, box.w - (tx - box.x) - 90 * SF, s2 => `400 ${s2}px ${SANS}`);
+        g2.save();
+        g2.fillStyle = TH.sub;
+        g2.font = `400 ${dpx}px ${SANS}`;
+        g2.fillText(it.desc, tx, box.y + boxH * 0.78);
+        g2.restore();
+      }
+      g2.restore();
+    });
+  });
+}
+
+/* ══════════════ 镜头 ④：横向条形对比 ══════════════ */
+function drawBars(g2, lt, s) {
+  const data = s.data || [];
+  const maxV = Math.max(1, ...data.map(d => Math.abs(d.value)));
+  const topY = H * (PORTRAIT ? 0.16 : 0.22);
+  /* 行距吃掉「标题到字幕带」之间的所有高度 —— 竖屏写死 0.135H 会让画面下沿空掉三分之一 */
+  const rowH = Math.min(H * (PORTRAIT ? 0.175 : 0.135), (SAFE_BOTTOM - topY - 60 * SF) / Math.max(1, data.length));
+  const barX = PAD + (PORTRAIT ? W * 0.20 : W * 0.17);
+  const barMaxW = W - PAD - barX - (PORTRAIT ? W * 0.16 : W * 0.10);
+
+  withCam(g2, s.global, () => {
+    const tp = ease(win(lt, 0.05, 0.7));
+    if (s.title) {
+      const px = fitOneLine(s.title, (PORTRAIT ? 58 : 64) * SF, W - PAD * 2, s2 => `700 ${s2}px ${SANS}`);
+      g2.save();
+      g2.globalAlpha = tp;
+      g2.fillStyle = TH.ink;
+      g2.font = `700 ${px}px ${SANS}`;
+      g2.fillText(s.title, PAD, topY + (1 - tp) * 16 * SF);
+      g2.restore();
+    }
+
+    data.forEach((d, i) => {
+      const p = MO ? MO.expoOut(MO.clamp((lt - 0.22 - i * 0.20) / 0.85)) : ease(win(lt, 0.22 + i * 0.20, 1.07 + i * 0.20));
+      if (p <= 0) return;
+      const y = topY + 70 * SF + i * rowH;
+      /* 语义色名先换成主题里的实际色值；写了自定义色值（#xxx）就原样用。
+         漏了这一步会把 'accent' 这个字符串直接喂给 addColorStop —— 整帧抛错。 */
+      const color = ({
+        good: TH.good, bad: TH.bad,
+        accent: TH.accent, accent2: TH.accent2 || TH.accent,
+      })[d.color] || d.color || TH.accent;
+
+      // 槽
+      g2.save();
+      g2.globalAlpha = 0.5;
+      SH.roundRect(g2, barX, y, barMaxW * clamp(p * 2, 0, 1), rowH * 0.44, rowH * 0.22);
+      g2.fillStyle = TH.faint;
+      g2.fill();
+      g2.restore();
+
+      // 条：同色相往浅里走，不要渐到背景色 —— 渐到背景会让条看起来「虚掉了」
+      const w = barMaxW * (Math.abs(d.value) / maxV) * p;
+      const bh2 = rowH * 0.44;
+      g2.save();
+      g2.globalAlpha = 0.95;
+      /* 圆角最多取到条长的一半：短条（比如 9/42）如果按高度一半倒角，
+         会退化成一个圆球，看不出「条」 */
+      SH.roundRect(g2, barX, y, Math.max(1, w), bh2, Math.min(bh2 * 0.5, Math.max(1, w) * 0.5));
+      /* 竖向渐变代替「顶部高光条」：高光条会在条上压出一道硬边，
+         整体像一颗糖果按钮；渐变没有接缝，纯色条也有厚度。 */
+      const grd = g2.createLinearGradient(0, y, 0, y + bh2);
+      grd.addColorStop(0, FIG.shade(color, 0.10));
+      grd.addColorStop(1, color);
+      g2.fillStyle = grd;
+      g2.fill();
+      g2.restore();
+
+      // 标签
+      g2.save();
+      g2.globalAlpha = p;
+      g2.fillStyle = TH.sub;
+      g2.font = `500 ${(PORTRAIT ? 30 : 26) * SF}px ${SANS}`;
+      g2.fillText(String(d.label || ''), PAD, y + bh2 * 0.5 + (PORTRAIT ? 30 : 26) * SF * 0.36);
+      g2.restore();
+
+      /* 数值：跟着条长滚动到位。
+         贴着条尾往外放；条太长顶到右边界时，改放在边界内并加一块底色，
+         否则数字会压在条的深色部分上看不清（第一版就是这个毛病）。 */
+      g2.save();
+      g2.globalAlpha = p;
+      const vtext = `${(d.value * p).toFixed(d.value % 1 ? 1 : 0)}${s.unit || ''}`;
+      const vpx = (PORTRAIT ? 42 : 34) * SF;
+      g2.font = `700 ${vpx}px ${MONO}`;
+      const vw = g2.measureText(vtext).width;
+      const pad = 12 * SF;
+      const idealX = barX + w + 14 * SF;
+      const maxX = W - PAD - vw;
+      const vx = Math.min(idealX, maxX);
+      if (vx < idealX - 0.5) {
+        // 被边界挤回来了：垫一层底板，保证数字在任何底色上都读得出来
+        g2.globalAlpha = p * 0.75;
+        SH.roundRect(g2, vx - pad, y, vw + pad * 2, bh2, bh2 * 0.5);
+        g2.fillStyle = TH.bg;
+        g2.fill();
+        g2.globalAlpha = p;
+      }
+      g2.fillStyle = color;
+      g2.fillText(vtext, vx, y + bh2 * 0.5 + vpx * 0.36);
+      g2.restore();
+    });
+  });
+}
+
+/* ══════════════ 镜头 ⑤：片尾 ══════════════ */
+function drawOutro(g2, lt, s) {
+  withCam(g2, s.global, () => {
+    /* 片尾走中轴构图：一左一右的排版到最后一镜会显得「没说完」，
+       居中收口更像结尾（所有元素共用中心线，视觉重量才平衡）。 */
+    const cx = W / 2;
+    const cy = H * (PORTRAIT ? 0.34 : 0.40);
+    /* 竖屏是 2:1 的高画框，所有元素挤在 cy 附近会变成「上半张 + 下半张空白」，
+       所以竖屏把分隔线 / 副标题 / 标记行按比例摊开，整屏都占住。 */
+    const sepY = cy + (PORTRAIT ? 62 : 54) * SF;
+    const subY = cy + (PORTRAIT ? 126 : 108) * SF;
+    const markY = PORTRAIT ? H * 0.60 : cy + 168 * SF;
+
+    const tp = MO ? MO.expoOut(win(lt, 0.1, 0.85)) : ease(win(lt, 0.1, 0.85));
+    const title = s.title || '';
+    const px = fitOneLine(title, (PORTRAIT ? 76 : 84) * SF, W - PAD * 2, s2 => `700 ${s2}px ${SANS}`);
+    g2.save();
+    g2.textAlign = 'center';
+    g2.globalAlpha = tp;
+    g2.fillStyle = TH.ink;
+    g2.font = `700 ${px}px ${SANS}`;
+    g2.fillText(title, cx, cy + (1 - tp) * 22 * SF);
+    g2.restore();
+
+    /* 中间那道线：满宽细线在暗底上看不见（1.5px 的 faint 等于没画）。
+       改成一截居中的强调色短划，从中心向两侧展开 —— 既是分隔，也是收口的标记。 */
+    const lp = smooth(win(lt, 0.5, 1.35));
+    if (lp > 0) {
+      const halfW = W * 0.055 * lp;
+      SH.roundRect(g2, cx - halfW, sepY, halfW * 2, 4 * SF, 2 * SF);
+      g2.save();
+      g2.globalAlpha = 0.85;
+      g2.fillStyle = TH.accent;
+      g2.fill();
+      g2.restore();
+    }
+
+    const sp = ease(win(lt, 0.7, 1.35));
+    if (sp > 0 && s.sub) {
+      const spx = fitOneLine(s.sub, (PORTRAIT ? 40 : 34) * SF, W - PAD * 2, s2 => `400 ${s2}px ${SANS}`);
+      g2.save();
+      g2.textAlign = 'center';
+      g2.globalAlpha = sp * 0.85;
+      g2.fillStyle = TH.sub;
+      g2.font = `400 ${spx}px ${SANS}`;
+      g2.fillText(s.sub, cx, subY);
+      g2.restore();
+    }
+
+    // 一排能力标记：居中排列，片尾不空
+    const marks = (s.marks || []).filter(m => SH.hasIcon(m));
+    const msz = (PORTRAIT ? 84 : 60) * SF, mgap = (PORTRAIT ? 34 : 26) * SF;
+    const totalW = marks.length * msz + (marks.length - 1) * mgap;
+    let mx = cx - totalW / 2;
+    marks.forEach((m, i) => {
+      const p = MO ? MO.expoOut(MO.clamp((lt - 0.95 - i * 0.12) / 0.55)) : ease(win(lt, 0.95 + i * 0.12, 1.5 + i * 0.12));
+      if (p <= 0) return;
+      g2.save();
+      g2.globalAlpha = p;
+      g2.translate(0, (1 - p) * 12 * SF);
+      SH.card(g2, { x: mx, y: markY, w: msz, h: msz }, { fill: TH.panel, stroke: TH.faint, radius: msz * 0.28 });
+      SH.icon(g2, m, mx + msz * 0.22, markY + msz * 0.22, msz * 0.56, { color: TH.accent, width: 2.2 * SF });
+      g2.restore();
+      mx += msz + mgap;
+    });
+
+    /* 底部细线：和片头同一处，收尾时画面才「落地」而不是浮在半空 */
+    const fp2 = smooth(win(lt, 1.1, 1.9));
+    if (fp2 > 0) {
+      g2.save();
+      g2.globalAlpha = 0.30 * fp2;
+      g2.strokeStyle = TH.sub;
+      g2.lineWidth = 2 * SF;
+      g2.beginPath();
+      g2.moveTo(cx - (W * 0.5 - PAD) * fp2, H * 0.885);
+      g2.lineTo(cx + (W * 0.5 - PAD) * fp2, H * 0.885);
+      g2.stroke();
+      g2.restore();
+    }
+  });
+}
+
+/* ── 剧本 → 镜头表 ──────────────────────────────────────────────────
+   window.__story（--story=shots.json）整体覆盖 CFG.story；
+   window.__cues（--srt）按序覆盖 talk 镜头的解说词。 */
+function buildShots() {
+  const raw = (window.__story && window.__story.length) ? window.__story : CFG.story;
+  const cues = (window.__cues && window.__cues.length) ? window.__cues : null;
+  const lines = CFG.lines || [];
+  let talkIdx = 0;
+
+  return raw.map((s, i) => {
+    const shot = Object.assign({}, s);
+    let drawer = drawTitle;
+    if (shot.kind === 'talk') {
+      drawer = drawTalk;
+      if (cues && cues[talkIdx]) shot.say = cues[talkIdx].text;
+      else if (!shot.say && lines[talkIdx]) shot.say = lines[talkIdx];
+      talkIdx++;
+    } else if (shot.kind === 'points') drawer = drawPoints;
+    else if (shot.kind === 'bars') drawer = drawBars;
+    else if (shot.kind === 'outro') drawer = drawOutro;
+
+    return {
+      id: shot.id || `shot${i + 1}`,
+      dur: Number(shot.dur) || 3,
+      trans: shot.trans,
+      draw: (g2, lt, ctx) => {
+        /* 转场已经在做透明度了，镜头内部不能再叠一层整体淡入 ——
+           两层同时压 alpha，转场那 0.45 秒会糊成一团（第一版就是这个毛病）。
+           带转场的镜头直接上满不透明度；只有硬切的镜头才给 0.2 秒软起。 */
+        const tdur = (ctx.trans && ctx.trans.dur) || 0;
+        const role = ctx.role || { side: null, p: 0 };
+        /* 退场侧：先把**内容**撤干净（前 55% 撤完），再让下一镜的内容长出来。
+           两段内容不同时在场，交叉溶解才不会把两个标题压在同一位置叠成乱码。
+           背景照画不误 —— 底色和网格两镜一样，观众看不出切换。 */
+        const out = role.side === 'a' ? clamp(role.p / 0.55, 0, 1) : 0;
+        const alpha = (tdur > 0 ? 1 : clamp(lt / 0.2, 0, 1)) * (1 - out);
+        /* 内容时钟比镜头时钟晚起步 0.22×转场时长：溶解到一半时元素才开始长，
+           溶解结束刚好主体已经到位，不会出现「切过去一片空」。 */
+        const ct = Math.max(0, lt - tdur * 0.22);
+
+        bgLayer(g2, ctx.global);
+        if (alpha > 0.002) {
+          g2.save();
+          g2.globalAlpha = alpha;
+          if (out > 0) g2.translate(0, -out * H * 0.02);   // 退场带一点上飘，像「被带走」
+          drawer(g2, ct, Object.assign({ global: ctx.global }, shot));
+          g2.restore();
+        }
+      },
+    };
+  });
+}
+
+const SHOTS = buildShots();
+const TL = SC.build(SHOTS, {
+  lead: CFG.lead || 0,
+  tail: CFG.tail || 0,
+  trDur: 0.45,
+  ease: SC.ease.outCubic,
+});
+SC.expose(TL);
+const DUR = TL.dur;
+
+function drawFrame(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+  SC.paint(g, TL, clamp(t, 0, DUR - 0.0005), { W, H, bg: TH.bg, SF });
+}
+
+/* ---------- 渲染契约 ---------- */
+function renderAt(t) { drawFrame(t); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

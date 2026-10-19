@@ -38,11 +38,21 @@
  *   --gop=<秒>             关键帧间隔；给了就每秒一个关键帧，方便后期逐秒 seek
  *   --audio=<file>         编码后自动混音（视频流直接 copy，不重编码）
  *   --keep-frames          成功也保留逐帧 PNG（换 CRF 重编码时不必重截）
+ *   --gif[=fps,width]      出片后再产一张 GIF（默认 15fps / 宽 960），两阶段 palette 优化
+ *   --poster=<秒>          出片后再抽一张封面静帧（.jpg），发站 / 社媒用
+ *
+ * 多镜头
+ *   --story=<file>         镜头表 JSON，注入 window.__story（配合 assets/lib/scenes.js）
+ *   --scene-log=<file>     导出镜头时间轴 CSV（index,id,start,end,dur,trans_in,trans_dur）
+ *
+ * 批量
+ *   --batch=<file.json>    一串任务按顺序渲（每项一组渲染参数），最后打汇总表
  *
  * 容错
  *   --allow-errors         页面报错不判失败（默认：有 pageerror/console.error → 非零退出）
  *   --readytimeout=8       等 window.__seek 就绪的秒数
  *   --no-serve             用 file:// 加载（默认走本地 http server；file:// 下 ESM 与 fetch 会被 CORS 拦死）
+ *   --headed               开着浏览器窗口渲（调试用；并发自动降到 1，否则桌面上会开一排窗口）
  *
  * Output:
  *   同目录同名 .mp4。给了 --from/--to 时输出名为 <名>.<起>-<止>s.mp4，**不会覆盖成品**。
@@ -53,6 +63,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
+const os = require('os');
 const { HIDE_CHROME_CSS, hideChromeInit } = require('./lib/hide-chrome.cjs');
 const { startServer } = require('./lib/local-server.cjs');
 const { loadCues, cueAt } = require('./lib/cues.cjs');
@@ -65,7 +76,71 @@ function hasFlag(name) {
   return process.argv.includes('--' + name);
 }
 
+/**
+ * 并发自适应：--concurrency=auto 时按 CPU 与可用内存挑 worker 数。
+ * 每个 worker 是一个独立 Chromium 页面，实测常驻 0.4–0.8 GB。开太多不会更快
+ * （页面之间抢 CPU），只会把内存吃光然后被系统杀掉。上限 8 是实测出来的拐点。
+ */
+function autoConcurrency() {
+  const cpus = (os.cpus() && os.cpus().length) || 4;
+  const freeGB = os.freemem() / 1073741824;
+  const byCpu = Math.max(1, Math.floor(cpus * 0.75));
+  const byMem = Math.max(1, Math.floor(freeGB / 0.6));
+  return Math.max(1, Math.min(8, Math.min(byCpu, byMem)));
+}
+
+/** 批量任务：起子进程逐个渲，最后打汇总表 */
+function runBatch(file) {
+  let jobs;
+  try {
+    jobs = JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'));
+  } catch (e) {
+    console.error(`✗ 批量任务文件读不了：${file}`);
+    console.error('  ' + String((e && e.message) || e).split('\n')[0]);
+    process.exit(1);
+  }
+  if (!Array.isArray(jobs) || !jobs.length) {
+    console.error('✗ 批量任务文件里要是一组对象：[{ "html": "...", "duration": 6 }, ...]');
+    process.exit(1);
+  }
+  const FLAG_KEYS = new Set(['alpha', 'resume', 'keep-frames', 'allow-errors', 'keep-chrome', 'no-serve']);
+  const VAL_KEYS = ['duration', 'from', 'to', 'fps', 'width', 'height', 'concurrency', 'settle',
+    'audio', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills'];
+
+  console.log(`▸ Batch: ${jobs.length} 个任务（${file}）`);
+  const rows = [];
+  let failed = 0;
+  const t0 = Date.now();
+  jobs.forEach((job, i) => {
+    if (!job || !job.html) {
+      console.error(`✗ [${i + 1}/${jobs.length}] 任务缺 html 字段`);
+      failed++; rows.push({ n: i + 1, html: '(缺失)', ok: false, note: '缺 html' });
+      return;
+    }
+    const args = [];
+    for (const k of VAL_KEYS) if (job[k] != null) args.push(`--${k}=${job[k]}`);
+    for (const k of FLAG_KEYS) if (job[k] === true) args.push('--' + k);
+    if (job.gif != null) args.push(job.gif === true ? '--gif' : `--gif=${job.gif}`);
+
+    console.log(`\n▸ [${i + 1}/${jobs.length}] ${job.html}${args.length ? '  ' + args.join(' ') : ''}`);
+    const r = spawnSync(process.execPath, [__filename, job.html, ...args], { encoding: 'utf8' });
+    const out = (r.stdout || '') + (r.stderr || '');
+    if (r.stdout) process.stdout.write(r.stdout);
+    if (r.stderr) process.stderr.write(r.stderr);
+    const ok = r.status === 0;
+    if (!ok) failed++;
+    const m = out.match(/✓ Done: (\S+)/);
+    rows.push({ n: i + 1, html: job.html, ok, note: m ? m[1] : (ok ? 'ok' : 'exit ' + r.status) });
+  });
+  console.log('\n──────── 批量汇总 ────────');
+  for (const r of rows) console.log(`  ${r.ok ? '✓' : '✗'} ${String(r.n).padStart(2)}  ${r.html}  →  ${r.note}`);
+  console.log(`  ${rows.length - failed}/${rows.length} 成功 · ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  process.exit(failed ? 1 : 0);
+}
+
 const HTML_FILE = process.argv[2];
+if (arg('batch', null)) runBatch(arg('batch', null));
+
 if (!HTML_FILE || HTML_FILE.startsWith('--')) {
   console.error('Usage: node render-video-seek.js <html-file> [options]');
   console.error('Example: NODE_PATH=$(npm root -g) node render-video-seek.js my-animation.html --fps=60 --duration=12');
@@ -73,6 +148,7 @@ if (!HTML_FILE || HTML_FILE.startsWith('--')) {
   console.error('         ... --stills=1,3,5      # 只导出 1s/3s/5s 三张静帧');
   console.error('         ... --resume            # 上次中断了？接着渲，已完成的帧直接复用');
   console.error('         ... --alpha             # 透明背景输出（ProRes 4444 .mov），用于叠加合成');
+  console.error('         ... --batch=jobs.json   # 一串任务按顺序渲');
   process.exit(1);
 }
 
@@ -80,7 +156,15 @@ const DURATION    = parseFloat(arg('duration', '30'));
 const FPS         = parseFloat(arg('fps', '60'));
 const WIDTH       = parseInt(arg('width', '1920'));
 const HEIGHT      = parseInt(arg('height', '1080'));
-const CONCURRENCY = Math.max(1, parseInt(arg('concurrency', '4')));
+const CONC_RAW    = String(arg('concurrency', '4'));
+const AUTO_CONC   = CONC_RAW === 'auto';
+const HEADED      = hasFlag('headed');
+let   CONCURRENCY = AUTO_CONC ? autoConcurrency() : Math.max(1, parseInt(CONC_RAW, 10) || 4);
+if (HEADED && CONCURRENCY > 1) {
+  // 开着窗口渲还并发 = 桌面上弹出一排浏览器，既看不清也互相抢焦点
+  console.log(`  headed: 并发从 ${CONCURRENCY} 降到 1（有头模式就开一个窗口看）`);
+  CONCURRENCY = 1;
+}
 const SETTLE      = Math.max(1, parseInt(arg('settle', '2')));
 const READY_TIMEOUT = parseFloat(arg('readytimeout', '8'));
 const FROM        = Math.max(0, parseFloat(arg('from', '0')));
@@ -97,6 +181,11 @@ const ALPHA        = hasFlag('alpha');          // 透明背景输出（叠加�
 const ALPHA_CODEC  = String(arg('alpha-codec', 'prores')).toLowerCase();
 const CUES_FILE    = arg('srt', null) || arg('cues', null);   // 字幕时间轴（SRT / VTT / JSON）
 const CUE_LOG      = arg('cue-log', null);      // 把「第几帧用了第几句」写成 CSV，用于核对时间误差
+const STORY_FILE   = arg('story', null);        // 镜头表 JSON（配合 assets/lib/scenes.js）
+const SCENE_LOG    = arg('scene-log', null);    // 镜头时间轴 CSV，用来核对镜头起止与转场
+const GIF_RAW      = arg('gif', null);          // --gif 或 --gif=fps,width
+const WANT_GIF     = hasFlag('gif') || GIF_RAW !== null;
+const POSTER_AT    = arg('poster', null);       // 从成片里抽一帧当封面（秒）
 
 /* 为什么只有 ProRes 4444，没有 VP9 alpha：
    实测把 PNG 序列（rgba）编成 --pix_fmt yuva420p + -auto-alt-ref 0，文件体积从 7.8KB
@@ -158,10 +247,36 @@ if (CUES_FILE) {
   }
 }
 
+/* 镜头表：整份注入 window.__story，模板（如 explainer.html）拿它换掉自己的 CFG.story。
+   这样 LLM / 脚本只要产出 JSON 就能改片子内容，不用去改 HTML 里的代码。 */
+let STORY = null;
+if (STORY_FILE) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.resolve(STORY_FILE), 'utf8'));
+    STORY = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.shots) ? parsed.shots : null);
+  } catch (e) {
+    console.error(`✗ 镜头表读不了：${STORY_FILE}`);
+    console.error('  ' + String((e && e.message) || e).split('\n')[0]);
+    process.exit(1);
+  }
+  if (!STORY || !STORY.length) {
+    console.error(`✗ 镜头表里没有镜头：${STORY_FILE}`);
+    console.error('  要是一组对象：[{ "kind":"title", "dur":3, "title":"..." }, ...]');
+    process.exit(1);
+  }
+  for (const s of STORY) {
+    if (!s || !(Number(s.dur) > 0)) {
+      console.error(`✗ 镜头表里有个镜头没写 dur（或不是正数）：${JSON.stringify(s).slice(0, 120)}`);
+      process.exit(1);
+    }
+  }
+}
+
 const JOB = {
   html: HTML_ABS, fps: FPS, from: F0, to: F1,
   width: WIDTH, height: HEIGHT, settle: SETTLE, hideChrome: !KEEP_CHROME,
   cues: CUES ? path.resolve(CUES_FILE) : null,
+  story: STORY ? path.resolve(STORY_FILE) : null,
 };
 const STILL_DIR = path.join(DIR, BASENAME + '.stills');
 const MP4_OUT   = path.join(DIR, RANGE_GIVEN
@@ -259,7 +374,11 @@ console.log(`▸ Seek-rendering: ${HTML_FILE}`);
 if (STILLS) {
   console.log(`  size: ${WIDTH}x${HEIGHT} · stills: ${STILLS.join(', ')}s → ${STILL_DIR}`);
 } else {
-  console.log(`  size: ${WIDTH}x${HEIGHT} · ${FPS}fps · ${trimNum(FROM)}–${trimNum(END)}s · frames: ${TOTAL_FRAMES} · workers: ${CONCURRENCY}`);
+  console.log(`  size: ${WIDTH}x${HEIGHT} · ${FPS}fps · ${trimNum(FROM)}–${trimNum(END)}s · frames: ${TOTAL_FRAMES} · workers: ${CONCURRENCY}${AUTO_CONC ? ' (auto)' : ''}`);
+  if (STORY) {
+    const total = STORY.reduce((a, s) => a + (Number(s.dur) || 0), 0);
+    console.log(`  镜头表: ${STORY.length} 个镜头（${STORY_FILE}）· 时长合计 ${total.toFixed(2)}s → window.__story`);
+  }
   if (ALPHA) console.log(`  alpha: ProRes 4444 (.mov) —— 背景透明，供叠加合成`);
   if (CUES) {
     const last = CUES[CUES.length - 1];
@@ -304,6 +423,51 @@ async function injectCues(page) {
     await page.evaluate(cs => { window.__cues = cs; }, CUES);
   } catch (e) {
     // 注入失败就让模板用自己 CFG 里的时间表，不阻断渲染
+  }
+}
+
+/* 镜头表必须在页面脚本跑起来**之前**注入：模板是在加载时就把镜头表编译成时间轴的
+   （SC.build 在顶层执行），加载完再 evaluate 已经晚了 —— 页面早按自己的 CFG 建好了。
+   所以走 context.addInitScript，和 __seekRender / __transparent 同一条路。 */
+async function injectStoryInit(context) {
+  if (!STORY) return;
+  try {
+    await context.addInitScript(ss => { window.__story = ss; }, STORY);
+  } catch (e) {
+    console.warn('⚠ 镜头表注入失败，模板会用它自己的 CFG.story：' + String((e && e.message) || e));
+  }
+}
+
+/* 镜头时间轴：模板调了 SC.expose() 才会挂上 window.__sceneTable。
+   拿它导出 CSV，并且和 --duration 对一下 —— 最常见的错是镜头表总时长和 --duration 不一致，
+   表现是结尾多出一截静止画面（或者片子被截断）。 */
+let sceneTableDone = false;
+async function captureSceneTable(page) {
+  if (!SCENE_LOG || sceneTableDone) return;
+  let table = null;
+  try {
+    table = await page.evaluate(() => (Array.isArray(window.__sceneTable) ? window.__sceneTable : null));
+  } catch (e) { return; }
+  if (!table || !table.length) return;
+  sceneTableDone = true;
+  const rows = ['index,id,start,end,dur,trans_in,trans_dur'];
+  for (const s of table) {
+    rows.push([s.index, s.id, s.start, s.end, s.dur, s.trans_in || 'cut', s.trans_dur || 0].join(','));
+  }
+  const p = path.resolve(SCENE_LOG);
+  try {
+    fs.writeFileSync(p, rows.join('\n') + '\n', 'utf8');
+    console.log(`  scene-log: ${p}（${table.length} 个镜头）`);
+  } catch (e) {
+    console.warn('⚠ 镜头表 CSV 写不了：' + String((e && e.message) || e));
+    return;
+  }
+  const total = table[table.length - 1].end;
+  const span = (F1 - F0) / FPS;
+  if (Math.abs(total - span) > 0.05) {
+    console.warn(`⚠ 镜头表总时长 ${total.toFixed(2)}s 与本次渲染 ${span.toFixed(2)}s 不一致`);
+    console.warn(`  差 ${(span - total).toFixed(2)}s —— 结尾会多一截静止画面（或片子被截断）。`);
+    console.warn('  改 --duration，或改镜头表里各镜头的 dur。');
   }
 }
 
@@ -358,6 +522,7 @@ async function renderFrames(context, url, frames, onPage) {
   }
   await applyAlphaCss(page);
   await injectCues(page);
+  await captureSceneTable(page);
   await checkStageSize(page);
 
   for (const f of frames) {
@@ -401,6 +566,7 @@ async function renderStills(context, url, times, onPage) {
   if (bootFailed) throw new Error('页面自报启动失败（window.__bootFailed）：\n' + bootFailed);
   await applyAlphaCss(page);
   await injectCues(page);
+  await captureSceneTable(page);
   await checkStageSize(page);
 
   fs.mkdirSync(STILL_DIR, { recursive: true });
@@ -458,7 +624,7 @@ async function renderStills(context, url, times, onPage) {
   // 对第一次点进来的人等于劝退 —— 这里换成一句人话加一条命令。
   let browser;
   try {
-    browser = await chromium.launch();
+    browser = await chromium.launch({ headless: !HEADED });
   } catch (e) {
     const msg = String((e && e.message) || e);
     if (/Executable doesn't exist|playwright install|Looks like Playwright/i.test(msg)) {
@@ -499,6 +665,8 @@ async function renderStills(context, url, times, onPage) {
   if (!KEEP_CHROME) {
     await context.addInitScript(hideChromeInit, HIDE_CHROME_CSS);
   }
+
+  await injectStoryInit(context);
 
   let captured = 0;
   try {
@@ -703,6 +871,54 @@ async function renderStills(context, url, times, onPage) {
 
   const mp4Size = (fs.statSync(MP4_OUT).size / 1024 / 1024).toFixed(1);
   console.log(`✓ Done: ${MP4_OUT} (${mp4Size} MB · ${FPS}fps native · ${((Date.now() - t0) / 1000).toFixed(0)}s)`);
+
+  /* ── 派生格式：GIF 与封面 ──────────────────────────────────────────
+     这两步都不重渲（直接从成片转），所以放在出片之后：渲一次，发好几个地方。
+     GIF 必须走两阶段 palette，直接 -i x.mp4 out.gif 会因为 256 色抖动糊成一片。 */
+  if (WANT_GIF) {
+    let gFps = 15, gW = 960;
+    if (GIF_RAW) {
+      const parts = String(GIF_RAW).split(',').map(s => s.trim());
+      if (parts[0]) gFps = Math.max(1, Math.min(60, parseInt(parts[0], 10) || 15));
+      if (parts[1]) gW = Math.max(64, parseInt(parts[1], 10) || 960);
+    }
+    const gifOut = MP4_OUT.replace(/\.[^.]+$/, '') + '.gif';
+    const pal = gifOut + '.palette.png';
+    const vf = `fps=${gFps},scale=${gW}:-1:flags=lanczos`;
+    const ff = process.env.FFMPEG || 'ffmpeg';
+    const r1 = spawnSync(ff, ['-y', '-v', 'error', '-i', MP4_OUT, '-vf', vf + ',palettegen=stats_mode=diff', pal],
+      { stdio: ['ignore', 'ignore', 'pipe'] });
+    const r2 = r1.status === 0
+      ? spawnSync(ff, ['-y', '-v', 'error', '-i', MP4_OUT, '-i', pal, '-lavfi',
+        `${vf}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, gifOut],
+        { stdio: ['ignore', 'ignore', 'pipe'] })
+      : null;
+    try { fs.rmSync(pal, { force: true }); } catch (e) { /* 清不掉不碍事 */ }
+    if (!r2 || r2.status !== 0) {
+      const d = r2 && r2.stderr ? r2.stderr.toString().slice(-600) : (r1.stderr ? r1.stderr.toString().slice(-600) : '');
+      console.error('✗ GIF 生成失败（成片不受影响）：\n' + d);
+    } else {
+      console.log(`  gif: ${gifOut} (${(fs.statSync(gifOut).size / 1024 / 1024).toFixed(2)} MB · ${gFps}fps · 宽 ${gW})`);
+    }
+  }
+
+  if (POSTER_AT !== null) {
+    const sec = Math.max(0, parseFloat(POSTER_AT));
+    if (!Number.isFinite(sec)) {
+      console.warn(`⚠ --poster 的时间读不出来（${POSTER_AT}），跳过封面`);
+    } else {
+      const posterOut = MP4_OUT.replace(/\.[^.]+$/, '') + '.poster.jpg';
+      const r = spawnSync(process.env.FFMPEG || 'ffmpeg',
+        ['-y', '-v', 'error', '-ss', String(sec), '-i', MP4_OUT, '-frames:v', '1', '-q:v', '2', posterOut],
+        { stdio: ['ignore', 'ignore', 'pipe'] });
+      if (r.status !== 0) {
+        const d = r.stderr ? r.stderr.toString().slice(-600) : '';
+        console.error('✗ 封面抽取失败（成片不受影响）：\n' + d);
+      } else {
+        console.log(`  poster: ${posterOut}（第 ${sec}s）`);
+      }
+    }
+  }
 
   if (errorsFatal) {
     console.error('✗ 因页面报错判为失败（成片已产出，供你核对）。修完再渲；确属无关报错可加 --allow-errors。');

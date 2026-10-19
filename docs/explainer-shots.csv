@@ -1,0 +1,6 @@
+index,id,start,end,dur,trans_in,trans_dur
+0,hook,0,3.4,3.4,cut,0
+1,why,2.95,6.75,3.8,fade,0.45
+2,how,6.3,10.9,4.6,fade,0.45
+3,result,10.45,14.85,4.4,fade,0.45
+4,end,14.4,17.6,3.2,fade,0.45

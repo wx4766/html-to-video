@@ -32,9 +32,12 @@
 | **文字完美** | 中文字体渲染正常，不会像文生视频那样糊成一团或错别字 |
 | **零费用** | 本地跑，不调任何 API |
 | **有质量门** | 内置自动化验收：确定性、卡顿、跳变、半截字、叠字、字幕带、字体回退 |
-| **开箱即用** | 10 个模板改个配置块就出片，不用从零学 canvas |
+| **开箱即用** | 11 个模板改个配置块就出片，不用从零学 canvas |
 | **横竖屏都行** | 模板跟视口自适应，16:9 / 9:16 换 `--width/--height` 即可，不裁切 |
+| **能出「一支片子」** | 多镜头 + 8 种转场 + 持续运镜，一个 HTML 出整支，不用渲几段再拼 |
+| **自带素材** | 40+ 图标 / 参数化人物 / 卡片箭头 / 背景纹理，纯代码零依赖零版权风险 |
 | **能叠能配** | `--alpha` 出透明层叠到实拍上；`--srt` 挂外部字幕时间轴 |
+| **渲一次发一堆** | `--gif` / `--poster` / `--batch` 一次渲染出成片、动图、封面、批量任务 |
 
 适合：讲解动画、动态图解、产品演示、数据可视化动画、游戏宣传片。
 不适合：实拍感 / 氛围镜头（那个应该走 VideoGen）。
@@ -58,12 +61,26 @@
 尤其是「AI 写出来的 HTML 动画想变成视频」这种场景：不需要它懂框架，
 输出一个能跑的 HTML 就够了，剩下交给渲染器。
 
-## 10 个开箱即用模板
+### 交给 AI / 脚本跑：最舒服的一条路
+
+这个工具的三条性质凑在一起，正好是「无人值守出片」需要的：
+
+| 性质 | 带来的好处 |
+|---|---|
+| **镜头表是 JSON** | 让模型产出 `[{kind,dur,title}, ...]` 比让它写 500 行 canvas 代码可靠得多 —— 改片子就是改 JSON |
+| **同输入同输出** | 改一句文案重渲，其它帧**逐像素不变**，可以做自动回归，不用担心「顺手改坏了别处」 |
+| **有质量门** | `qa.js` 把「黑屏 / 半截字 / 画面卡住 / 混入随机数」变成数字，脚本能自己判断渲坏了没有，不用人盯着看 |
+
+于是闭环是：LLM 写 JSON/HTML → 渲 → QA 自己判红绿 → 红了就照着报告改 → 再渲。
+人只在最后看一眼成片。
+
+## 11 个开箱即用模板
 
 拷贝一个，改顶部 `CFG` 里的文案和数据，直接出片。
 
 | | 模板 | 用途 |
 |---|---|---|
+| [![](docs/demo-explainer.gif)](docs/demo-explainer.mp4) | `assets/templates/explainer.html` | **多镜头讲解片**：片头 → 人物+气泡 → 分条要点 → 条形对比 → 片尾，镜头带转场，可喂 JSON 镜头表；横屏三条要点自动并排成三栏，竖屏另有上下版式 |
 | [![](docs/demo-title-card.gif)](docs/demo-title-card.mp4) | `assets/templates/title-card.html` | **片头标题卡**：主标题逐字弹入 + 副标题 + 标签 |
 | [![](docs/demo-bar-chart.gif)](docs/demo-bar-chart.mp4) | `assets/templates/bar-chart.html` | **条形图 / 排名**：条形依次生长，数值同步滚动，第一条高亮 |
 | [![](docs/demo-line-chart.gif)](docs/demo-line-chart.mp4) | `assets/templates/line-chart.html` | **折线趋势**：折线生长 + 数据点亮起 + 末点数值浮标 |
@@ -113,6 +130,70 @@ const CFG = {
 
 也可以传对象只覆盖要改的字段：`theme: { bg: '#0B1020', accent: '#22D3EE' }`。
 拷模板时记得把 `themes.js` 一起拷到同目录；只拷 HTML 也能跑（模板里有兜底色板），只是换不了主题。
+
+### 多镜头与转场：一份 HTML 出整支片子
+
+一支能看的片子是「多镜头 + 转场」，不是几段动画硬拼。用 `assets/lib/scenes.js`
+在**同一个 HTML** 里写镜头表，渲染器照旧按 `t` 推帧，转场在页面内合成 ——
+不用渲几段再拿 ffmpeg 拼，也不用开剪辑软件：
+
+```bash
+bash assets/render.sh explainer.html --duration=17.6 --fps=30 --gif --poster=6.0
+```
+
+镜头表也可以整份外置（`--story=shots.json`），**LLM 写 JSON 比写几百行 canvas 代码可靠得多**：
+
+```bash
+bash assets/render.sh explainer.html --duration=17.6 --fps=30 --story=shots.json
+```
+
+```json
+[{ "kind": "title", "id": "hook", "dur": 3.0, "title": "为什么你的构建这么慢" },
+ { "kind": "talk",  "id": "why",  "dur": 3.5, "say": "先别急着换工具",
+   "who": "dev", "pose": "wave", "trans": { "in": "fade", "dur": 0.45 } }]
+```
+
+| 转场 | 观感 | 什么时候用 |
+|---|---|---|
+| `fade` | 交叉溶解 | **文字类片子的默认** |
+| `dip` | 经底色过渡 | 两段情绪差得远，或两镜版式完全换掉 |
+| `slide` | 下一镜整块推入 | 满幅图形 / 照片 / 色块之间 |
+| `push` | 两镜贴着一起走 | 同上，更要方向感 |
+| `rise` | 下一镜从下方升起 | 竖屏、解说卡 |
+| `zoom` | 变焦穿过 | 满幅画面之间，「一口气穿过去」 |
+| `wipe` | 竖边扫擦 + 扫描亮线 | 科技感、数据揭示（满幅图形） |
+| `cut` | 硬切 | 节奏紧，或转场时长给 0 |
+
+> **选型铁律：画面里有文字，就只用 `fade` / `dip`。**
+> 带位移的转场会把上一镜的文字从中间切一半推走，两镜标题还会在同一位置叠成乱码 ——
+> 观感是「画面坏了」，不是「镜头动了」。位移类转场只留给边缘没有语义的画面。
+> `explainer.html` 的 `draw` 包装里有配套的两条纪律（退场先撤内容、进场晚 0.22×转场时长起步），
+> 自己写多镜头模板时照抄即可。
+
+转场是**重叠**的：总时长 = Σ镜头时长 − Σ转场时长，加了转场片子不会变长。
+`--scene-log=shots.csv` 能导出镜头时间轴（含每镜起止与转场），
+**镜头表总时长和 `--duration` 不一致会告警**，免得结尾静默多一截静止画面。
+
+### 自带素材：图标 / 人物 / 运镜
+
+想画图标、箭头、卡片、人物，不用找图也不用从零写 path —— `assets/lib/` 三个零依赖库：
+
+```js
+SH.icon(g, 'bolt', x, y, 48, { color: TH.accent, width: 2.5 });          // 40+ 线性图标
+SH.card(g, { x, y, w, h }, { fill: TH.panel, radius: 18 });              // 卡片 / 箭头 / 连接线 / 纹理
+FIG.draw(g, FIG.preset('dev', { x, y, h, t, pose: 'wave' }));            // 参数化小人 + 对话气泡
+CAM.withCam(g, CAM.at(CAM.breath(), t, W, H), W, H, () => drawContent(g)); // 持续运镜，治「画面死了」
+```
+
+| 库 | 提供 |
+|---|---|
+| `shapes.js` | 40+ 图标、卡片 / 胶囊 / 箭头 / 正交连接线 / 虚线框 / 进度弧、网格 / 点阵 / 柔光 / 暗角 / 流动极光 / 胶片颗粒 |
+| `figures.js` | 参数化扁平小人：发型 6 种 / 表情 6 种 / 姿势 6 种 / 配色任意，4 个开箱预设，自带 `FIG.say()` 气泡 |
+| `camera.js` | `breath` 呼吸、`kenburns` 推拉、`handheld` 确定性手持微抖、`shake` 衰减震动 |
+
+**为什么是代码画的元件而不是预置图片素材包**：版权干净（没有一张外部图）、风格必然统一、
+任意分辨率清晰、不占体积。**刻意不做**卡通人物位图包 / 标志性建筑照片包 ——
+版权说不清、风格和用户自己的画面打架，还会把仓库撑成几十 MB 的二进制库。
 
 ### 透明输出：叠到别人拍的画面上
 
@@ -209,7 +290,7 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 | `--duration` / `--from` / `--to` | 时长 / 只渲某段（秒）。给了范围时输出 `名.起-止s.mp4`，不会覆盖成品 |
 | `--stills=0.5,2.0` | 只导出这些时刻的 PNG，不编码 |
 | `--fps` / `--width` / `--height` | 帧率与分辨率 |
-| `--concurrency` | 并行 worker 数（每个 worker 一个 Chromium 页面） |
+| `--concurrency` | 并行 worker 数（每个 worker 一个 Chromium 页面）；给 `auto` 按 CPU 与内存自己挑 |
 | `--audio=<file>` | 编码后自动混音（视频流 copy，不重编码） |
 | `--gop=<秒>` | 关键帧间隔（`--gop=1` 便于后期按秒 seek） |
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码不必重截） |
@@ -217,9 +298,24 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 | `--alpha` | 透明背景输出（ProRes 4444 `.mov`），叠到实拍 / AI 生成画面上用 |
 | `--srt=<file>` / `--cues=<file>` | 外部字幕时间轴（SRT / VTT / JSON），注入 `window.__cues` |
 | `--cue-log=<file>` | 导出字幕对轴 CSV（`frame,t,cue_index,cue_start,cue_end`） |
+| `--story=<file>` | 镜头表 JSON，注入 `window.__story`，整份换掉剧本 |
+| `--scene-log=<file>` | 导出镜头时间轴 CSV；镜头表总时长与 `--duration` 不一致会告警 |
+| `--gif[=fps,宽]` | 出片后顺手产 GIF（默认 15fps / 宽 960），不重渲 |
+| `--poster=<秒>` | 出片后顺手抽一张封面静帧 `.jpg` |
+| `--batch=<file.json>` | 一串任务按顺序渲，最后打汇总表；单个失败不连坐已渲好的 |
+| `--headed` | 开着浏览器窗口渲（调试用；并发自动降到 1） |
 | `--allow-errors` | 页面报错不判失败（默认有报错就非零退出） |
 | `--readytimeout=8` | 等 `__seek` 就绪的秒数（大字体 / 大数据启动慢时调大） |
 | `--no-serve` | 用 `file://` 加载页面（默认走本地 http server，见下） |
+
+渲一次发一堆：
+
+```bash
+node scripts/render-video-seek.js explainer.html --duration=17.6 --fps=30 \
+  --gif=15,960 --poster=6.0        # 成片 + 动图 + 封面，一次渲染全到位
+node scripts/render-video-seek.js --batch=jobs.json
+# jobs.json = [{ "html":"a.html","duration":6 }, { "html":"b.html","duration":8,"fps":60 }]
+```
 
 **渲染结束时如果有页面控制台报错，会非零退出**（成片照样产出，方便核对）。
 这是刻意的：报错通常意味着黑屏或缺内容，早年的版本会一路说成功，直到你回抽帧才发现。
@@ -327,6 +423,20 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 **采样间隔要 ≤0.1s**，否则一段快速位移在相邻两帧之间看着就像「跳」——那是采样假象不是穿帮。
 间隔 >0.15s 时会提示该把 `--samples` 提到多少。
 
+> 「最长连续静止」超标时，最省事的解法不是加装饰，而是加一点持续运镜
+> （`CAM.breath()`，见上）—— 画面在动，观众就不会觉得视频卡住。
+
+## 渲得有多慢：自己量一次
+
+不同机器差 3–5 倍，所以这里不写「约几分钟」这种拍脑袋的数字：
+
+```bash
+npm run bench       # 两个页面 × 两档分辨率 × 两种并发 → bench/bench.md
+```
+
+表里给 `s/帧`（已含并发）与「10s@60fps 预估」。**并发不是越大越好**：超过 CPU 核数之后
+页面之间抢 CPU，`s/帧` 不降反升，表上能直接看出来。
+
 ## 配乐与派生格式
 
 ```bash
@@ -406,6 +516,7 @@ html-to-video/
 ├── scripts/
 │   ├── render-video-seek.js       渲染器内核：冻结时钟 + 逐帧 seek + ffmpeg 编码 + 报错判定
 │   ├── qa.js                      自动化验收：确定性/动感/流畅/框景/字体/报错
+│   ├── bench.js                   性能基线：量 s/帧，产出 bench/bench.md
 │   ├── lib/hide-chrome.cjs        隐藏播放控件的共享规则（渲染器与验收器同一份）
 │   ├── lib/local-server.cjs       本地 http 静态服务器（解锁 ESM / fetch，零新依赖）
 │   ├── lib/cues.cjs               字幕时间轴解析（SRT / VTT / JSON）
@@ -415,6 +526,11 @@ html-to-video/
 │   └── install-deps.sh            一键装依赖并写配置
 ├── test/
 │   ├── render-smoke.test.mjs      真渲两段（16:9 / 9:16），验分辨率与尺寸告警
+│   ├── multi-shot.test.mjs        多镜头：镜头表导出一致 / --story 换剧本 / 时长不符告警
+│   ├── output-features.test.mjs   --gif / --poster / --batch / --concurrency=auto
+│   ├── scenes.test.mjs            镜头时间轴算术（重叠、局部时间、越界、未知转场报错）
+│   ├── camera.test.mjs            运镜：确定性、幅度上限、衰减、save/restore 成对
+│   ├── lib-draw.test.mjs          素材库：所有图标 / 人物组合不得产生 NaN
 │   ├── resume.test.mjs            断点续渲：复用、参数变脸、帧号断档
 │   ├── qa-clean.test.mjs          正常模板必须 PASS
 │   ├── qa-detects.test.mjs        对照组必须 FAIL（六类缺陷）
@@ -426,7 +542,8 @@ html-to-video/
 ├── .github/workflows/ci.yml       PR 自动跑 npm test
 ├── docs/                          README 里用的演示动图 / 原片 / 静帧
 │   ├── demo-hero.html             首页那支 10 秒演示片的源文件（447 行，零依赖）
-│   ├── demo-*.gif / demo-*.mp4    10 个模板的演示动图与原片
+│   ├── demo-*.gif / demo-*.mp4    11 个模板的演示动图与原片
+│   ├── explainer-shots.csv        讲解片那支的镜头时间轴（--scene-log 导出）
 │   └── preview-*.png              静帧大图
 └── assets/
     ├── render.sh                  全量渲染包装器
@@ -434,8 +551,13 @@ html-to-video/
     ├── smoke.sh / smoke.cjs       冒烟测试：验证契约 + 试截关键帧
     ├── animation-skeleton.html    动画骨架模板（已实现完整渲染契约）
     ├── lib/motion.js              动效时间库（缓动/弹簧/步进/错开）
-    └── templates/                 10 个开箱即用模板
+    ├── lib/scenes.js              多镜头时间轴 + 8 种转场
+    ├── lib/camera.js              运镜（推拉/呼吸/手持/震动）
+    ├── lib/shapes.js              40+ 图标 + 卡片/箭头/连接线/背景纹理
+    ├── lib/figures.js             参数化人物 + 对话气泡
+    └── templates/                 11 个开箱即用模板
         ├── themes.js              三套内置主题（midnight / paper / neon）
+        ├── explainer.html         多镜头讲解片（人物 / 图标 / 转场 / 字幕）
         ├── title-card.html        片头标题卡
         ├── bar-chart.html         条形图 / 排名
         ├── line-chart.html        折线趋势
@@ -452,7 +574,8 @@ html-to-video/
 
 ```bash
 npm install          # 装 playwright（ffmpeg 见上面「安装」，必须是完整版）
-npm test             # 55 个用例，约 3 分钟
+npm test             # 100+ 个用例，约 4 分钟
+npm run bench        # 量本机渲染速度 → bench/bench.md
 ```
 
 测试里有一对**对照组**，这是整个项目最该守住的东西：
@@ -464,6 +587,9 @@ npm test             # 55 个用例，约 3 分钟
 | `qa-offscreen` | 离屏画布的文字必须被报出来 | 「看不见 = 查不出」的静默漏洞 |
 | `qa-dom-text` | 出界文字要报 / 多行段落不许报 | 修误报时顺手把检查关掉 |
 | `templates-contract` | 模板能力表与源码双向对齐 | 能力被悄悄删掉没人发现 |
+| `scenes` | 转场重叠与局部时间的算术 | 「某个镜头少了半秒」这种肉眼看不见的错 |
+| `camera` | 运镜确定性、幅度上限、save/restore 成对 | NaN 进 transform（画面整帧消失但不报错）、变换逐帧叠加 |
+| `lib-draw` | 所有图标 / 人物组合不得产生 NaN | 同上：素材库的静默失败 |
 
 只调松不放对照组，等于把质量门拆了。改 `scripts/qa.js` 时全部跑一遍。
 
