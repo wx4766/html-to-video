@@ -108,7 +108,7 @@ the viewport, so `--width/--height` is the only switch.
 
 ## Project status
 
-`v1.3.1` — used daily, 99 automated tests, MIT. Not a startup, not a framework, no
+`v1.3.1` — used daily, 100 automated tests, MIT. Not a startup, not a framework, no
 roadmap theatre. It does one thing and reports its own defects:
 
 - **Deterministic** — same input → byte-identical output, verified by re-rendering

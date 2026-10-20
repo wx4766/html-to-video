@@ -20,6 +20,9 @@ _wb-*
 oss-release.json
 RELEASE.md
 
+# 历次发布正文的本地归档（正式正文在 GitHub Releases 上；这里只为防覆盖丢失）
+releases/
+
 # 本地一次性脚本与日志（排查/比对用，不属于项目）
 _*.log
 _commitmsg.txt
