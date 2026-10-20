@@ -82,3 +82,24 @@ test('--concurrency=auto 会自己挑 worker 数并在日志里说明', { timeou
   const m = /workers: (\d+) \(auto\)/.exec(r.stdout);
   assert.ok(Number(m[1]) >= 1 && Number(m[1]) <= 8, `auto 选的 worker 数应在 1–8，实际 ${m[1]}`);
 });
+
+test('--tmpdir 把逐帧目录放到指定盘，不落在 HTML 旁边', { timeout: 300000 }, () => {
+  const s = stage('title-card.html');
+  const tmpRoot = tmpdir('h2v-tmpdir-');
+  /* 配 --keep-frames：逐帧目录会被保留，才能确定地验证「它落在哪」。
+     不保留的话，清掉之后只能验「两边都没有」，等于没验到重点。 */
+  const r = run(RENDER, [
+    s.html, '--from=0', '--to=0.34', '--fps=6', '--width=640', '--height=360',
+    `--tmpdir=${tmpRoot}`, '--keep-frames',
+  ]);
+  assert.equal(r.status, 0, `指定 tmpdir 应能出片\n${r.stdout}${r.stderr}`);
+
+  const under = fs.readdirSync(tmpRoot).filter((n) => n.startsWith('.seek-tmp-'));
+  assert.equal(under.length, 1, `逐帧目录应在 tmpdir 下，实际 ${under.join(', ') || '（没有）'}`);
+  const frameCount = fs.readdirSync(path.join(tmpRoot, under[0])).filter((n) => n.endsWith('.png')).length;
+  assert.ok(frameCount >= 2, `0–0.34s @ 6fps 至少 2 帧，实际 ${frameCount}`);
+
+  const besideHtml = fs.readdirSync(s.dir).filter((n) => n.startsWith('.seek-tmp-'));
+  assert.deepEqual(besideHtml, [], `逐帧目录不该再落在 HTML 旁边：${besideHtml.join(', ')}`);
+  assert.ok(fs.existsSync(path.join(s.dir, 'title-card.0-0.34s.mp4')), '成片仍应在 HTML 旁边');
+});

@@ -105,7 +105,7 @@ function runBatch(file) {
   }
   const FLAG_KEYS = new Set(['alpha', 'resume', 'keep-frames', 'allow-errors', 'keep-chrome', 'no-serve']);
   const VAL_KEYS = ['duration', 'from', 'to', 'fps', 'width', 'height', 'concurrency', 'settle',
-    'audio', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills'];
+    'audio', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills', 'tmpdir'];
 
   console.log(`▸ Batch: ${jobs.length} 个任务（${file}）`);
   const rows = [];
@@ -186,6 +186,7 @@ const SCENE_LOG    = arg('scene-log', null);    // 镜头时间轴 CSV，用来�
 const GIF_RAW      = arg('gif', null);          // --gif 或 --gif=fps,width
 const WANT_GIF     = hasFlag('gif') || GIF_RAW !== null;
 const POSTER_AT    = arg('poster', null);       // 从成片里抽一帧当封面（秒）
+const TMPDIR_RAW   = arg('tmpdir', null);       // 逐帧 PNG 放哪块盘（默认挨着 HTML）
 
 /* 为什么只有 ProRes 4444，没有 VP9 alpha：
    实测把 PNG 序列（rgba）编成 --pix_fmt yuva420p + -auto-alt-ref 0，文件体积从 7.8KB
@@ -225,9 +226,47 @@ const STILLS = STILLS_RAW
 /* 逐帧目录
    默认用「时间戳 + pid」的一次性目录，多个渲染并发也不会互相踩。
    --resume 时改用一个**固定**目录，这样重启后能认回上次的帧。
+   --tmpdir=<目录> 把逐帧目录放到别的盘 —— 1080p 一分钟片子要 2~3 GB 逐帧 PNG，
+   系统盘经常没有这个余量（实测踩过 ENOSPC，渲到一半炸掉）。
    固定目录靠 job.json 认参数：fps/尺寸/范围一变就拒绝续渲，否则会拼出前后不一致的片子。 */
-const RESUME_DIR = path.join(DIR, '.seek-tmp-resume');
-const TMP_DIR   = RESUME ? RESUME_DIR : path.join(DIR, '.seek-tmp-' + Date.now() + '-' + process.pid);
+const TMP_ROOT   = TMPDIR_RAW ? path.resolve(TMPDIR_RAW) : DIR;
+const RESUME_DIR = path.join(TMP_ROOT, '.seek-tmp-resume');
+const TMP_DIR   = RESUME ? RESUME_DIR : path.join(TMP_ROOT, '.seek-tmp-' + Date.now() + '-' + process.pid);
+
+/* 磁盘余量预检。
+   一辆 1080p 的逐帧 PNG 约 1.35 MB/帧（实测 1920×1080 内容平均 1.34 MB），
+   一分钟 30fps 就是 2.4 GB —— 系统盘经常没有这个余量。
+   不预检的话，渲到一半 ENOSPC：半个目录留在盘上、报错是 `ENOSPC: no space left on device, write`，
+   跟「渲染」看起来毫无关系。宁可开工前就说清楚。 */
+(function preflightDisk() {
+  const frames = Math.max(1, F1 - F0);
+  const needGB = (frames * WIDTH * HEIGHT * 0.65) / 1e9;
+  const existingRoot = (() => {
+    let p = TMP_ROOT;
+    while (p && !fs.existsSync(p)) {
+      const up = path.dirname(p);
+      if (up === p) break;
+      p = up;
+    }
+    return p;
+  })();
+  let freeGB = null;
+  try {
+    const st = fs.statfsSync(existingRoot);
+    freeGB = (st.bavail * st.bsize) / 1e9;
+  } catch (e) {
+    return;   // 拿不到就跳过，别因为探测失败挡住渲染
+  }
+  if (freeGB < needGB) {
+    console.error(`✗ 逐帧目录所在磁盘只剩 ${freeGB.toFixed(2)} GB，这段片子逐帧约需 ${needGB.toFixed(2)} GB`);
+    console.error(`  目录：${TMP_ROOT}`);
+    console.error('  换一块盘：--tmpdir=D:\\h2v-tmp    或减小 --duration / --width / --fps');
+    process.exit(1);
+  }
+  if (freeGB < needGB * 1.25) {
+    console.warn(`⚠ 磁盘余量偏紧：可用 ${freeGB.toFixed(2)} GB，预计需要 ${needGB.toFixed(2)} GB`);
+  }
+})();
 
 /* 字幕时间轴：解析一次，之后每帧只是查表。
    模板侧约定：读到 window.__cues 就用它，没有就退回自己 CFG 里写的时间。 */

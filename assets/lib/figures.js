@@ -109,7 +109,9 @@
     g.beginPath();
     g.moveTo(-sh, shoulderY + 0.03);
     g.quadraticCurveTo(-sh - 0.012, shoulderY - 0.005, -sh * 0.62, shoulderY - 0.012);
-    g.lineTo(sh * 0.62, shoulderY - 0.012);
+    /* 领口中间略凹：脖子是「坐」在领口里，而不是插在一块木板上。
+       直线领口放大看就是「头安在一根柱子上」。 */
+    g.quadraticCurveTo(0, shoulderY + 0.014, sh * 0.62, shoulderY - 0.012);
     g.quadraticCurveTo(sh + 0.012, shoulderY - 0.005, sh, shoulderY + 0.03);
     g.quadraticCurveTo(sh + 0.006, waistY * 0.72, waistHW, waistY);
     g.lineTo(-waistHW, waistY);
@@ -117,6 +119,21 @@
     g.closePath();
     g.fillStyle = o.top;
     g.fill();
+
+    /* 侧面压暗：纯色梯形就是一块板，压一层横向渐变才有「衣服」的体积感。
+       夹在 clip 里画，绝不会溢出衣服轮廓。
+       （试过再加一道「领口暗弧」，放大看像挂了条项链 —— 删掉。） */
+    g.save();
+    g.clip();
+    const grd = g.createLinearGradient(-shoulderHW * 1.1, 0, shoulderHW * 1.1, 0);
+    grd.addColorStop(0, 'rgba(0,0,0,.15)');
+    grd.addColorStop(0.38, 'rgba(0,0,0,0)');
+    grd.addColorStop(0.74, 'rgba(255,255,255,.06)');
+    grd.addColorStop(1, 'rgba(0,0,0,.10)');
+    g.fillStyle = grd;
+    g.fillRect(-0.22, shoulderY - 0.03, 0.44, waistY - shoulderY + 0.06);
+    g.restore();
+
     if (o.topAlt) {
       // 领口拼色：一条横带，让衣服不像一块纯色板
       g.save();
@@ -138,16 +155,22 @@
    */
   function hairCap(g, o, fringe) {
     const { headCY, headR } = P;
-    const r = headR * 1.04;
+    /* 头是 headR × 1.06headR 的椭圆。以前发壳用 headR*1.04 的正圆，
+       头顶比头低 0.02R，于是整个额头上面露出一条肤色月牙 —— 放大看像「头盔漏光」。
+       发壳必须比头大一圈，而且得是椭圆，才不会在头顶露头皮。 */
+    const rx = headR * 1.06;
+    const ry = headR * 1.14;
     const fy = headCY + headR * (fringe != null ? fringe : -0.30);
-    /* 鬓角要往下包到耳上（头心 +0.35R），只在头心高度收边会露头皮，
-       看着像一顶浮在头顶的小帽子。 */
+    /* 弧只盖到「上半个头」，不要包到耳下 —— 包下去就成泳帽/头套了，
+       脸被两侧头发夹成一条，比露头皮更难看。鬓角靠下面的发际线曲线收。
+       a 是弧的收边角度：0.36 时端点落在头心上方 0.4R，是「露额头」的发型。 */
     const a = 0.36;
-    const sx = Math.cos(a), sy = Math.sin(a);
+    const x0 = rx * Math.cos(Math.PI + a);     // 弧起点（左鬓）
+    const y0 = headCY + ry * Math.sin(Math.PI + a);
     g.beginPath();
-    g.arc(0, headCY, r, Math.PI + a, Math.PI * 2 - a);   // 左鬓 → 头顶 → 右鬓
-    g.quadraticCurveTo(r * 0.86, fy + headR * 0.12, r * 0.26, fy);
-    g.quadraticCurveTo(-r * 0.42, fy - headR * 0.02, -r * sx, headCY + r * sy);
+    g.ellipse(0, headCY, rx, ry, 0, Math.PI + a, Math.PI * 2 - a);   // 左鬓 → 头顶 → 右鬓
+    g.quadraticCurveTo(rx * 0.80, fy + headR * 0.10, rx * 0.20, fy); // 右鬓 → 额前发际线
+    g.quadraticCurveTo(-rx * 0.46, fy - headR * 0.02, x0, y0);       // 发际线 → 左鬓（终点=弧起点，不留直线弦）
     g.closePath();
     g.fillStyle = o.hairColor;
     g.fill();
@@ -326,23 +349,38 @@
 
     /* 腿 */
     const walk = c.pose === 'walk' ? Math.sin(t * 5.2) : 0;
+    /* 后腿压暗一档：两条腿同色时大腿根部粘成一块布，远看像穿了条裙子。
+       只压 -0.07 —— 深色裤子再压深会变成「一条腿在黑影里」，色差反而更抢眼。 */
+    const legBack = shade(c.bottom, -0.07);
+    /* 鞋保持深色：提亮成浅灰会变成「深色裤腿下面两只浅灰拖鞋」，
+       在黑底上比看不见更难看。鞋靠形状和投影区分，不靠颜色。 */
+    const shoeC = c.shoe;
     for (const s of [-1, 1]) {
       const swing = walk * (s === 1 ? 1 : -1);
       const hipX = s * P.legHW, hipY = P.hipY;
       const kneeX = hipX + swing * 0.03, kneeY = P.hipY + 0.20;
       const footX = hipX + swing * 0.075, footY = P.footY - Math.abs(swing) * 0.02;
-      limb(g, hipX, hipY, kneeX, kneeY, 0.080, c.bottom);
-      limb(g, kneeX, kneeY, footX, footY, 0.070, c.bottom);
-      ell(g, footX + s * 0.012, footY + 0.012, 0.046, 0.026, c.shoe);
+      /* 大腿别太粗：0.080 时两条腿的内缘是重叠的，从衬衫下摆出来就是一块整布，
+         远看像裙子。收到 0.070 留出 0.034 的裆缝，腿才分得开。 */
+      const legC = s < 0 ? legBack : c.bottom;
+      limb(g, hipX, hipY, kneeX, kneeY, 0.070, legC);
+      limb(g, kneeX, kneeY, footX, footY, 0.062, legC);
+      ell(g, footX + s * 0.012, footY + 0.010, 0.050, 0.025, shoeC);
     }
 
     /* 躯干（呼吸让肩线上下一点点） */
     g.save();
     g.translate(sway, breath * 0.4);
+    /* 脖子先画、衬衫后画：领口自然盖住脖根，不会出现「一根柱子插进衣服」的接缝。
+       以前脖子在衣服之后画，矩形的底边直接压在衣身上。 */
+    g.fillStyle = c.skin;
+    g.fillRect(-0.026, P.neckY0, 0.052, P.neckY1 - P.neckY0 + 0.02);
     torso(g, c, breath);
 
     /* 手臂：pose 决定姿态 */
-    const shY = P.armTop;
+    /* 肩点比肩线低 0.008：袖子的圆头半径是 armW/2，起点跟肩线齐平时，
+       圆头会冒到肩线上面，肩膀变成两个鼓包。 */
+    const shY = P.armTop + 0.008;
     const armW = 0.072;
     /* 袖子比上衣暗一档：不暗的话，垂下来的手臂整条融进上衣里，
        只剩一只肤色的手贴在胯边 —— 看着像「浮在身上的色块」。 */
@@ -378,14 +416,15 @@
       g.lineWidth = armW;
       g.lineCap = 'round';
       g.stroke();
-      // 手：比袖口小一圈，压一道同色系深边 —— 纯肤色圆点贴在袖子上会看成「球」
-      ell(g, ex, ey, 0.030, 0.034, c.skin, 0.008, shade(c.skin, -0.30));
+      /* 手：沿小臂方向再往外挪 0.022，让手从袖口「伸出来」，而不是被袖口圆头吞掉。
+         早期给手加了一圈 shade(skin,-0.30) 描边想做出体积，放大后是一圈灰边，
+         像一颗贴在袖子上的鹅卵石 —— 去掉描边，靠位置关系说明「这是手」。 */
+      const dxa = ex - mx, dya = ey - my;
+      const dl = Math.hypot(dxa, dya) || 1;
+      ell(g, ex + (dxa / dl) * 0.016, ey + (dya / dl) * 0.016, 0.027, 0.031, c.skin);
     }
 
-    /* 脖子 + 头 */
-    g.fillStyle = c.skin;
-    g.fillRect(-0.028, P.neckY0, 0.056, P.neckY1 - P.neckY0 + 0.01);
-
+    /* 头（脖子已经画过了） */
     const headBob = Math.sin(t * 1.9 + 0.6) * 0.004;
     g.save();
     g.translate(0, headBob);

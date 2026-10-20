@@ -294,6 +294,7 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 | `--audio=<file>` | 编码后自动混音（视频流 copy，不重编码） |
 | `--gop=<秒>` | 关键帧间隔（`--gop=1` 便于后期按秒 seek） |
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码不必重截） |
+| `--tmpdir=<目录>` | 逐帧 PNG 落到哪块盘（默认挨着 HTML）。1080p 一分钟约 2.4 GB，系统盘紧张时指到别的盘 |
 | `--resume` | 上次渲到一半断了？接着渲，已渲好的帧直接复用 |
 | `--alpha` | 透明背景输出（ProRes 4444 `.mov`），叠到实拍 / AI 生成画面上用 |
 | `--srt=<file>` / `--cues=<file>` | 外部字幕时间轴（SRT / VTT / JSON），注入 `window.__cues` |
@@ -574,7 +575,7 @@ html-to-video/
 
 ```bash
 npm install          # 装 playwright（ffmpeg 见上面「安装」，必须是完整版）
-npm test             # 100+ 个用例，约 4 分钟
+npm test             # 99 个用例，约 2 分钟
 npm run bench        # 量本机渲染速度 → bench/bench.md
 ```
 

@@ -204,6 +204,7 @@ bash assets/render.sh animation.html --duration=12 --fps=60 --width=1920 --heigh
 | `--audio=<file>` | 编码后自动混音（视频流直接 copy，不重编码） |
 | `--gop=<秒>` | 关键帧间隔，如 `--gop=1` 每秒一个关键帧，方便后期按秒 seek |
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码时不必重截） |
+| `--tmpdir=<目录>` | 逐帧 PNG 放哪块盘（默认挨着 HTML）。1080p 一分钟约 2.4 GB，系统盘没余量时指到别的盘 |
 | `--resume` | 上次渲到一半被打断？接着渲，已渲好的帧直接复用（参数和上次不一致会拒绝，见下） |
 | `--alpha` | 透明背景输出（ProRes 4444 `.mov`），叠到实拍 / AI 生成画面上用，见下 |
 | `--srt=<file>` | 外部字幕时间轴（SRT / VTT / JSON），注入 `window.__cues`，见下。同义参数 `--cues` |

@@ -57,6 +57,7 @@ npm test
 | `test/qa-clean.test.mjs` | 正常模板必须 PASS（确定性 ✓ / 框景 0 / 报错 0） |
 | `test/qa-detects.test.mjs` | **对照组**：`test/fixtures/broken.html` 里故意注入六类缺陷，检测器必须叫出来并判失败 |
 | `test/templates-contract.test.mjs` | 每个模板是否遵守渲染契约（不写死画布尺寸、暴露 `__seek` 等） |
+| `test/local-server.test.mjs` | 本地服务器分到的端口不得落在 Chromium 的「不安全端口」名单里（撞上会 `ERR_UNSAFE_PORT`，渲染必失败且报错指不到原因） |
 
 `qa-clean` 和 `qa-detects` 是**成对的**：一个防误报，一个防漏报。改动 `scripts/qa.js` 的判据时，
 两边都得绿 —— 只调松不放对照组，等于把质量门拆了。

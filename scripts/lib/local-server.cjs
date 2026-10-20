@@ -88,10 +88,33 @@ function send(res, file) {
 }
 
 /**
- * 起一个只绑 127.0.0.1 的静态服务器，端口交给系统分配（0）。
- * @returns {Promise<{port:number, url:(abs:string)=>string, close:()=>Promise<void>}>}
+ * Chromium 的「不安全端口」黑名单 —— 落在名单里的端口，页面导航会直接被拒：
+ *   page.goto: net::ERR_UNSAFE_PORT at http://127.0.0.1:3659/...
+ *
+ * 我们让系统随机分端口（listen(0)），偶尔就会分到名单里的某一个（3659 实测撞过），
+ * 渲染必失败，而报错信息跟端口分配毫无关系，排查时会误以为是页面本身坏了。
+ * 所以分到不安全端口就换一个，最多试 8 次。
+ *
+ * 名单连同区间段一起展开，别只抄零散几个 —— 6665-6669 这种区间同样会撞。
  */
-function startServer() {
+const UNSAFE_PORTS = (() => {
+  const s = new Set([
+    1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
+    87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137,
+    139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532,
+    540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723,
+    2049, 3659, 4045, 5060, 5061, 6000, 6566, 6697, 10080,
+  ]);
+  for (let p = 6665; p <= 6669; p++) s.add(p);   // IRC，Chromium 也拦
+  return s;
+})();
+
+function isUnsafePort(port) {
+  return UNSAFE_PORTS.has(Number(port));
+}
+
+/** 起一个只绑 127.0.0.1 的静态服务器，端口交给系统分配（0），跳过 Chromium 不安全端口 */
+function startServer(retries = 8) {
   const server = http.createServer((req, res) => {
     let abs = fromUrlPath(req.url);
     if (!abs) {
@@ -129,6 +152,13 @@ function startServer() {
     server.listen(0, '127.0.0.1', () => {
       server.removeListener('error', onErr);
       const port = server.address().port;
+      /* 撞上 Chromium 黑名单就重来。极低概率事件，但一旦发生就是「渲染莫名失败」。 */
+      if (isUnsafePort(port) && retries > 0) {
+        server.close(() => {
+          startServer(retries - 1).then(resolve, reject);
+        });
+        return;
+      }
       resolve({
         port,
         url: (abs) => `http://127.0.0.1:${port}${toUrlPath(path.resolve(abs))}`,
@@ -140,4 +170,4 @@ function startServer() {
   });
 }
 
-module.exports = { startServer, toUrlPath, fromUrlPath };
+module.exports = { startServer, toUrlPath, fromUrlPath, isUnsafePort, UNSAFE_PORTS };

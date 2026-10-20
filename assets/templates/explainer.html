@@ -377,20 +377,9 @@ function drawTalk(g2, lt, s) {
       g2.restore();
     }
 
-    // 右上角图标徽章：给画面一个视觉锚点
-    if (s.icon && SH.hasIcon(s.icon)) {
-      const ip = ease(win(lt, 0.5, 1.2));
-      if (ip > 0) {
-        const size = 54 * SF;
-        const bx2 = W - PAD - size, by2 = PAD + 8 * SF;
-        g2.save();
-        g2.globalAlpha = ip;
-        SH.card(g2, { x: bx2 - 14 * SF, y: by2 - 14 * SF, w: size + 28 * SF, h: size + 28 * SF },
-          { fill: TH.panel, stroke: TH.faint, radius: 16 * SF });
-        SH.icon(g2, s.icon, bx2, by2, size, { color: TH.accent, width: 2.4 * SF });
-        g2.restore();
-      }
-    }
+    /* 这里原本有个「右上角图标徽章」当视觉锚点，实测是个反例：
+       82px 的小方卡片孤零零飘在右上角，既不指向内容也不解释内容，
+       放大看就是一块没用的装饰。删掉，留白比乱填好看。 */
   });
 }
 
@@ -628,12 +617,14 @@ function drawOutro(g2, lt, s) {
     /* 片尾走中轴构图：一左一右的排版到最后一镜会显得「没说完」，
        居中收口更像结尾（所有元素共用中心线，视觉重量才平衡）。 */
     const cx = W / 2;
-    const cy = H * (PORTRAIT ? 0.34 : 0.40);
+    const cy = H * 0.40;
     /* 竖屏是 2:1 的高画框，所有元素挤在 cy 附近会变成「上半张 + 下半张空白」，
        所以竖屏把分隔线 / 副标题 / 标记行按比例摊开，整屏都占住。 */
-    const sepY = cy + (PORTRAIT ? 62 : 54) * SF;
-    const subY = cy + (PORTRAIT ? 126 : 108) * SF;
-    const markY = PORTRAIT ? H * 0.60 : cy + 168 * SF;
+    const sepY = cy + (PORTRAIT ? 66 : 54) * SF;
+    const subY = cy + (PORTRAIT ? 132 : 108) * SF;
+    /* 标记行必须紧跟副标题（+110），以前写死 0.60H —— 副标题在 0.47H，
+       图标孤零零吊在 0.60H，中间空出一大块，像忘了摆的第二组内容。 */
+    const markY = PORTRAIT ? subY + 110 * SF : cy + 168 * SF;
 
     const tp = MO ? MO.expoOut(win(lt, 0.1, 0.85)) : ease(win(lt, 0.1, 0.85));
     const title = s.title || '';

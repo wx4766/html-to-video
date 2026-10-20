@@ -108,7 +108,7 @@ the viewport, so `--width/--height` is the only switch.
 
 ## Project status
 
-`v1.3.0` — used daily, 100+ automated tests, MIT. Not a startup, not a framework, no
+`v1.3.1` — used daily, 99 automated tests, MIT. Not a startup, not a framework, no
 roadmap theatre. It does one thing and reports its own defects:
 
 - **Deterministic** — same input → byte-identical output, verified by re-rendering
@@ -297,6 +297,7 @@ silently end early.
 | `--audio=<file>` | mux audio after encoding (video stream is copied) |
 | `--gop=<sec>` | keyframe interval (`--gop=1` for frame-accurate scrubbing) |
 | `--keep-frames` | keep the PNG sequence on success |
+| `--tmpdir=<dir>` | where the PNG sequence goes (default: next to the HTML). 1080p runs at ~2.4 GB per minute — point it at another drive when the system disk is tight |
 | `--resume` | continue an interrupted render |
 | `--alpha` | transparent ProRes 4444 output |
 | `--srt=<file>` / `--cues=<file>` | external subtitle timeline |
