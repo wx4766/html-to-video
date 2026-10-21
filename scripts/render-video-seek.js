@@ -30,9 +30,13 @@
  * 画面
  *   --fps=60               帧率（原生）
  *   --width=1920 --height=1080
+ *   --theme=paper          换主题（midnight / paper / neon），覆盖模板里的 CFG.theme
  *   --concurrency=4        并行 worker 数（每个一个 page）
  *   --settle=2             seek 后等几个 rAF 再截图
  *   --keep-chrome          不隐藏播放控件（调试用）
+ *
+ * 输出
+ *   --out=<file>           指定成片路径（默认同目录同名 .mp4）；一份 HTML 出多套配色必备
  *
  * 编码
  *   --gop=<秒>             关键帧间隔；给了就每秒一个关键帧，方便后期逐秒 seek
@@ -55,7 +59,8 @@
  *   --headed               开着浏览器窗口渲（调试用；并发自动降到 1，否则桌面上会开一排窗口）
  *
  * Output:
- *   同目录同名 .mp4。给了 --from/--to 时输出名为 <名>.<起>-<止>s.mp4，**不会覆盖成品**。
+ *   默认同目录同名 .mp4。给了 --from/--to 时输出名为 <名>.<起>-<止>s.mp4，**不会覆盖成品**。
+ *   --out=<file> 直接指定路径，优先生效（--theme 出一组配色时用它避免互相覆盖）。
  *   --stills 输出到 <名>.stills/ 目录。
  */
 
@@ -105,7 +110,7 @@ function runBatch(file) {
   }
   const FLAG_KEYS = new Set(['alpha', 'resume', 'keep-frames', 'allow-errors', 'keep-chrome', 'no-serve']);
   const VAL_KEYS = ['duration', 'from', 'to', 'fps', 'width', 'height', 'concurrency', 'settle',
-    'audio', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills', 'tmpdir'];
+    'audio', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills', 'tmpdir', 'theme', 'out'];
 
   console.log(`▸ Batch: ${jobs.length} 个任务（${file}）`);
   const rows = [];
@@ -149,6 +154,7 @@ if (!HTML_FILE || HTML_FILE.startsWith('--')) {
   console.error('         ... --resume            # 上次中断了？接着渲，已完成的帧直接复用');
   console.error('         ... --alpha             # 透明背景输出（ProRes 4444 .mov），用于叠加合成');
   console.error('         ... --batch=jobs.json   # 一串任务按顺序渲');
+  console.error('         ... --out=dist/a.mp4    # 指定成片路径（默认同目录同名）');
   process.exit(1);
 }
 
@@ -187,6 +193,8 @@ const GIF_RAW      = arg('gif', null);          // --gif 或 --gif=fps,width
 const WANT_GIF     = hasFlag('gif') || GIF_RAW !== null;
 const POSTER_AT    = arg('poster', null);       // 从成片里抽一帧当封面（秒）
 const TMPDIR_RAW   = arg('tmpdir', null);       // 逐帧 PNG 放哪块盘（默认挨着 HTML）
+const THEME        = arg('theme', null);        // 主题名，覆盖模板里的 CFG.theme
+const OUT_RAW      = arg('out', null);          // 成片路径（默认同目录同名）
 
 /* 为什么只有 ProRes 4444，没有 VP9 alpha：
    实测把 PNG 序列（rgba）编成 --pix_fmt yuva420p + -auto-alt-ref 0，文件体积从 7.8KB
@@ -318,9 +326,30 @@ const JOB = {
   story: STORY ? path.resolve(STORY_FILE) : null,
 };
 const STILL_DIR = path.join(DIR, BASENAME + '.stills');
-const MP4_OUT   = path.join(DIR, RANGE_GIVEN
-  ? `${BASENAME}.${trimNum(FROM)}-${trimNum(END)}s${OUT_EXT}`
-  : BASENAME + OUT_EXT);
+
+/* 成片路径：--out 显式给了就用它（相对路径按当前工作目录解析，不是按 HTML 所在目录），
+   否则沿用「同目录同名」的老规矩 —— 老命令的输出位置一个字都不变。 */
+const MP4_OUT   = OUT_RAW
+  ? path.resolve(OUT_RAW)
+  : path.join(DIR, RANGE_GIVEN
+    ? `${BASENAME}.${trimNum(FROM)}-${trimNum(END)}s${OUT_EXT}`
+    : BASENAME + OUT_EXT);
+
+if (OUT_RAW) {
+  const wantExt = path.extname(MP4_OUT).toLowerCase();
+  if (wantExt !== OUT_EXT) {
+    console.warn(`⚠ --out 的扩展名是 "${wantExt || '(无)'}"，而本次编码器输出的是 ${OUT_EXT}`
+      + (ALPHA ? '（--alpha 走 ProRes 4444 .mov）' : '（H.264 .mp4）'));
+    console.warn('  文件会照常写出，但播放器 / 剪辑软件可能按扩展名误判。建议改成 ' + OUT_EXT);
+  }
+  try {
+    fs.mkdirSync(path.dirname(MP4_OUT), { recursive: true });
+  } catch (e) {
+    console.error(`✗ --out 的目录建不出来：${path.dirname(MP4_OUT)}`);
+    console.error('  ' + String((e && e.message) || e).split('\n')[0]);
+    process.exit(1);
+  }
+}
 
 function trimNum(v) { return String(Math.round(v * 1000) / 1000); }
 
@@ -419,6 +448,7 @@ if (STILLS) {
     console.log(`  镜头表: ${STORY.length} 个镜头（${STORY_FILE}）· 时长合计 ${total.toFixed(2)}s → window.__story`);
   }
   if (ALPHA) console.log(`  alpha: ProRes 4444 (.mov) —— 背景透明，供叠加合成`);
+  if (THEME) console.log(`  theme: ${THEME} → window.__h2vTheme`);
   if (CUES) {
     const last = CUES[CUES.length - 1];
     console.log(`  字幕: ${CUES.length} 句 · ${CUES[0].start.toFixed(2)}–${last.end.toFixed(2)}s → window.__cues`);
@@ -475,6 +505,47 @@ async function injectStoryInit(context) {
   } catch (e) {
     console.warn('⚠ 镜头表注入失败，模板会用它自己的 CFG.story：' + String((e && e.message) || e));
   }
+}
+
+/* 主题：只注入名字，具体色板由页面里的 themes.js 解析。
+   必须和 __story 一样走 addInitScript —— 模板在顶层就把 TH 算好了，加载完再注入已经晚了。
+   渲染器**不抄一份主题表**（抄了必然和 themes.js 漂移），改成注入后回读：
+   页面调过 h2vTheme 会记下 window.__h2vThemeResolved，对不上就明确告警，
+   免得名字打错一个字母就静默退回 midnight，成片出来才发现配色不对。 */
+async function injectThemeInit(context) {
+  if (!THEME) return;
+  try {
+    await context.addInitScript(tn => { window.__h2vTheme = tn; }, THEME);
+  } catch (e) {
+    console.warn('⚠ 主题注入失败，模板会用它自己的 CFG.theme：' + String((e && e.message) || e));
+  }
+}
+
+const THEME_WARN = new Set();
+async function checkTheme(page) {
+  if (!THEME) return;
+  let probe = null;
+  try {
+    probe = await page.evaluate(() => ({
+      resolved: window.__h2vThemeResolved || null,
+      hasFn: typeof window.h2vTheme === 'function',
+    }));
+  } catch (e) { return; }
+  if (!probe.hasFn) {
+    THEME_WARN.add('该页面没有引入 themes.js，--theme 不生效（模板还没接主题，或这是自己写的动画）');
+  } else if (probe.resolved !== THEME) {
+    THEME_WARN.add(`--theme=${THEME} 未被识别，已回退到 ${probe.resolved || 'midnight'}` +
+      '（可用主题名见 assets/templates/themes.js 的 H2V_THEMES）');
+  }
+}
+
+function printThemeWarnings() {
+  if (!THEME_WARN.size) return;
+  console.warn('');
+  for (const m of THEME_WARN) console.warn('⚠ ' + m);
+  console.warn('  想让任意动画吃 --theme，只需读 window.__h2vTheme：');
+  console.warn('    const TH = h2vTheme(window.__h2vTheme || CFG.theme);');
+  console.warn('');
 }
 
 /* 镜头时间轴：模板调了 SC.expose() 才会挂上 window.__sceneTable。
@@ -563,6 +634,7 @@ async function renderFrames(context, url, frames, onPage) {
   await injectCues(page);
   await captureSceneTable(page);
   await checkStageSize(page);
+  await checkTheme(page);
 
   for (const f of frames) {
     const t = f / FPS;
@@ -607,6 +679,7 @@ async function renderStills(context, url, times, onPage) {
   await injectCues(page);
   await captureSceneTable(page);
   await checkStageSize(page);
+  await checkTheme(page);
 
   fs.mkdirSync(STILL_DIR, { recursive: true });
   for (const t of times) {
@@ -706,6 +779,7 @@ async function renderStills(context, url, times, onPage) {
   }
 
   await injectStoryInit(context);
+  await injectThemeInit(context);
 
   let captured = 0;
   try {
@@ -751,6 +825,7 @@ async function renderStills(context, url, times, onPage) {
   await browser.close();
   if (server) { try { await server.close(); } catch (e) { /* 关不掉也不影响成片 */ } }
   printSizeWarnings();
+  printThemeWarnings();
 
   // ── 报错检查：在编码之前，先把「画面可能是坏的」这件事说清楚 ──
   // 保留成片（能直接看）但最终非零退出，让脚本/CI 能感知失败。

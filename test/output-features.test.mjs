@@ -8,12 +8,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { RENDER, TEMPLATES, run, tmpdir } from '../scripts/lib/testing.mjs';
+import { RENDER, TEMPLATES, run, tmpdir, copyTemplate } from '../scripts/lib/testing.mjs';
 
 function stage(template) {
   const dir = tmpdir('h2v-out-');
   const html = path.join(dir, template);
-  fs.copyFileSync(path.join(TEMPLATES, template), html);
+  copyTemplate(template, html);      // 连 themes.js 一起拷，否则页面会 404
   return { dir, html };
 }
 
@@ -39,8 +39,8 @@ test('--batch 按顺序渲一串任务，最后打汇总表', { timeout: 300000 
   const dir = tmpdir('h2v-batch-');
   const a = path.join(dir, 'a.html');
   const b = path.join(dir, 'b.html');
-  fs.copyFileSync(path.join(TEMPLATES, 'title-card.html'), a);
-  fs.copyFileSync(path.join(TEMPLATES, 'number-counter.html'), b);
+  copyTemplate('title-card.html', a);
+  copyTemplate('number-counter.html', b);
   const jobs = path.join(dir, 'jobs.json');
   fs.writeFileSync(jobs, JSON.stringify([
     { html: a, duration: 0.5, fps: 6, width: 640, height: 360 },
@@ -59,7 +59,7 @@ test('--batch 按顺序渲一串任务，最后打汇总表', { timeout: 300000 
 test('--batch 里有一个任务失败时，整体非零退出但其它任务照出片', { timeout: 300000 }, () => {
   const dir = tmpdir('h2v-batch2-');
   const a = path.join(dir, 'a.html');
-  fs.copyFileSync(path.join(TEMPLATES, 'title-card.html'), a);
+  copyTemplate('title-card.html', a);
   const jobs = path.join(dir, 'jobs.json');
   fs.writeFileSync(jobs, JSON.stringify([
     { html: a, duration: 0.5, fps: 6, width: 640, height: 360 },

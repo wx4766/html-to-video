@@ -52,7 +52,7 @@ const PORTRAIT = H > W;
 const VSY = PORTRAIT ? SF : SY;
 const FS = PORTRAIT ? 1.12 : 1;
 const DUR = CFG.dur;
-const TH = window.h2vTheme ? h2vTheme(CFG.theme) : { bg:'#0A0C12', bgAlt:'#121724', ink:'#F4F7FC',
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : { bg:'#0A0C12', bgAlt:'#121724', ink:'#F4F7FC',
   sub:'rgba(244,247,252,.58)', faint:'rgba(244,247,252,.12)', panel:'rgba(255,255,255,.045)',
   accent:'#FFB86B', accent2:'#7C9CFF' };
 const TRANSPARENT = !!window.__transparent;

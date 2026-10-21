@@ -78,6 +78,31 @@ export function tmpdir(prefix = 'h2v-test-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+/**
+ * 把模板连同它引用的**同目录脚本**一起拷到目标位置。
+ *
+ * 模板不是永远单文件：`themes.js` 是共用脚本（`<script src="./themes.js">`），
+ * 只拷 HTML 会 404 —— 而渲染器把「页面报错」判为失败，于是测试挂在
+ * 「Failed to load resource: 404」这种和被测行为毫无关系的错误上。
+ * 这里按源码里真实出现的 `./xxx.js` 去拷，以后再加共用脚本也不用改测试。
+ */
+const SIBLING_SCRIPT = /<script[^>]+src\s*=\s*["']\.\/([^"'/\\]+\.js)["']/g;
+
+export function copyTemplate(name, destFile) {
+  const src = path.join(TEMPLATES, name);
+  fs.copyFileSync(src, destFile);
+  const dir = path.dirname(destFile);
+  const code = fs.readFileSync(src, 'utf8');
+  const copied = [];
+  for (const m of code.matchAll(SIBLING_SCRIPT)) {
+    const sib = path.join(TEMPLATES, m[1]);
+    if (!fs.existsSync(sib)) continue;
+    fs.copyFileSync(sib, path.join(dir, m[1]));
+    copied.push(m[1]);
+  }
+  return { file: destFile, siblings: copied };
+}
+
 /** 从 ffmpeg -i 的输出里读分辨率 —— 用来验证 --width/--height 真的生效 */
 export function probeSize(file) {
   const r = spawnSync(toolEnv().FFMPEG || 'ffmpeg', ['-hide_banner', '-i', file], { encoding: 'utf8' });

@@ -10,6 +10,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
+<script src="./themes.js"></script>
 <script>
 /* =====================================================================
    模板 ⑤  ·  竖向时间线 / 流程步骤
@@ -20,8 +21,11 @@
    出片：
      bash ../render.sh timeline.html --duration=7 --fps=60
      bash ../render.sh timeline.html --duration=7 --fps=60 --width=1080 --height=1920
+
+   换配色：改 CFG.theme，或命令行 --theme=paper 覆盖（midnight / paper / neon）。
    ===================================================================== */
 const CFG = {
+  theme: 'midnight',           // midnight | paper | neon，或直接传对象
   title: '项目里程碑',
   sub:   '从立项到上线',
   items: [                     // ← 改这里：3–6 条最好看
@@ -31,9 +35,6 @@ const CFG = {
     { date: '2026.09', title: '上线',   desc: '灰度放量，指标达标' },
   ],
   dur:  7.0,
-  accent: '#FFB86B',
-  ink:    '#F4F7FC',
-  bg:     '#080A10',
 };
 /* ===================================================================== */
 
@@ -52,6 +53,15 @@ const PORTRAIT = H > W;
 const g = cv.getContext('2d');
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+/* 主题：命令行 --theme 优先于 CFG.theme；themes.js 缺失时用兜底深色板 */
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', accent: '#FFB86B',
+};
+const RGBA = window.h2vRgba || function (hex, a) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + (a === undefined ? 1 : a) + ')';
+};
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -97,17 +107,18 @@ function drawFrame(T) {
   g.clearRect(0, 0, W, H);
 
   const bg = g.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, CFG.bg);
-  bg.addColorStop(1, '#0D111B');
+  bg.addColorStop(0, TH.bg);
+  bg.addColorStop(1, TH.bgFar || '#0D111B');
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+  const SWEEP = TH.sweep || '255,255,255';
   const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
   const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
-  sweep.addColorStop(0, 'rgba(255,255,255,0)');
-  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
-  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0, `rgba(${SWEEP},0)`);
+  sweep.addColorStop(0.5, `rgba(${SWEEP},0.05)`);
+  sweep.addColorStop(1, `rgba(${SWEEP},0)`);
   g.fillStyle = sweep;
   g.fillRect(0, 0, W, H);
 
@@ -115,7 +126,7 @@ function drawFrame(T) {
   const tiP = outCubic(win(T, 0.10, 0.75));
   g.save();
   g.globalAlpha = tiP;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.font = `700 ${62 * SF}px ${SANS}`;
   g.fillText(CFG.title, 160 * SX, 168 * SY);
   g.globalAlpha = tiP * 0.55;
@@ -127,13 +138,13 @@ function drawFrame(T) {
   const grow = smooth(win(T, 0.55, 1.55 + N * 0.62));
   g.save();
   g.globalAlpha = 0.12;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.fillRect(SPINE_X - 2 * SF, SPINE_Y0, 4 * SF, SPINE_Y1 - SPINE_Y0);
   g.globalAlpha = 1;
   const gh = (SPINE_Y1 - SPINE_Y0 + 30 * SY) * grow;
   const grad = g.createLinearGradient(0, SPINE_Y0, 0, SPINE_Y0 + gh);
-  grad.addColorStop(0, 'rgba(255,184,107,0.95)');
-  grad.addColorStop(1, 'rgba(255,138,61,0.75)');
+  grad.addColorStop(0, RGBA(TH.accent, 0.95));
+  grad.addColorStop(1, RGBA(TH.accentDeep || '#FF8A3D', 0.75));
   g.fillStyle = grad;
   g.fillRect(SPINE_X - 2 * SF, SPINE_Y0, 4 * SF, gh);
   g.restore();
@@ -148,7 +159,7 @@ function drawFrame(T) {
     /* 日期（轴左侧，右对齐） */
     g.save();
     g.globalAlpha = contentP * 0.62;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `500 ${30 * SF}px ${MONO}`;
     g.textAlign = 'right';
     g.fillText(it.date, SPINE_X - 76 * SX, y + 11 * SF);
@@ -157,7 +168,7 @@ function drawFrame(T) {
     /* 连接短横 */
     g.save();
     g.globalAlpha = 0.35 * on;
-    g.fillStyle = CFG.accent;
+    g.fillStyle = TH.accent;
     g.fillRect(SPINE_X + 20 * SX, y - 1.5 * SF, 34 * SX * clamp(contentP * 1.5, 0, 1), 3 * SF);
     g.restore();
 
@@ -166,15 +177,15 @@ function drawFrame(T) {
     g.save();
     if (on > 0.05) {
       const halo = g.createRadialGradient(SPINE_X, y, 0, SPINE_X, y, 52 * SF * on);
-      halo.addColorStop(0, 'rgba(255,184,107,0.42)');
-      halo.addColorStop(1, 'rgba(255,184,107,0)');
+      halo.addColorStop(0, RGBA(TH.accent, 0.42));
+      halo.addColorStop(1, RGBA(TH.accent, 0));
       g.fillStyle = halo;
       g.beginPath(); g.arc(SPINE_X, y, 52 * SF * on, 0, Math.PI * 2); g.fill();
     }
-    g.fillStyle = on > 0.5 ? CFG.accent : 'rgba(244,247,252,0.22)';
+    g.fillStyle = on > 0.5 ? TH.accent : RGBA(TH.ink, 0.22);
     g.beginPath(); g.arc(SPINE_X, y, r, 0, Math.PI * 2); g.fill();
     if (on > 0.5) {
-      g.fillStyle = CFG.bg;
+      g.fillStyle = TH.bg;
       g.beginPath(); g.arc(SPINE_X, y, r * 0.42, 0, Math.PI * 2); g.fill();
     }
     g.restore();
@@ -183,7 +194,7 @@ function drawFrame(T) {
     const tx = TX + (1 - contentP) * 24 * SX;
     g.save();
     g.globalAlpha = contentP;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `600 ${46 * SF}px ${SANS}`;
     g.fillText(it.title, tx, y - 4 * SF);
     g.globalAlpha = contentP * 0.55;

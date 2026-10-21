@@ -108,7 +108,7 @@ the viewport, so `--width/--height` is the only switch.
 
 ## Project status
 
-`v1.3.1` — used daily, 100 automated tests, MIT. Not a startup, not a framework, no
+`v1.4.0` — used daily, 104 automated tests, MIT. Not a startup, not a framework, no
 roadmap theatre. It does one thing and reports its own defects:
 
 - **Deterministic** — same input → byte-identical output, verified by re-rendering
@@ -249,11 +249,33 @@ the theme palette, sharp at any resolution, zero bytes to download. There is del
 **no** bitmap character pack or landmark photo pack — those bring licence risk, clash with
 whatever look you already have, and turn the repo into a binary blob.
 
-### Themes — change one field
+### Themes — one flag, or one field
 
-`assets/templates/themes.js` ships `midnight` (default, dark), `paper` (light, for docs and
-projection) and `neon` (black/violet). Templates read `CFG.theme`; pass an object to
-override individual fields.
+All 11 templates read `assets/templates/themes.js`: `midnight` (default, dark), `paper` (light,
+for docs and projection) and `neon` (black/violet).
+
+```bash
+# override from the CLI — no file edits, and per-job in --batch
+node scripts/render-video-seek.js assets/templates/bar-chart.html --duration=6 --theme=paper --out=bar-paper.mp4
+```
+
+`--theme` beats `CFG.theme` in the page (the renderer injects `window.__h2vTheme`). A mistyped
+name is reported with the list of available names instead of silently falling back — and after
+loading, the renderer reads back which theme actually took effect. Pass an object to
+`CFG.theme` to override individual fields (`theme: { bg: '#0B1020', accent: '#22D3EE' }`).
+
+One HTML, several colourways: outputs default to `<html name>.mp4` next to the HTML, so pair
+`--theme` with `--out` (missing parent directories are created) — otherwise the second render
+overwrites the first:
+
+```json
+[{ "html": "bar-chart.html", "duration": 6, "theme": "midnight", "out": "bar-dark.mp4" },
+ { "html": "bar-chart.html", "duration": 6, "theme": "paper",    "out": "bar-light.mp4" }]
+```
+
+Copy `themes.js` alongside the template. Rendering a single HTML still draws correctly from the
+built-in fallback palette, but the missing script 404s and page errors fail the render by design
+— add the file, or pass `--allow-errors`.
 
 ### Resume an interrupted render
 
@@ -307,6 +329,7 @@ silently end early.
 | `--gif[=fps,width]` | also produce a GIF (default 15 fps / 960 px), two-pass palette, no re-render |
 | `--poster=<sec>` | also grab a still as `.jpg` for a thumbnail |
 | `--batch=<file.json>` | render a queue of jobs in order, print a summary; one failure doesn't discard the rest |
+| `--out=<file>` | explicit output path (default: `<html name>.mp4` beside the HTML); parent dirs are created — needed when one HTML ships several colourways |
 | `--headed` | render with a visible browser window (concurrency drops to 1) |
 | `--allow-errors` | don't fail on page errors (default: page errors → non-zero exit) |
 | `--no-serve` | load via `file://` instead of the built-in local HTTP server |

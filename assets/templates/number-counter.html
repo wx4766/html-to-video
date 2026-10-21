@@ -10,6 +10,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
+<script src="./themes.js"></script>
 <script>
 /* =====================================================================
    模板 ④  ·  大数字 / KPI 卡
@@ -21,8 +22,11 @@
    出片：
      bash ../render.sh number-counter.html --duration=7 --fps=60
      bash ../render.sh number-counter.html --duration=7 --fps=60 --width=1080 --height=1920
+
+   换配色：改 CFG.theme，或命令行 --theme=paper 覆盖（midnight / paper / neon）。
    ===================================================================== */
 const CFG = {
+  theme:   'midnight',        // midnight | paper | neon，或直接传对象
   label:   '年度总营收',
   value:   128640,            // 目标数值
   unit:    '万元',
@@ -32,9 +36,6 @@ const CFG = {
   foot:    '示例数据 · 换成你自己的口径',
   barRatio: 0.78,             // 底部进度条填充比例 0..1（表达「完成度」）
   dur:     7.0,
-  accent:  '#FFB86B',
-  ink:     '#F4F7FC',
-  bg:      '#080A10',
 };
 /* ===================================================================== */
 
@@ -53,6 +54,15 @@ const PORTRAIT = H > W;
 const g = cv.getContext('2d');
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+/* 主题：命令行 --theme 优先于 CFG.theme；themes.js 缺失时用兜底深色板 */
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', accent: '#FFB86B',
+};
+const RGBA = window.h2vRgba || function (hex, a) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + (a === undefined ? 1 : a) + ')';
+};
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -99,23 +109,24 @@ function drawFrame(T) {
 
   /* 背景 + 中心暖光 */
   const bg = g.createLinearGradient(0, 0, W * 0.7, H);
-  bg.addColorStop(0, CFG.bg);
-  bg.addColorStop(1, '#0E1420');
+  bg.addColorStop(0, TH.bg);
+  bg.addColorStop(1, TH.bgFar || '#0E1420');
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
   const gxp = outCubic(win(T, 0, 1.2));
   const rad = g.createRadialGradient(W / 2, H * 0.5, 0, W / 2, H * 0.5, 820 * SF);
-  rad.addColorStop(0, `rgba(255,184,107,${0.13 * gxp})`);
+  rad.addColorStop(0, RGBA(TH.accent, 0.13 * gxp));
   rad.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = rad;
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+  const SWEEP = TH.sweep || '255,255,255';
   const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
   const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
-  sweep.addColorStop(0, 'rgba(255,255,255,0)');
-  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
-  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0, `rgba(${SWEEP},0)`);
+  sweep.addColorStop(0.5, `rgba(${SWEEP},0.05)`);
+  sweep.addColorStop(1, `rgba(${SWEEP},0)`);
   g.fillStyle = sweep;
   g.fillRect(0, 0, W, H);
 
@@ -123,7 +134,7 @@ function drawFrame(T) {
   const labP = outCubic(win(T, 0.15, 0.80));
   g.save();
   g.globalAlpha = labP * 0.7;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.font = `500 ${38 * SF}px ${SANS}`;
   g.textAlign = 'center';
   g.fillText(CFG.label, W / 2, 372 * SY + (1 - labP) * 20 * SY);
@@ -149,14 +160,14 @@ function drawFrame(T) {
   const pop = outExpo(win(T, 0.45, 1.15));
   g.globalAlpha = clamp(pop, 0, 1);
   const yBase = 640 * SY;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
 
   let x = startX;
   if (CFG.prefix) {
     g.font = `700 ${SMALL_PX}px ${SANS}`;
-    g.fillStyle = 'rgba(244,247,252,0.55)';
+    g.fillStyle = RGBA(TH.ink, 0.55);
     g.fillText(CFG.prefix, x + g.measureText(CFG.prefix).width / 2, yBase - 96 * SF * FIT_K);
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     x += preW;
   }
   g.font = `700 ${NUM_PX}px ${MONO}`;
@@ -164,7 +175,7 @@ function drawFrame(T) {
   x += numW;
   if (CFG.unit) {
     g.font = `700 ${SMALL_PX}px ${SANS}`;
-    g.fillStyle = 'rgba(244,247,252,0.55)';
+    g.fillStyle = RGBA(TH.ink, 0.55);
     g.fillText(CFG.unit, x + unitW / 2, yBase - 22 * SF * FIT_K);
   }
   g.restore();
@@ -173,8 +184,10 @@ function drawFrame(T) {
   if (CFG.delta) {
     const p = outExpo(win(T, 2.85, 3.55));
     if (p > 0) {
-      const color = CFG.delta.up ? '#FF6B6B' : '#5FE0C0';   // 中国市场惯例：涨红跌绿
-      const tint = CFG.delta.up ? 'rgba(255,107,107,0.16)' : 'rgba(95,224,192,0.16)';
+      /* 中国市场惯例：涨红跌绿。跌用主题的 accentSoft（midnight 下就是原来的青绿） */
+      const DOWN = TH.accentSoft || '#5FE0C0';
+      const color = CFG.delta.up ? (TH.bad || '#FF6B6B') : DOWN;
+      const tint = RGBA(color, 0.16);
       g.save();
       g.globalAlpha = p;
       g.font = `600 ${34 * SF}px ${SANS}`;
@@ -197,10 +210,10 @@ function drawFrame(T) {
   const barIn = outCubic(win(T, 3.30, 4.30));
   g.save();
   g.globalAlpha = 0.12 * barIn;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.fillRect(barX, barY, barW, barH);
   g.globalAlpha = barIn;
-  g.fillStyle = CFG.accent;
+  g.fillStyle = TH.accent;
   g.fillRect(barX, barY, barW * CFG.barRatio * barIn, barH);
   g.restore();
 
@@ -209,7 +222,7 @@ function drawFrame(T) {
   if (noP > 0) {
     g.save();
     g.globalAlpha = noP * 0.42;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `400 ${24 * SF}px ${SANS}`;
     g.textAlign = 'center';
     g.fillText(CFG.foot, W / 2, H - 180 * SY);

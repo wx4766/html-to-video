@@ -10,6 +10,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
+<script src="./themes.js"></script>
 <script>
 /* =====================================================================
    模板 ②  ·  横向条形图对比 / 排名
@@ -20,8 +21,12 @@
    出片（横屏 / 竖屏都直接用，模板按视口自适应）：
      bash ../render.sh bar-chart.html --duration=6 --fps=60
      bash ../render.sh bar-chart.html --duration=6 --fps=60 --width=1080 --height=1920
+
+   换配色：改 CFG.theme，或命令行 --theme=paper 覆盖（midnight / paper / neon）。
+   逐色调微调改 themes.js，不要在下面的画布代码里写死色值。
    ===================================================================== */
 const CFG = {
+  theme:    'midnight',            // midnight | paper | neon，或直接传对象
   title:    '上半年各渠道新增用户',
   sub:      '单位：万人 · 数据截至 6 月 30 日',
   unit:     '',                 // 数值后缀，如 '万元'、'%'；空则不加
@@ -34,9 +39,6 @@ const CFG = {
   ],
   note:  '数据来源：示例数据，替换成你自己的',
   dur:   6.0,
-  accent: '#FFB86B',
-  ink:   '#F4F7FC',
-  bg:    '#080A10',
 };
 /* ===================================================================== */
 
@@ -55,6 +57,16 @@ const PORTRAIT = H > W;
 const g = cv.getContext('2d');
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+/* 主题：命令行 --theme 优先于 CFG.theme；themes.js 缺失时用兜底深色板，照样能出片 */
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', accent: '#FFB86B',
+};
+/* 同色不同透明度：光晕 / 渐变要用，themes.js 里有 h2vRgba，缺了就在本地算 */
+const RGBA = window.h2vRgba || function (hex, a) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + (a === undefined ? 1 : a) + ')';
+};
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -89,17 +101,19 @@ function drawFrame(T) {
 
   /* 背景 */
   const bg = g.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, CFG.bg);
-  bg.addColorStop(1, '#0D111B');
+  bg.addColorStop(0, TH.bg);
+  bg.addColorStop(1, TH.bgFar || '#0D111B');
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+  /* 浅色底上用白光扫等于没画，所以扫光颜色跟着主题走（TH.sweep 是 "r,g,b"） */
+  const SWEEP = TH.sweep || '255,255,255';
   const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
   const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
-  sweep.addColorStop(0, 'rgba(255,255,255,0)');
-  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
-  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0, `rgba(${SWEEP},0)`);
+  sweep.addColorStop(0.5, `rgba(${SWEEP},0.05)`);
+  sweep.addColorStop(1, `rgba(${SWEEP},0)`);
   g.fillStyle = sweep;
   g.fillRect(0, 0, W, H);
 
@@ -107,7 +121,7 @@ function drawFrame(T) {
   const tiP = outCubic(win(T, 0.10, 0.75));
   g.save();
   g.globalAlpha = tiP;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.font = `700 ${62 * SF}px ${SANS}`;
   g.fillText(CFG.title, LEFT, 168 * SY + (1 - tiP) * 24 * SY);
   g.globalAlpha = tiP * 0.55;
@@ -119,7 +133,7 @@ function drawFrame(T) {
   const axP = outCubic(win(T, 0.30, 0.90));
   g.save();
   g.globalAlpha = 0.16 * axP;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.fillRect(X0, Y0 - 26 * SY, 2 * SF, CFG.data.length * ROW + 20 * SY);
   g.restore();
 
@@ -137,7 +151,7 @@ function drawFrame(T) {
     /* 行背景条（刻度容器） */
     g.save();
     g.globalAlpha = 0.05 * fade;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.fillRect(X0, top, X1 - X0, BAR);
     g.restore();
 
@@ -145,11 +159,11 @@ function drawFrame(T) {
     if (w > 0) {
       const grad = g.createLinearGradient(X0, 0, X0 + Math.max(w, 1), 0);
       if (isTop) {
-        grad.addColorStop(0, '#FF8A3D');
-        grad.addColorStop(1, CFG.accent);
+        grad.addColorStop(0, TH.accentDeep || '#FF8A3D');
+        grad.addColorStop(1, TH.accent);
       } else {
-        grad.addColorStop(0, 'rgba(95,224,192,0.55)');
-        grad.addColorStop(1, 'rgba(95,224,192,0.85)');
+        grad.addColorStop(0, RGBA(TH.accentSoft || '#5FE0C0', 0.55));
+        grad.addColorStop(1, RGBA(TH.accentSoft || '#5FE0C0', 0.85));
       }
       g.fillStyle = grad;
       g.fillRect(X0, top, w, BAR);
@@ -158,7 +172,7 @@ function drawFrame(T) {
     /* 左侧标签 */
     g.save();
     g.globalAlpha = fade * 0.92;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `500 ${LABEL_PX}px ${SANS}`;
     g.textAlign = 'right';
     g.fillText(d.label, X0 - GAP_LABEL, cy + 13 * SF);
@@ -174,12 +188,12 @@ function drawFrame(T) {
       const label = fmt(shown) + CFG.unit;
       const tw = g.measureText(label).width;
       if (X0 + w + 26 * SX + tw > W - 40 * SX) {
-        /* 放不下：进条内，深色字 */
+        /* 放不下：进条内，用底色写字（深底片=深字，浅底片=浅字，对比度自动对） */
         g.textAlign = 'right';
-        g.fillStyle = 'rgba(10,12,18,0.88)';
+        g.fillStyle = RGBA(TH.bg, 0.88);
         g.fillText(label, X0 + w - 18 * SX, cy + 14 * SF);
       } else {
-        g.fillStyle = isTop ? CFG.accent : 'rgba(95,224,192,0.95)';
+        g.fillStyle = isTop ? TH.accent : RGBA(TH.accentSoft || '#5FE0C0', 0.95);
         g.fillText(label, X0 + w + 26 * SX, cy + 14 * SF);
       }
       g.restore();
@@ -191,7 +205,7 @@ function drawFrame(T) {
   if (noP > 0) {
     g.save();
     g.globalAlpha = noP * 0.42;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `400 ${24 * SF}px ${SANS}`;
     g.fillText(CFG.note, LEFT, H - 190 * SY);
     g.restore();

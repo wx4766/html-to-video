@@ -38,7 +38,7 @@ agent_created: true
 | `vertical-subtitle.html` | **竖屏字幕卡**：关键词高亮，9:16 原生版式 | `--duration=8 --width=1080 --height=1920` + `--srt` |
 
 每个模板**单文件自包含**，顶部有一个显眼的 `CFG` 配置块，改文案/数据即可 ——
-不用懂 canvas 也能出片。五个新模板还支持换主题（见「换配色」一节）。
+不用懂 canvas 也能出片。**11 个模板全部支持换主题**（见「换配色」一节）。
 想做别的，再看 `assets/animation-skeleton.html` 从零写。
 
 **做「一支片子」而不是「一段动画」**：用 `assets/lib/scenes.js` 写多镜头 + 转场，
@@ -47,7 +47,7 @@ agent_created: true
 
 ### 尺寸：模板跟视口走，不用手改
 
-10 个模板都按 `window.innerWidth/innerHeight` 设画布，所以**换任何尺寸都不裁切**：
+11 个模板都按 `window.innerWidth/innerHeight` 设画布，所以**换任何尺寸都不裁切**：
 
 ```bash
 # 横屏 1080p（默认）
@@ -200,6 +200,8 @@ bash assets/render.sh animation.html --duration=12 --fps=60 --width=1920 --heigh
 | `--duration` / `--from` / `--to` | 时长 / 只渲某段（秒）。给了范围时输出名变成 `名.起-止s.mp4`，**不会覆盖成品** |
 | `--stills=0.5,2.0` | 只导出这些时刻的 PNG，不编码 |
 | `--fps` / `--width` / `--height` | 帧率与分辨率 |
+| `--theme=<名>` | 换主题（`midnight` / `paper` / `neon`），覆盖模板里的 `CFG.theme`，不用改文件。名字打错会明确告警并回退 midnight |
+| `--out=<文件>` | 指定成片路径（默认同目录同名）。一份 HTML 出多套配色时用它，否则后渲的会盖掉前一个；上级目录不存在会自动建 |
 | `--concurrency` | 并行 worker 数（每个 worker 一个 Chromium 页面，注意内存）。给 `auto` 按 CPU 与内存自己挑 |
 | `--audio=<file>` | 编码后自动混音（视频流直接 copy，不重编码） |
 | `--gop=<秒>` | 关键帧间隔，如 `--gop=1` 每秒一个关键帧，方便后期按秒 seek |
@@ -260,12 +262,13 @@ AI 生成的背景 + 代码生成的文字层，是现在最省钱的组合（�
 
 ```bash
 bash assets/render.sh animation.html --duration=6 --fps=30 --alpha
-# → animation.mov（ProRes 4444 / yuva444p12le，背景透明）
+# → animation.mov（ProRes 4444 / yuva444p10le，背景透明）
 ```
 
 **模板侧要配合一件事**：读到 `window.__transparent` 为真时跳过背景层绘制。
-目前 `title-card`、`compare`、`flow-steps`、`subtitle-card`、`vertical-subtitle` 这 5 个已经这样写，
-直接加 `--alpha` 就有透明效果；其余 5 个是满版图表，本来就要底色，加了也只会得到不透明的片子。
+目前 `title-card`、`compare`、`flow-steps`、`subtitle-card`、`vertical-subtitle`、
+`explainer` 这 6 个已经这样写，直接加 `--alpha` 就有透明效果；
+其余 5 个是满版图表（条形 / 折线 / 大数字 / 时间线 / 竖屏卡），本来就要底色，加了也只会得到不透明的片子。
 自己写的动画照这个来：
 
 ```js
@@ -325,7 +328,13 @@ const cur = cues.find(c => t >= c.start && t < c.end) || cues[cues.length - 1];
 
 ### 换配色：改一个字段，不用碰画布代码
 
-`assets/templates/themes.js` 里有三套调色板，模板只要写 `CFG.theme`：
+`assets/templates/themes.js` 里有三套调色板，**11 个模板全部接入**。两种换法：
+
+```bash
+# ① 命令行换（推荐）：不改任何文件，一次渲染一个主题
+bash assets/render.sh bar-chart.html --duration=6 --theme=paper --out=bar-paper.mp4
+# ② 改文件：在模板顶部 CFG 里写死
+```
 
 ```js
 const CFG = {
@@ -333,6 +342,17 @@ const CFG = {
   ...
 };
 ```
+
+命令行优先于 `CFG.theme`（渲染器注入 `window.__h2vTheme`，模板读
+`h2vTheme(window.__h2vTheme || CFG.theme)`）。所以同一份 HTML 可以批量出三套配色：
+
+```json
+[{ "html": "bar-chart.html", "duration": 6, "theme": "midnight", "out": "bar-dark.mp4" },
+ { "html": "bar-chart.html", "duration": 6, "theme": "paper",    "out": "bar-light.mp4" }]
+```
+
+批量里**必须配 `out`**：成片默认名是 `<HTML 名>.mp4`，同一个 HTML 渲两套配色
+不换输出名的话，后一个会把前一个盖掉。
 
 | 主题 | 观感 | 适合 |
 |---|---|---|
@@ -346,9 +366,18 @@ const CFG = {
 theme: { bg: '#0B1020', accent: '#22D3EE' }
 ```
 
-四个新模板（`compare` / `flow-steps` / `subtitle-card` / `vertical-subtitle`）已经接入。
-**`themes.js` 是外部脚本，拷模板时连它一起拷**；只拷 HTML 也能跑（模板里有兜底色板），
-只是换不了主题。`test/templates-contract.test.mjs` 会检查「登记了主题能力就必须真的引入 themes.js」。
+**加主题不背「默认画面偷偷变了」的债**，靠一条约定：`themes.js` 里
+`midnight` 只填 11 个基础字段，另外 5 个可选字段（`bgFar` / `accentDeep` /
+`accentSoft` / `sweep` / `onAccent`）只给 `paper` 和 `neon` 填；
+模板一律写成 `TH.accentDeep || '<历史常量>'`。于是默认主题走的还是原来那些常量，
+换主题时才用新色。测试会盯住这条约定（midnight 填了可选字段就报错）。
+
+**`themes.js` 是外部脚本，拷模板时连它一起拷**。只拷 HTML 会怎样：页面的兜底色板让画面
+照常画出来，但 `<script src="./themes.js">` 会 404 —— 而渲染器把「页面报错」判为失败，
+于是你会看到「Failed to load resource: 404」加一句渲染失败。**这不是画面坏了**，
+把 `themes.js` 拷到同目录（或者加 `--allow-errors`）即可。
+`test/templates-contract.test.mjs` 会检查「登记了主题能力就必须真的引入
+themes.js，并且必须读 `window.__h2vTheme`」——后者保证命令行换主题不是空操作。
 
 ### 第 4 步：配乐 / 派生格式
 

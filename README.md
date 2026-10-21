@@ -117,19 +117,38 @@ bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1280 --heigh
 
 > 渲染器现在会主动量画布尺寸，比视口小会明确告警，不再静默出半张图。
 
-### 换配色：改一个字段
+### 换配色：改一个字段，或者一条命令
 
-四个新模板接入了 `assets/templates/themes.js`，`CFG.theme` 一行搞定：
+**11 个模板全部接入** `assets/templates/themes.js`。两种换法，效果一样：
+
+```bash
+# ① 命令行（推荐）：不改文件，一次渲一个主题
+bash assets/render.sh bar-chart.html --duration=6 --theme=paper --out=bar-paper.mp4
+```
 
 ```js
+// ② 写进模板：CFG.theme 一行
 const CFG = {
   theme: 'paper',   // midnight（默认，暗色）| paper（浅色）| neon（黑紫霓虹）
   ...
 };
 ```
 
+命令行优先于 `CFG.theme`。名字打错会明确告警并告诉你有哪些可选，不会静默变成默认色。
+因为主题是注入的，`--batch` 里每个任务可以各用一套配色 —— 同一份片子出「暗色版 + 浅色版」不用复制文件：
+
+```json
+[{ "html": "bar-chart.html", "duration": 6, "theme": "midnight", "out": "bar-dark.mp4" },
+ { "html": "bar-chart.html", "duration": 6, "theme": "paper",    "out": "bar-light.mp4" }]
+```
+
+上面每条命令都带 `--out`，不是可选项：成片默认叫 `<HTML 名>.mp4`，
+同一个 HTML 渲两套配色不换名字，后一个会盖掉前一个。
+
 也可以传对象只覆盖要改的字段：`theme: { bg: '#0B1020', accent: '#22D3EE' }`。
-拷模板时记得把 `themes.js` 一起拷到同目录；只拷 HTML 也能跑（模板里有兜底色板），只是换不了主题。
+
+拷模板时记得把 `themes.js` 一起拷到同目录。只拷 HTML 时画面照常出来（模板里有兜底色板），
+但 `themes.js` 会 404，而渲染器把「页面报错」判为失败 —— 这时补上文件或加 `--allow-errors`。
 
 ### 多镜头与转场：一份 HTML 出整支片子
 
@@ -304,6 +323,8 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 | `--gif[=fps,宽]` | 出片后顺手产 GIF（默认 15fps / 宽 960），不重渲 |
 | `--poster=<秒>` | 出片后顺手抽一张封面静帧 `.jpg` |
 | `--batch=<file.json>` | 一串任务按顺序渲，最后打汇总表；单个失败不连坐已渲好的 |
+| `--theme=<名>` | 换主题（`midnight` / `paper` / `neon`），覆盖模板里的 `CFG.theme`；打错名字会告警并回退 |
+| `--out=<文件>` | 指定成片路径（默认同目录同名）；一份 HTML 出多套配色时用它，上级目录自动创建 |
 | `--headed` | 开着浏览器窗口渲（调试用；并发自动降到 1） |
 | `--allow-errors` | 页面报错不判失败（默认有报错就非零退出） |
 | `--readytimeout=8` | 等 `__seek` 就绪的秒数（大字体 / 大数据启动慢时调大） |

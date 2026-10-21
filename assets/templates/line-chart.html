@@ -10,6 +10,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
+<script src="./themes.js"></script>
 <script>
 /* =====================================================================
    模板 ③  ·  折线趋势图
@@ -21,8 +22,11 @@
    出片：
      bash ../render.sh line-chart.html --duration=8 --fps=60
      bash ../render.sh line-chart.html --duration=8 --fps=60 --width=1080 --height=1920
+
+   换配色：改 CFG.theme，或命令行 --theme=paper 覆盖（midnight / paper / neon）。
    ===================================================================== */
 const CFG = {
+  theme: 'midnight',            // midnight | paper | neon，或直接传对象
   title: '月活跃用户趋势',
   sub:   '单位：万人',
   x: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
@@ -30,10 +34,6 @@ const CFG = {
   yTicks: 5,                    // 纵轴刻度线数量
   note: '数据来源：示例数据，替换成你自己的',
   dur:  8.0,
-  accent: '#FFB86B',
-  line:   '#5FE0C0',
-  ink:    '#F4F7FC',
-  bg:     '#080A10',
 };
 /* ===================================================================== */
 
@@ -52,6 +52,16 @@ const PORTRAIT = H > W;
 const g = cv.getContext('2d');
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+/* 主题：命令行 --theme 优先于 CFG.theme；themes.js 缺失时用兜底深色板 */
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', accent: '#FFB86B', accentSoft: '#5FE0C0',
+};
+const RGBA = window.h2vRgba || function (hex, a) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + (a === undefined ? 1 : a) + ')';
+};
+const LINE_C = TH.accentSoft || '#5FE0C0';   // 折线主色（原 CFG.line）
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -86,17 +96,18 @@ function drawFrame(T) {
   g.clearRect(0, 0, W, H);
 
   const bg = g.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, CFG.bg);
-  bg.addColorStop(1, '#0D111B');
+  bg.addColorStop(0, TH.bg);
+  bg.addColorStop(1, TH.bgFar || '#0D111B');
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：一条极淡的光带缓慢横移 —— 「定格待读」的那几秒画面不会显得死 */
+  const SWEEP = TH.sweep || '255,255,255';
   const scx = (T / DUR * 1.6 - 0.3) * (W + 1200 * SX) - 600 * SX;
   const sweep = g.createLinearGradient(scx - 620 * SF, 0, scx + 620 * SF, H);
-  sweep.addColorStop(0, 'rgba(255,255,255,0)');
-  sweep.addColorStop(0.5, 'rgba(255,255,255,0.05)');
-  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0, `rgba(${SWEEP},0)`);
+  sweep.addColorStop(0.5, `rgba(${SWEEP},0.05)`);
+  sweep.addColorStop(1, `rgba(${SWEEP},0)`);
   g.fillStyle = sweep;
   g.fillRect(0, 0, W, H);
 
@@ -104,7 +115,7 @@ function drawFrame(T) {
   const tiP = outCubic(win(T, 0.10, 0.75));
   g.save();
   g.globalAlpha = tiP;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.font = `700 ${62 * SF}px ${SANS}`;
   g.fillText(CFG.title, 160 * SX, 168 * SY);
   g.globalAlpha = tiP * 0.55;
@@ -120,7 +131,7 @@ function drawFrame(T) {
   for (let k = 0; k <= CFG.yTicks; k++) {
     const v = YMAX * k / CFG.yTicks, y = PY(v);
     g.globalAlpha = 0.10 * gridP;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.fillRect(PL, y, PR - PL, Math.max(1, SF));
     g.globalAlpha = 0.42 * gridP;
     g.fillText(String(Math.round(v)), PL - 28 * SX, y + 9 * SF);
@@ -133,7 +144,7 @@ function drawFrame(T) {
     const p = outCubic(win(T, 0.55 + i * 0.045, 0.95 + i * 0.045));
     if (p <= 0) return;
     g.globalAlpha = 0.5 * p;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.fillText(lab, PX(i), PB + 56 * SY + (1 - p) * 10 * SY);
   });
   g.restore();
@@ -165,19 +176,19 @@ function drawFrame(T) {
     g.lineTo(PX(0), PB);
     g.closePath();
     const grad = g.createLinearGradient(0, PT, 0, PB);
-    grad.addColorStop(0, 'rgba(95,224,192,0.26)');
-    grad.addColorStop(1, 'rgba(95,224,192,0)');
+    grad.addColorStop(0, RGBA(LINE_C, 0.26));
+    grad.addColorStop(1, RGBA(LINE_C, 0));
     g.fillStyle = grad;
     g.fill();
     g.restore();
 
     /* 折线 */
     g.save();
-    g.strokeStyle = CFG.line;
+    g.strokeStyle = LINE_C;
     g.lineWidth = 5 * SF;
     g.lineJoin = 'round';
     g.lineCap = 'round';
-    g.shadowColor = 'rgba(95,224,192,0.55)';
+    g.shadowColor = RGBA(LINE_C, 0.55);
     g.shadowBlur = 18 * SF;
     g.beginPath();
     g.moveTo(PX(0), PY(CFG.y[0]));
@@ -200,9 +211,9 @@ function drawFrame(T) {
     const r = lerp(0, 9 * SF, p);
     g.save();
     g.globalAlpha = p;
-    g.fillStyle = CFG.bg;
+    g.fillStyle = TH.bg;
     g.beginPath(); g.arc(PX(i), PY(v), r, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = CFG.line; g.lineWidth = 4 * SF;
+    g.strokeStyle = LINE_C; g.lineWidth = 4 * SF;
     g.beginPath(); g.arc(PX(i), PY(v), r, 0, Math.PI * 2); g.stroke();
     g.restore();
   });
@@ -218,14 +229,14 @@ function drawFrame(T) {
     g.font = `700 ${34 * SF}px ${MONO}`;
     const tw = g.measureText(label).width;
     const bx = x - tw - 74 * SX, by = y - 66 * SY;
-    g.fillStyle = CFG.accent;
+    g.fillStyle = TH.accent;
     g.beginPath();
     if (g.roundRect) g.roundRect(bx, by, tw + 48 * SX, 58 * SY, 12 * SF); else g.rect(bx, by, tw + 48 * SX, 58 * SY);
     g.fill();
-    g.fillStyle = '#1A1206';
+    g.fillStyle = TH.onAccent || '#1A1206';
     g.fillText(label, bx + 24 * SX, by + 41 * SY);
     /* 小尾巴 */
-    g.fillStyle = CFG.accent;
+    g.fillStyle = TH.accent;
     g.beginPath();
     g.moveTo(x - 30 * SX, by + 58 * SY); g.lineTo(x - 12 * SX, by + 58 * SY); g.lineTo(x - 6 * SX, y - 4 * SY);
     g.closePath(); g.fill();
@@ -237,7 +248,7 @@ function drawFrame(T) {
   if (noP > 0) {
     g.save();
     g.globalAlpha = noP * 0.42;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `400 ${24 * SF}px ${SANS}`;
     g.fillText(CFG.note, 160 * SX, H - 190 * SY);
     g.restore();

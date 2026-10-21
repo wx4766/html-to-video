@@ -10,12 +10,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { RENDER, TEMPLATES, run, tmpdir, probeSize } from '../scripts/lib/testing.mjs';
+import { RENDER, TEMPLATES, run, tmpdir, probeSize, copyTemplate } from '../scripts/lib/testing.mjs';
 
 test('最小出片：1280×720 渲 1 秒 6 帧', { timeout: 300000 }, () => {
   const dir = tmpdir();
   const html = path.join(dir, 'title-card.html');
-  fs.copyFileSync(path.join(TEMPLATES, 'title-card.html'), html);
+  copyTemplate('title-card.html', html);
 
   const r = run(RENDER, [
     html, '--from=0', '--to=1', '--fps=6', '--width=1280', '--height=720',
@@ -34,7 +34,7 @@ test('最小出片：1280×720 渲 1 秒 6 帧', { timeout: 300000 }, () => {
 test('竖屏出片：1080×1920 不裁切', { timeout: 300000 }, () => {
   const dir = tmpdir();
   const html = path.join(dir, 'vertical-card.html');
-  fs.copyFileSync(path.join(TEMPLATES, 'vertical-card.html'), html);
+  copyTemplate('vertical-card.html', html);
 
   const r = run(RENDER, [
     html, '--from=0', '--to=1', '--fps=6', '--width=1080', '--height=1920',

@@ -1,6 +1,6 @@
 {
   "name": "html-to-video",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Render HTML/Canvas animations to MP4 frame by frame — deterministic, frame-accurate, no GPU. · 用代码逐帧做视频：HTML / Canvas → MP4 / GIF / 透明层",
   "keywords": [
     "html-to-video",

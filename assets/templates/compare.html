@@ -53,7 +53,7 @@ cv.style.width = W + 'px'; cv.style.height = H + 'px';
 const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
 const PORTRAIT = H > W;
 const DUR = CFG.dur;
-const TH = window.h2vTheme ? h2vTheme(CFG.theme) : { bg:'#0A0C12', ink:'#F4F7FC', sub:'rgba(244,247,252,.58)',
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : { bg:'#0A0C12', ink:'#F4F7FC', sub:'rgba(244,247,252,.58)',
   faint:'rgba(244,247,252,.10)', panel:'rgba(255,255,255,.045)', accent:'#FFB86B', good:'#4ADE80', bad:'#FF6B6B' };
 const TRANSPARENT = !!window.__transparent;
 

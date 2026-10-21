@@ -23,18 +23,21 @@ import { TEMPLATES } from '../scripts/lib/testing.mjs';
    theme : 读 CFG.theme + h2vTheme()，即支持换主题（依赖同目录 themes.js）
    cues  : 读 window.__cues，即支持 --srt 外部时间轴覆盖 CFG.lines
    alpha : 读 window.__transparent，即支持 --alpha 透明输出
+
+   v1.4.0 起 11 个模板全部支持 theme；alpha 仍只给「满版图表之外」的模板 ——
+   折线 / 条形 / 大数字 / 时间线是要底色的图表，透明了反而没法用。
    ===================================================================== */
 const CAPS = {
-  'bar-chart.html':         { theme: false, cues: false, alpha: false },
+  'bar-chart.html':         { theme: true,  cues: false, alpha: false },
   'compare.html':           { theme: true,  cues: false, alpha: true  },
   'explainer.html':         { theme: true,  cues: true,  alpha: true  },
   'flow-steps.html':        { theme: true,  cues: false, alpha: true  },
-  'line-chart.html':        { theme: false, cues: false, alpha: false },
-  'number-counter.html':    { theme: false, cues: false, alpha: false },
+  'line-chart.html':        { theme: true,  cues: false, alpha: false },
+  'number-counter.html':    { theme: true,  cues: false, alpha: false },
   'subtitle-card.html':     { theme: true,  cues: true,  alpha: true  },
-  'timeline.html':          { theme: false, cues: false, alpha: false },
-  'title-card.html':        { theme: false, cues: false, alpha: true  },
-  'vertical-card.html':     { theme: false, cues: false, alpha: false },
+  'timeline.html':          { theme: true,  cues: false, alpha: false },
+  'title-card.html':        { theme: true,  cues: false, alpha: true  },
+  'vertical-card.html':     { theme: true,  cues: false, alpha: false },
   'vertical-subtitle.html': { theme: true,  cues: true,  alpha: true  },
 };
 
@@ -155,6 +158,11 @@ for (const file of templates) {
         code, /window\.h2vTheme\s*\?/,
         'h2vTheme 要带存在性判断（window.h2vTheme ? ... : 兜底色板），否则 themes.js 缺失时白屏'
       );
+      /* 渲染器 --theme 靠注入 window.__h2vTheme 生效；不读它，命令行换主题就是空操作 */
+      assert.match(
+        code, /__h2vTheme/,
+        '登记了主题能力，就必须读 window.__h2vTheme —— 否则 --theme=paper 不生效'
+      );
     }
 
     /* --- 字幕时间轴 --- */
@@ -208,6 +216,13 @@ test('主题文件：三套内置主题 + 字段齐全 + 兜底逻辑', () => {
     'bg', 'bgAlt', 'ink', 'sub', 'faint',
     'panel', 'accent', 'accent2', 'good', 'bad', 'glow',
   ];
+
+  /* 可选字段：只给非默认主题补。
+     midnight 一律不填 —— 模板写成 `TH.accentDeep || '<历史常量>'`，
+     默认主题于是继续走原常量，逐像素不变；换主题时才用新色。
+     这条规则是「加主题能力」不背「默认画面偷偷变了」的债，所以要在测试里钉住。 */
+  const OPTIONAL = ['bgFar', 'accentDeep', 'accentSoft', 'sweep', 'onAccent'];
+
   const blocks = src.split(/const\s+[A-Z]+\s*=\s*\{/).slice(1);
   assert.ok(blocks.length >= 3, `应能切出至少 3 套主题定义，实际 ${blocks.length} 套`);
   blocks.forEach((block, i) => {
@@ -215,7 +230,27 @@ test('主题文件：三套内置主题 + 字段齐全 + 兜底逻辑', () => {
     for (const f of FIELDS) {
       assert.match(body, new RegExp(`\\b${f}\\s*:`), `第 ${i + 1} 套主题缺字段 ${f}`);
     }
+    for (const f of OPTIONAL) {
+      const has = new RegExp(`\\b${f}\\s*:`).test(body);
+      if (i === 0) {
+        assert.equal(
+          has, false,
+          `midnight 不该定义可选字段 ${f}：模板里用 TH.${f} || 历史常量 兜底，` +
+          '填了反而会让默认输出跟着变'
+        );
+      } else {
+        assert.ok(
+          has,
+          `第 ${i + 1} 套主题缺可选字段 ${f} —— 换到这套主题时会退化成模板里的深色常量，浅底上可能看不清`
+        );
+      }
+    }
   });
+
+  /* 模板靠 h2vRgba 取「同一主题色的不同透明度」，缺了就得每处自己拆 hex */
+  assert.match(src, /window\.h2vRgba\s*=\s*function/, '必须导出 window.h2vRgba(hex, alpha)');
+  /* 渲染器 --theme 的回读靠它：名字打错要能发现，而不是静默回退 */
+  assert.match(src, /__h2vThemeResolved/, '必须记录实际生效的主题名（供渲染器回读校验）');
 
   /* 未知名回退 midnight、对象原样合并 —— 这两条是文档写明的行为 */
   assert.match(src, /H2V_THEMES\[name\]\s*\|\|\s*MIDNIGHT/, '未知主题名应回退 midnight');

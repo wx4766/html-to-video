@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { RENDER, TEMPLATES, run, tmpdir } from '../scripts/lib/testing.mjs';
+import { RENDER, TEMPLATES, run, tmpdir, copyTemplate } from '../scripts/lib/testing.mjs';
 
 const FRAMES = 5; // 0.5s @ 10fps
 const BASE_ARGS = ['--from=0', '--to=0.5', '--fps=10', '--width=640', '--height=360'];
@@ -20,7 +20,7 @@ const BASE_ARGS = ['--from=0', '--to=0.5', '--fps=10', '--width=640', '--height=
 function setup() {
   const dir = tmpdir('h2v-resume-');
   const html = path.join(dir, 'title-card.html');
-  fs.copyFileSync(path.join(TEMPLATES, 'title-card.html'), html);
+  copyTemplate('title-card.html', html);
   return { dir, html, tmp: path.join(dir, '.seek-tmp-resume') };
 }
 

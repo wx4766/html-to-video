@@ -50,7 +50,7 @@ const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
 const PORTRAIT = H > W;
 const VSY = PORTRAIT ? SF : SY;
 const DUR = CFG.dur;
-const TH = window.h2vTheme ? h2vTheme(CFG.theme) : { bg:'#06050E', bgAlt:'#0E0B20', ink:'#EAF2FF',
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : { bg:'#06050E', bgAlt:'#0E0B20', ink:'#EAF2FF',
   sub:'rgba(234,242,255,.58)', faint:'rgba(124,92,255,.22)', panel:'rgba(124,92,255,.09)',
   accent:'#8B5CF6', accent2:'#22D3EE' };
 const TRANSPARENT = !!window.__transparent;

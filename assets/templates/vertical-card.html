@@ -10,6 +10,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
+<script src="./themes.js"></script>
 <script>
 /* =====================================================================
    模板 ⑥  ·  竖屏卡片（原生 9:16）
@@ -21,8 +22,11 @@
    出片（默认就是竖屏尺寸）：
      bash ../render.sh vertical-card.html --duration=6 --fps=60 --width=1080 --height=1920
    横屏下也能渲染（会等比缩小、守在画面里），但不建议 —— 这是给竖屏用的。
+
+   换配色：改 CFG.theme，或命令行 --theme=paper 覆盖（midnight / paper / neon）。
    ===================================================================== */
 const CFG = {
+  theme:  'midnight',                          // midnight | paper | neon，或直接传对象
   kicker: '2026 · 竖屏样本',
   title:  ['一条视频', '三分钟做完'],          // 1–3 行，一行一个字符串
   sub:    '改几行字就出片，不用开剪辑软件',
@@ -32,9 +36,6 @@ const CFG = {
   decimals: 0,
   foot:   '9:16 · 1080×1920',
   dur:    6.0,
-  accent: '#FFB86B',
-  ink:    '#F4F7FC',
-  bg:     '#080A10',
 };
 /* ===================================================================== */
 
@@ -55,6 +56,15 @@ const PAD = 96 * U;                       // 左右页边距
 const g = cv.getContext('2d');
 const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+/* 主题：命令行 --theme 优先于 CFG.theme；themes.js 缺失时用兜底深色板 */
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', accent: '#FFB86B',
+};
+const RGBA = window.h2vRgba || function (hex, a) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + (a === undefined ? 1 : a) + ')';
+};
 
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -114,8 +124,8 @@ function drawFrame(T) {
 
   /* 背景：深色渐变 */
   const bg = g.createLinearGradient(0, 0, W * 0.4, H);
-  bg.addColorStop(0, CFG.bg);
-  bg.addColorStop(1, '#0E1420');
+  bg.addColorStop(0, TH.bg);
+  bg.addColorStop(1, TH.bgFar || '#0E1420');
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
 
@@ -123,24 +133,25 @@ function drawFrame(T) {
   const glowP = outCubic(win(T, 0, 1.4));
   const gx = W * 0.82, gy = H * 0.72 + Math.sin(T * 0.5) * 18 * U;
   const rad = g.createRadialGradient(gx, gy, 0, gx, gy, W * 0.92);
-  rad.addColorStop(0, `rgba(255,184,107,${0.17 * glowP})`);
-  rad.addColorStop(0.5, `rgba(255,138,61,${0.06 * glowP})`);
+  rad.addColorStop(0, RGBA(TH.accent, 0.17 * glowP));
+  rad.addColorStop(0.5, RGBA(TH.accentDeep || '#FF8A3D', 0.06 * glowP));
   rad.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = rad;
   g.fillRect(0, 0, W, H);
 
   /* 环境光扫：极淡光带缓慢下移 —— 定格待读时画面不死 */
+  const SWEEP = TH.sweep || '255,255,255';
   const scy = (T / DUR * 1.7 - 0.35) * (H + 1400 * U) - 700 * U;
   const sweep = g.createLinearGradient(0, scy - 700 * U, W, scy + 700 * U);
-  sweep.addColorStop(0, 'rgba(255,255,255,0)');
-  sweep.addColorStop(0.5, 'rgba(255,255,255,0.045)');
-  sweep.addColorStop(1, 'rgba(255,255,255,0)');
+  sweep.addColorStop(0, `rgba(${SWEEP},0)`);
+  sweep.addColorStop(0.5, `rgba(${SWEEP},0.045)`);
+  sweep.addColorStop(1, `rgba(${SWEEP},0)`);
   g.fillStyle = sweep;
   g.fillRect(0, 0, W, H);
 
   /* 顶部左侧短竖线（生长） */
   const barP = smooth(win(T, 0.10, 0.85));
-  g.fillStyle = CFG.accent;
+  g.fillStyle = TH.accent;
   g.globalAlpha = 0.9 * barP;
   g.fillRect(PAD, H * 0.150 - 28 * U, 4 * U, lerp(0, 46 * U, barP));
   g.globalAlpha = 1;
@@ -149,7 +160,7 @@ function drawFrame(T) {
   const kP = outExpo(win(T, 0.22, 0.85));
   g.save();
   g.globalAlpha = kP * 0.66;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.font = `500 ${28 * U}px ${MONO}`;
   g.letterSpacing = `${6 * U}px`;
   g.fillText(CFG.kicker, PAD + 22 * U + (1 - kP) * -14 * U, H * 0.150);
@@ -157,7 +168,7 @@ function drawFrame(T) {
 
   /* 主标题：逐行升起 */
   g.save();
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.font = `700 ${TITLE_PX}px ${SANS}`;
   CFG.title.forEach((line, i) => {
     const p = outExpo(clamp((T - (0.42 + i * 0.17)) / 0.62, 0, 1));
@@ -170,7 +181,7 @@ function drawFrame(T) {
   /* 强调色短线 */
   const ruleP = smooth(win(T, 1.05, 1.65));
   if (ruleP > 0) {
-    g.fillStyle = CFG.accent;
+    g.fillStyle = TH.accent;
     g.fillRect(PAD, RULE_Y, lerp(0, 132 * U, ruleP), 5 * U);
   }
 
@@ -183,7 +194,7 @@ function drawFrame(T) {
     const w = g.measureText(CFG.sub).width;
     if (w > MAXW) spx = Math.max(spx * 0.6, spx * MAXW / w);
     g.globalAlpha = sP * 0.72;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `400 ${spx}px ${SANS}`;
     g.fillText(CFG.sub, PAD, SUB_Y + (1 - sP) * 16 * U);
     g.restore();
@@ -193,7 +204,7 @@ function drawFrame(T) {
   const divP = outCubic(win(T, 1.75, 2.35));
   g.save();
   g.globalAlpha = 0.14 * divP;
-  g.fillStyle = CFG.ink;
+  g.fillStyle = TH.ink;
   g.fillRect(PAD, H * 0.560, (MAXW) * divP, 2 * U);
   g.restore();
 
@@ -206,12 +217,12 @@ function drawFrame(T) {
   g.save();
   g.globalAlpha = popP;
   g.textBaseline = 'alphabetic';
-  g.fillStyle = CFG.accent;
+  g.fillStyle = TH.accent;
   g.font = `700 ${NUM_PX}px ${MONO}`;
   const nw = g.measureText(numStr).width;
   g.fillText(numStr, PAD, NUM_Y);
   if (CFG.unit) {
-    g.fillStyle = 'rgba(244,247,252,0.62)';
+    g.fillStyle = RGBA(TH.ink, 0.62);
     g.font = `700 ${UNIT_PX}px ${SANS}`;
     g.fillText(CFG.unit, PAD + nw + 18 * U, NUM_Y - 18 * U);
   }
@@ -222,7 +233,7 @@ function drawFrame(T) {
   if (labP > 0) {
     g.save();
     g.globalAlpha = labP * 0.6;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `400 ${32 * U}px ${SANS}`;
     g.fillText(CFG.label, PAD + (1 - labP) * 14 * U, LABEL_Y);
     g.restore();
@@ -233,7 +244,7 @@ function drawFrame(T) {
   if (fP > 0) {
     g.save();
     g.globalAlpha = fP * 0.34;
-    g.fillStyle = CFG.ink;
+    g.fillStyle = TH.ink;
     g.font = `400 ${24 * U}px ${MONO}`;
     g.fillText(CFG.foot, PAD, FOOT_Y);
     g.restore();

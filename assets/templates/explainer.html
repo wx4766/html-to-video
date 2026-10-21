@@ -103,7 +103,7 @@ cv.style.width = W + 'px'; cv.style.height = H + 'px';
 
 const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
 const PORTRAIT = H > W;
-const TH = window.h2vTheme ? h2vTheme(CFG.theme) : {
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
   bg: '#0A0C12', bgAlt: '#0E1218', ink: '#F4F7FC', sub: 'rgba(244,247,252,.58)',
   faint: 'rgba(244,247,252,.10)', panel: 'rgba(255,255,255,.045)',
   accent: '#FFB86B', accent2: '#4ADE80', good: '#4ADE80', bad: '#FF6B6B', glow: 'rgba(255,184,107,0.12)',
