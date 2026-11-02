@@ -108,7 +108,7 @@ the viewport, so `--width/--height` is the only switch.
 
 ## Project status
 
-`v1.4.0` — used daily, 104 automated tests, MIT. Not a startup, not a framework, no
+`v1.5.0` — used daily, 109 automated tests, MIT. Not a startup, not a framework, no
 roadmap theatre. It does one thing and reports its own defects:
 
 - **Deterministic** — same input → byte-identical output, verified by re-rendering
@@ -150,6 +150,75 @@ determinism check will say so.
 ---
 
 ## Features worth knowing about
+
+### One cut, every aspect ratio
+
+Publishing the same clip to TikTok, Xiaohongshu and YouTube means four timelines and four
+watched exports in an editor. Here the layout is already parametric, so another ratio is just
+another loop:
+
+```bash
+node scripts/render-video-seek.js bar-chart.html --duration=8 \
+  --presets=douyin,xiaohongshu,square --out=dist/chart.mp4
+```
+
+```text
+dist/chart-douyin.mp4       1080×1920   TikTok / Reels / Shorts
+dist/chart-xiaohongshu.mp4  1080×1440   Xiaohongshu 3:4
+dist/chart-square.mp4       1080×1080   Square 1:1
+```
+
+| Preset | Size | For |
+|---|---|---|
+| `douyin` / `tiktok` / `vertical` | 1080×1920 | TikTok, Reels, Shorts |
+| `xiaohongshu` / `xhs` | 1080×1440 | Xiaohongshu 3:4 |
+| `instagram` / `ig` | 1080×1350 | IG feed 4:5 |
+| `square` | 1080×1080 | Square 1:1 |
+| `bilibili` / `youtube` / `landscape` | 1920×1080 | Landscape 16:9 |
+
+A single ratio is `--preset=xiaohongshu`. A mistyped name fails loudly and lists the valid
+ones — it never quietly renders a wrong-shaped video at 1920×1080.
+
+Honest limit: `--presets` guarantees the **size**, not the **composition**. 9:16 and 16:9 carry
+different information density; check the 3:4 cut yourself before shipping.
+
+### Voiceover drives the duration
+
+The real workflow is script → voiceover → visuals, not "pick 6 seconds then squeeze the audio in":
+
+```bash
+node scripts/render-video-seek.js title-card.html --audio=voice.m4a
+# ▸ audio: 12.48s, no --duration given → video follows the audio (12.5s, rounded up to a frame)
+```
+
+- Rounded **up** to a whole frame: half a frame short clips the last phoneme.
+- If you do pass `--duration` and it differs by more than 0.35s, you get an explicit warning
+  saying which side gets hurt. The old behaviour silently produced a shorter video — the back
+  half of the picture vanished, with nothing in the log but `✓ Done`.
+- `--audio-fit=pad` pads silence instead, keeping the full picture (default `trim` follows the audio).
+
+Known edge: with `trim` the output is **not** millisecond-exact. The video stream is copied
+(`-c:v copy`), so ffmpeg can only cut on a frame boundary; measured overshoot is 0.3–0.5s.
+Exact alignment would mean re-encoding — quality traded for precision, not worth it.
+
+### `--json` for agents
+
+Humans read `✓ Done: xxx.mp4 (1.2 MB · 30fps · 12s)` fine. Agents can only regex it, and paths
+with spaces, CJK, or parentheses break that. Add `--json` and stdout carries exactly one line:
+
+```bash
+node scripts/render-video-seek.js title-card.html --duration=6 --json
+```
+
+```json
+{"ok":true,"exitCode":0,"output":"…/title-card.mp4","width":1920,"height":1080,
+ "fps":60,"duration":6,"frames":360,"bytes":2411724,"warnings":[],"mode":"video"}
+```
+
+- Progress and human logs move to stderr — `JSON.parse(stdout)` just works.
+- `warnings[]` collects argument conflicts, audio/video length mismatches, unknown theme names.
+- `duration` is the **actual** file duration (probed with ffmpeg), not the planned value.
+- With `--presets`, `output` becomes an array plus `presets: [{name,width,height,output,ok,bytes}]`.
 
 ### Transparent output — put the text layer over real footage
 
@@ -315,8 +384,11 @@ silently end early.
 | `--duration` / `--from` / `--to` | length in seconds, or a sub-range (output name keeps the range) |
 | `--stills=0.5,2.0` | export PNGs at these timestamps, skip encoding |
 | `--fps` / `--width` / `--height` | frame rate and resolution |
+| `--preset=<name>` | platform size preset (`douyin` / `xiaohongshu` / `instagram` / `square` / `bilibili` …) |
+| `--presets=a,b,c` | render every listed ratio in one command, one file each (suffixed `-<preset>`) |
 | `--concurrency` | parallel workers (one Chromium page each); `auto` picks from CPU count and free memory |
-| `--audio=<file>` | mux audio after encoding (video stream is copied) |
+| `--audio=<file>` | mux audio after encoding; without `--duration` the video follows the audio length |
+| `--audio-fit=trim\|pad` | audio/video length mismatch: `trim` follows the audio (default), `pad` adds silence to keep the video length |
 | `--gop=<sec>` | keyframe interval (`--gop=1` for frame-accurate scrubbing) |
 | `--keep-frames` | keep the PNG sequence on success |
 | `--tmpdir=<dir>` | where the PNG sequence goes (default: next to the HTML). 1080p runs at ~2.4 GB per minute — point it at another drive when the system disk is tight |
@@ -330,6 +402,7 @@ silently end early.
 | `--poster=<sec>` | also grab a still as `.jpg` for a thumbnail |
 | `--batch=<file.json>` | render a queue of jobs in order, print a summary; one failure doesn't discard the rest |
 | `--out=<file>` | explicit output path (default: `<html name>.mp4` beside the HTML); parent dirs are created — needed when one HTML ships several colourways |
+| `--json` | stdout carries a single result JSON (`output` / `duration` / `frames` / `warnings`); logs move to stderr |
 | `--headed` | render with a visible browser window (concurrency drops to 1) |
 | `--allow-errors` | don't fail on page errors (default: page errors → non-zero exit) |
 | `--no-serve` | load via `file://` instead of the built-in local HTTP server |

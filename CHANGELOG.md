@@ -20,6 +20,40 @@
 
 暂无。
 
+## [1.5.0] - 2026-11-02
+
+这一版按社区里最常被抱怨的三件事补：**一条片子要发好几个平台**、
+**配音和画面对不上**、**Agent 拿不到结构化结果**。
+
+### 新增
+
+- **`--presets=douyin,xiaohongshu,square`**：一条命令出全套平台比例，
+  每个比例一个成片（自动加 `-比例名` 后缀）。`--preset=xiaohongshu` 是单比例。
+  内置 `douyin` / `tiktok` / `vertical`（1080×1920）、`xiaohongshu`（1080×1440）、
+  `instagram`（1080×1350）、`square`（1080×1080）、`bilibili` / `youtube` / `landscape`（1920×1080）。
+  预设名拼错直接报错并列出可用名字，不会悄悄按 1920×1080 渲一版比例错误的片子。
+- **`--audio` 自动定长**：给了音频又没给 `--duration` 时，视频按音频长度出片，
+  并**向上取整到整帧** —— 少半帧就会削掉最后一个字的尾音。
+- **`--audio-fit=trim|pad`**：音频比视频短时，`pad` 补静音保住整段画面（默认 `trim` 按音轨收尾）。
+- **`--json`**：stdout 只输出一行结果 JSON（`output` / `width` / `height` / `fps` / `duration` /
+  `frames` / `bytes` / `warnings` / `presets`），人读日志全部改道 stderr。
+  `duration` 是 ffmpeg 读回来的**实际**时长，不是计划值。
+
+### 修复
+
+- **音频比视频短时成片被静默截短**。旧逻辑是「输入裁音频 + `-shortest` 收尾」，
+  一个「音频比视频短 2 秒」的活儿会出一支短 2 秒的片子 —— 画面后半段整段消失，
+  日志里却只有一句 `✓ Done`。现在长度不一致会明确告警，说清差多少、伤在哪边。
+- `--presets` 在 JSON 模式下会把子进程日志混进 stdout，导致 `JSON.parse` 失败。现已改道 stderr。
+
+### 已知限制
+
+- `trim` 下成片不会精确等于音频秒数。视频流走 `-c:v copy`，ffmpeg 只能按帧包边界收尾，
+  实测多留 0.3–0.5s；毫秒级对齐要重编码，是拿画质换精度，不做。
+- `--presets` 只保证尺寸对，不保证构图好看。9:16 与 16:9 的信息密度不同，
+  3:4 上可能偏挤，仍需人眼过一遍。
+- `--presets` 与 `--stills` 互斥，也不能和 `--batch` 嵌套。
+
 ## [1.4.0] - 2026-10-21
 
 这一版补齐一件一直「只说了一半」的能力：**换配色**。
@@ -279,7 +313,8 @@
 - 本地 http server：解锁 ESM 与 `fetch`，避免 `file://` 下的跨域限制。
 - 动效库与 GIF 输出。
 
-[未发布]: https://github.com/wx4766/html-to-video/compare/v1.4.0...HEAD
+[未发布]: https://github.com/wx4766/html-to-video/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/wx4766/html-to-video/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/wx4766/html-to-video/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/wx4766/html-to-video/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/wx4766/html-to-video/compare/v1.2.0...v1.3.0

@@ -30,6 +30,9 @@
  * 画面
  *   --fps=60               帧率（原生）
  *   --width=1920 --height=1080
+ *   --preset=douyin        按平台预设定尺寸（douyin / xiaohongshu / instagram / square / bilibili …）
+ *   --presets=douyin,xiaohongshu,square
+ *                          一条命令出全套比例，每个比例一个成片（跨平台发布用）
  *   --theme=paper          换主题（midnight / paper / neon），覆盖模板里的 CFG.theme
  *   --concurrency=4        并行 worker 数（每个一个 page）
  *   --settle=2             seek 后等几个 rAF 再截图
@@ -37,10 +40,12 @@
  *
  * 输出
  *   --out=<file>           指定成片路径（默认同目录同名 .mp4）；一份 HTML 出多套配色必备
+ *   --json                 stdout 只输出一行结果 JSON（进度与人读日志走 stderr），给 Agent 解析
  *
  * 编码
  *   --gop=<秒>             关键帧间隔；给了就每秒一个关键帧，方便后期逐秒 seek
- *   --audio=<file>         编码后自动混音（视频流直接 copy，不重编码）
+ *   --audio=<file>         编码后自动混音；没给 --duration 时**自动按音频长度出片**
+ *   --audio-fit=trim|pad   音画长度不一致时：trim 截齐（默认）／pad 补静音对齐视频
  *   --keep-frames          成功也保留逐帧 PNG（换 CRF 重编码时不必重截）
  *   --gif[=fps,width]      出片后再产一张 GIF（默认 15fps / 宽 960），两阶段 palette 优化
  *   --poster=<秒>          出片后再抽一张封面静帧（.jpg），发站 / 社媒用
@@ -81,6 +86,39 @@ function hasFlag(name) {
   return process.argv.includes('--' + name);
 }
 
+/* ── 机器可读输出（--json） ─────────────────────────────────────────────
+   为什么需要：这个工具的主力调用方是 AI Agent，而不是人盯着终端看。
+   人会读「✓ Done: xxx.mp4 (1.2 MB · 30fps · 12s)」，Agent 只能拿正则去猜 ——
+   路径里带空格、带中文、带括号就崩。--json 把「成片在哪、几帧、多长、
+   有没有告警」一次性结构化给出，进度与人读日志一律走 stderr，stdout 只留一行 JSON。 */
+const JSON_MODE = hasFlag('json');
+const T0 = Date.now();
+
+/* 所有告警都留档：--json 要原样交出去，人读模式也照常打印。
+   Agent 拿到 warnings 数组就知道「这条片子有隐患」，不用去翻 stderr。 */
+const WARNINGS = [];
+const _warn = console.warn.bind(console);
+console.warn = (...a) => {
+  WARNINGS.push(a.map(x => String(x)).join(' ').replace(/^⚠\s*/, ''));
+  _warn(...a);
+};
+
+const RESULT = {
+  ok: false, exitCode: null, input: null, output: null,
+  width: null, height: null, fps: null, duration: null, frames: null,
+  bytes: null, elapsedMs: null, gif: null, poster: null, warnings: WARNINGS,
+};
+if (JSON_MODE) {
+  // 人读日志全部改道 stderr，stdout 保持干净
+  console.log = (...a) => console.error(...a);
+  process.on('exit', (code) => {
+    RESULT.ok = code === 0;
+    RESULT.exitCode = code;
+    RESULT.elapsedMs = Date.now() - T0;
+    try { process.stdout.write(JSON.stringify(RESULT) + '\n'); } catch (e) { /* 管道已关就放弃 */ }
+  });
+}
+
 /**
  * 并发自适应：--concurrency=auto 时按 CPU 与可用内存挑 worker 数。
  * 每个 worker 是一个独立 Chromium 页面，实测常驻 0.4–0.8 GB。开太多不会更快
@@ -92,6 +130,49 @@ function autoConcurrency() {
   const byCpu = Math.max(1, Math.floor(cpus * 0.75));
   const byMem = Math.max(1, Math.floor(freeGB / 0.6));
   return Math.max(1, Math.min(8, Math.min(byCpu, byMem)));
+}
+
+/* ── 平台预设 ─────────────────────────────────────────────────────────
+   为什么用「预设名」而不是让用户记分辨率：跨平台发布的真实动作是
+   「同一条片子出 9:16 / 3:4 / 1:1 三个版本」，而 1080×1440 这种数字
+   没人记得住，记错就得到一版比例错误的成片。名字是给人记的，数字是给程序算的。 */
+const PRESETS = {
+  douyin:       { size: [1080, 1920], note: '抖音 / 快手 / 视频号' },
+  tiktok:       { size: [1080, 1920], note: 'TikTok / Reels / Shorts' },
+  vertical:     { size: [1080, 1920], note: '通用竖屏 9:16' },
+  xiaohongshu:  { size: [1080, 1440], note: '小红书 3:4' },
+  xhs:          { size: [1080, 1440], note: '同 xiaohongshu' },
+  instagram:    { size: [1080, 1350], note: 'IG 信息流 4:5' },
+  ig:           { size: [1080, 1350], note: '同 instagram' },
+  square:       { size: [1080, 1080], note: '方版 1:1' },
+  bilibili:     { size: [1920, 1080], note: 'B 站 / YouTube 横屏' },
+  youtube:      { size: [1920, 1080], note: '同 bilibili' },
+  landscape:    { size: [1920, 1080], note: '通用横屏 16:9' },
+};
+
+/** 预设名 → 尺寸。拼错时把可用名字列出来（和 --theme 一个待遇，不静默回退）。 */
+function presetSize(name) {
+  const key = String(name).trim().toLowerCase();
+  const hit = PRESETS[key];
+  if (!hit) {
+    console.error(`✗ 不认识的预设名 "${name}"。可用：${Object.keys(PRESETS).join(' / ')}`);
+    console.error('  也可以直接用 --width= --height= 指定任意尺寸。');
+    process.exit(1);
+  }
+  return { name: key, w: hit.size[0], h: hit.size[1], note: hit.note };
+}
+
+/**
+ * 用 ffmpeg 读媒体时长（秒）。ffprobe 不一定装了，但 ffmpeg 是硬依赖，必然在。
+ * 读不出来返回 null —— 调用方据此跳过「自动定长」，不要拿 NaN 往下算。
+ */
+function probeDuration(file) {
+  const ff = process.env.FFMPEG || 'ffmpeg';
+  const r = spawnSync(ff, ['-hide_banner', '-i', file], { encoding: 'utf8' });
+  const txt = String(r.stderr || '');
+  const m = txt.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
 /** 批量任务：起子进程逐个渲，最后打汇总表 */
@@ -110,7 +191,8 @@ function runBatch(file) {
   }
   const FLAG_KEYS = new Set(['alpha', 'resume', 'keep-frames', 'allow-errors', 'keep-chrome', 'no-serve']);
   const VAL_KEYS = ['duration', 'from', 'to', 'fps', 'width', 'height', 'concurrency', 'settle',
-    'audio', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills', 'tmpdir', 'theme', 'out'];
+    'audio', 'audio-fit', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills',
+    'tmpdir', 'theme', 'out', 'preset'];
 
   console.log(`▸ Batch: ${jobs.length} 个任务（${file}）`);
   const rows = [];
@@ -155,13 +237,30 @@ if (!HTML_FILE || HTML_FILE.startsWith('--')) {
   console.error('         ... --alpha             # 透明背景输出（ProRes 4444 .mov），用于叠加合成');
   console.error('         ... --batch=jobs.json   # 一串任务按顺序渲');
   console.error('         ... --out=dist/a.mp4    # 指定成片路径（默认同目录同名）');
+  console.error('         ... --presets=douyin,xiaohongshu,square   # 一条命令出全套平台比例');
   process.exit(1);
 }
 
-const DURATION    = parseFloat(arg('duration', '30'));
+/* 预设与显式宽高谁优先：显式 --width/--height 赢，但要说明预设被忽略 —— 
+   静默忽略会让人以为「我加了 --presets 却只有一种尺寸」是 bug。 */
+const PRESET_ONE = arg('preset', null);
+const PRESETS_RAW = arg('presets', null);
+const WIDTH_ARG  = arg('width', null);
+const HEIGHT_ARG = arg('height', null);
+
+let PRESET_DIMS = null;
+if (PRESET_ONE) {
+  PRESET_DIMS = presetSize(PRESET_ONE);
+  if (WIDTH_ARG || HEIGHT_ARG) {
+    console.warn(`⚠ 同时给了 --preset=${PRESET_ONE} 和 --width/--height，按你写的尺寸走（预设被忽略）`);
+    PRESET_DIMS = null;
+  }
+}
+
+let   DURATION    = parseFloat(arg('duration', '30'));
 const FPS         = parseFloat(arg('fps', '60'));
-const WIDTH       = parseInt(arg('width', '1920'));
-const HEIGHT      = parseInt(arg('height', '1080'));
+const WIDTH       = parseInt(WIDTH_ARG || (PRESET_DIMS ? String(PRESET_DIMS.w) : '1920'));
+const HEIGHT      = parseInt(HEIGHT_ARG || (PRESET_DIMS ? String(PRESET_DIMS.h) : '1080'));
 const CONC_RAW    = String(arg('concurrency', '4'));
 const AUTO_CONC   = CONC_RAW === 'auto';
 const HEADED      = hasFlag('headed');
@@ -177,6 +276,51 @@ const FROM        = Math.max(0, parseFloat(arg('from', '0')));
 const TO_RAW      = arg('to', null);
 const STILLS_RAW  = arg('stills', null);
 const AUDIO       = arg('audio', null);
+const AUDIO_FIT   = String(arg('audio-fit', 'trim')).toLowerCase();
+if (!['trim', 'pad'].includes(AUDIO_FIT)) {
+  console.error(`✗ --audio-fit 只认 trim / pad（收到 "${AUDIO_FIT}"）`);
+  console.error('  trim：按视频长度截音频（默认）　pad：给音频补静音，保住视频长度');
+  process.exit(1);
+}
+
+/* ── 音画对齐 ─────────────────────────────────────────────────────────
+   真实故障：先做配音、再配画面时，配音长度和 --duration 几乎不可能刚好相等。
+   旧行为是 -ss/-t 截音频 + -shortest，于是一个「音频比视频短 2 秒」的活儿会
+   静默出一支短 2 秒的片子 —— 画面后半段整段消失，而日志里只有一句 ✓ Done。
+   现在：没给时长就跟音频走；给了时长就对不上直说多少秒、差在哪边。 */
+const AUDIO_DUR = AUDIO ? probeDuration(path.resolve(AUDIO)) : null;
+const DURATION_GIVEN = arg('duration', null) !== null || TO_RAW !== null;
+
+if (AUDIO && AUDIO_DUR === null) {
+  console.warn(`⚠ 读不出音频时长：${AUDIO}`);
+  console.warn('  文件可能损坏或不是媒体文件；本次按 --duration 出片，音画可能不同步。');
+}
+
+if (AUDIO_DUR !== null) {
+  if (!DURATION_GIVEN) {
+    /* 向上取整到整帧：直接取音频秒数会让视频比音频短不到一帧，
+       混音时 -shortest 收尾就把最后一个字的尾音削掉。宁可多留一帧。 */
+    DURATION = Math.ceil(AUDIO_DUR * FPS) / FPS;
+    console.log(`  audio: 音频 ${AUDIO_DUR}s，未指定 --duration → 视频按音频定长（${Math.round(DURATION * 1000) / 1000}s，向上取整到整帧）`);
+  } else {
+    const spanNow = TO_RAW !== null ? Math.max(0, parseFloat(TO_RAW) - FROM) : DURATION;
+    const diff = Math.round((spanNow - AUDIO_DUR) * 1000) / 1000;
+    if (Math.abs(diff) > 0.35) {
+      if (diff < 0) {
+        console.warn(`⚠ 视频 ${spanNow}s 比音频 ${AUDIO_DUR}s 短 ${Math.abs(diff)}s —— 音频尾巴会被截掉。`);
+        console.warn('  想去掉 --duration 让它跟音频走，或把时长调到 ' + (AUDIO_DUR + FROM) + ' 以上。');
+      } else if (AUDIO_FIT === 'pad') {
+        console.warn(`⚠ 视频 ${spanNow}s 比音频 ${AUDIO_DUR}s 长 ${diff}s —— 已按 --audio-fit=pad 补静音对齐。`);
+      } else {
+        console.warn(`⚠ 视频 ${spanNow}s 比音频 ${AUDIO_DUR}s 长 ${diff}s —— 默认按音轨收尾，画面尾部会被切掉 ${diff}s。`);
+        /* 说清楚「为什么不是毫秒级精确」：视频流是 -c:v copy 直接复制的，
+           ffmpeg 只能按帧包边界收尾，实测会比目标多留 0.3–0.5s。 */
+        console.warn('  实际收尾会落在整帧边界（通常比音频多留 0.3–0.5s，因为视频流不重编码）。');
+        console.warn('  要保住整段画面、用静音补齐差值，加 --audio-fit=pad。');
+      }
+    }
+  }
+}
 const GOP_RAW     = arg('gop', null);
 const KEEP_CHROME = hasFlag('keep-chrome');
 const KEEP_FRAMES = hasFlag('keep-frames');
@@ -325,6 +469,7 @@ const JOB = {
   cues: CUES ? path.resolve(CUES_FILE) : null,
   story: STORY ? path.resolve(STORY_FILE) : null,
 };
+RESULT.input = HTML_ABS;
 const STILL_DIR = path.join(DIR, BASENAME + '.stills');
 
 /* 成片路径：--out 显式给了就用它（相对路径按当前工作目录解析，不是按 HTML 所在目录），
@@ -352,6 +497,85 @@ if (OUT_RAW) {
 }
 
 function trimNum(v) { return String(Math.round(v * 1000) / 1000); }
+
+/* ── --presets：一条命令出全套平台比例 ──────────────────────────────────
+   跨平台发布的真实动作是「同一条片子出 9:16 / 3:4 / 1:1」，剪辑软件里
+   得一个比例一个序列、导一次盯一次。代码渲染在这件事上有天然优势：
+   版式是参数化的，多渲一遍只是多一次循环。
+
+   为什么用子进程而不是在本进程里循环：本文件的渲染状态是一组顶层常量
+   （WIDTH / HEIGHT / MP4_OUT / F0 / F1 …），循环就得把它们全改成可变量
+   并重算帧号与输出名，改动面远大于收益，也更容易把默认路径改坏。
+   子进程模型与 --batch 完全一致：父进程只做编排与汇总，出片逻辑一行不动。 */
+if (PRESETS_RAW) {
+  if (STILLS_RAW) {
+    console.error('✗ --presets 是「出多个成片」，--stills 是「只截几张图」，两者不能一起用。');
+    console.error('  要每个尺寸截静帧，分开跑：--preset=xxx --stills=...');
+    process.exit(1);
+  }
+
+  const names = [...new Set(String(PRESETS_RAW).split(',').map(s => s.trim().toLowerCase()).filter(Boolean))];
+  if (names.length < 2) {
+    console.error(`✗ --presets 至少要两个不同的比例（收到 "${PRESETS_RAW}"）。`);
+    console.error('  只想要一个尺寸就用 --preset=名字。');
+    process.exit(1);
+  }
+  const dims = names.map(presetSize);
+
+  const baseOut = OUT_RAW
+    ? path.resolve(OUT_RAW).replace(/\.[^.\\/]+$/, '')
+    : path.join(DIR, RANGE_GIVEN ? `${BASENAME}.${trimNum(FROM)}-${trimNum(END)}s` : BASENAME);
+
+  /* 子进程只保留「与尺寸无关」的参数；--json 也剥掉，由父进程统一输出一份结构化结果 */
+  const DROP = /^--(presets?|width|height|out)(=|$)|^--json$/;
+  const childArgs = process.argv.slice(3).filter(a => !DROP.test(a));
+
+  console.log(`▸ Presets: ${dims.map(d => `${d.name} ${d.w}×${d.h}`).join('  ·  ')}`);
+  console.log(`  ${HTML_FILE}  →  ${names.length} 个成片`);
+
+  const rows = [];
+  let failed = 0;
+  const tPreset = Date.now();
+
+  dims.forEach((d, i) => {
+    const out = `${baseOut}-${d.name}${OUT_EXT}`;
+    try { fs.mkdirSync(path.dirname(out), { recursive: true }); } catch (e) { /* 下面写盘会报 */ }
+    console.log(`\n▸ [${i + 1}/${dims.length}] ${d.name}  ${d.w}×${d.h}  →  ${out}`);
+    const r = spawnSync(process.execPath, [__filename, HTML_FILE, ...childArgs,
+      `--width=${d.w}`, `--height=${d.h}`, `--out=${out}`], { encoding: 'utf8' });
+    const outTxt = (r.stdout || '') + (r.stderr || '');
+    /* JSON 模式下父进程的 stdout 只能有最后那一行结果，子进程日志一律改道 stderr */
+    if (JSON_MODE) {
+      if (r.stdout) process.stderr.write(r.stdout);
+    } else if (r.stdout) {
+      process.stdout.write(r.stdout);
+    }
+    if (r.stderr) process.stderr.write(r.stderr);
+    const ok = r.status === 0;
+    if (!ok) failed++;
+    let info = null;
+    const jl = (r.stdout || '').trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
+    if (jl) { try { info = JSON.parse(jl); } catch (e) { /* 非 JSON 输出 */ } }
+    const bytes = info && info.bytes ? info.bytes
+      : (ok && fs.existsSync(out) ? fs.statSync(out).size : null);
+    rows.push({ name: d.name, w: d.w, h: d.h, out, ok, bytes });
+    if (ok && !outTxt.includes('✓ Done')) console.log(`  ✓ ${d.name} 已出片`);
+  });
+
+  console.log('\n──────── 比例汇总 ────────');
+  for (const r of rows) {
+    const size = r.bytes ? ` · ${(r.bytes / 1048576).toFixed(1)} MB` : '';
+    console.log(`  ${r.ok ? '✓' : '✗'} ${r.name.padEnd(12)} ${r.w}×${r.h}${size}  →  ${r.out}`);
+  }
+  console.log(`  ${rows.length - failed}/${rows.length} 成功 · ${((Date.now() - tPreset) / 1000).toFixed(0)}s`);
+
+  if (JSON_MODE) {
+    RESULT.mode = 'presets';
+    RESULT.presets = rows.map(r => ({ name: r.name, width: r.w, height: r.h, output: r.out, ok: r.ok, bytes: r.bytes }));
+    RESULT.output = rows.filter(r => r.ok).map(r => r.out);
+  }
+  process.exit(failed ? 1 : 0);
+}
 
 /**
  * 删逐帧临时目录。**失败不能影响出片结果** —— 某些沙箱环境给 fs.rmSync 套了
@@ -854,6 +1078,9 @@ async function renderStills(context, url, times, onPage) {
 
   if (STILLS) {
     console.log(`✓ Done: ${captured} 张静帧 → ${STILL_DIR}`);
+    RESULT.mode = 'stills';
+    RESULT.stills = { dir: STILL_DIR, count: captured };
+    RESULT.width = WIDTH; RESULT.height = HEIGHT;
     if (pageErrors.length && errorsFatal) {
       console.error('✗ 因页面报错判为失败（静帧已产出，供你核对）。');
       process.exit(1);
@@ -958,16 +1185,24 @@ async function renderStills(context, url, times, onPage) {
   // 混音：视频流 copy，只编音频，快且不掉画质
   if (AUDIO) {
     const span = (F1 - F0) / FPS;
-    const mux = spawnSync(process.env.FFMPEG || 'ffmpeg', [
+    /* trim（默认）：把音频裁到视频长度，-shortest 收尾 —— 与历史行为逐字节一致。
+       pad：音频不够长就补静音，让成片保持视频长度。少一条 -shortest、多一个 apad，
+       两者不能并存，否则 -shortest 会在音频原长就把片子切断。 */
+    const padMode = AUDIO_FIT === 'pad';
+    const muxArgs = [
       '-y', '-v', 'error',
       '-i', audioTmp,
-      '-ss', String(FROM), '-t', String(span),
+      '-ss', String(FROM),
+      ...(padMode ? [] : ['-t', String(span)]),
       '-i', path.resolve(AUDIO),
       '-map', '0:v', '-map', '1:a',
+      ...(padMode ? ['-af', 'apad'] : []),
+      ...(padMode ? ['-t', String(span)] : ['-shortest']),
       '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
-      '-shortest', '-movflags', '+faststart',
+      '-movflags', '+faststart',
       MP4_OUT,
-    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    ];
+    const mux = spawnSync(process.env.FFMPEG || 'ffmpeg', muxArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
     if (mux.status !== 0) {
       const d = mux.stderr ? mux.stderr.toString().slice(-1500) : '（ffmpeg 未找到）';
       console.error('✗ 混音失败：\n' + d);
@@ -985,6 +1220,20 @@ async function renderStills(context, url, times, onPage) {
 
   const mp4Size = (fs.statSync(MP4_OUT).size / 1024 / 1024).toFixed(1);
   console.log(`✓ Done: ${MP4_OUT} (${mp4Size} MB · ${FPS}fps native · ${((Date.now() - t0) / 1000).toFixed(0)}s)`);
+
+  RESULT.mode = 'video';
+  RESULT.output = MP4_OUT;
+  RESULT.bytes = fs.statSync(MP4_OUT).size;
+  RESULT.width = WIDTH;
+  RESULT.height = HEIGHT;
+  RESULT.fps = FPS;
+  RESULT.frames = pngCount;
+  /* 报实际时长而不是「计划时长」：混音时 -shortest 会把片子截到音轨长度，
+     计划 3s / 实际 2.02s 的差别正是 Agent 需要知道的，不该由它再猜一遍。 */
+  RESULT.duration = Math.round((probeDuration(MP4_OUT) || ((F1 - F0) / FPS)) * 1000) / 1000;
+  RESULT.audio = AUDIO ? { file: path.resolve(AUDIO), sourceDuration: AUDIO_DUR, fit: AUDIO_FIT } : null;
+  RESULT.theme = THEME || null;
+  RESULT.preset = PRESET_DIMS ? PRESET_DIMS.name : null;
 
   /* ── 派生格式：GIF 与封面 ──────────────────────────────────────────
      这两步都不重渲（直接从成片转），所以放在出片之后：渲一次，发好几个地方。
@@ -1013,6 +1262,7 @@ async function renderStills(context, url, times, onPage) {
       console.error('✗ GIF 生成失败（成片不受影响）：\n' + d);
     } else {
       console.log(`  gif: ${gifOut} (${(fs.statSync(gifOut).size / 1024 / 1024).toFixed(2)} MB · ${gFps}fps · 宽 ${gW})`);
+      RESULT.gif = gifOut;
     }
   }
 
@@ -1030,6 +1280,7 @@ async function renderStills(context, url, times, onPage) {
         console.error('✗ 封面抽取失败（成片不受影响）：\n' + d);
       } else {
         console.log(`  poster: ${posterOut}（第 ${sec}s）`);
+        RESULT.poster = posterOut;
       }
     }
   }

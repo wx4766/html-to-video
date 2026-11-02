@@ -200,10 +200,14 @@ bash assets/render.sh animation.html --duration=12 --fps=60 --width=1920 --heigh
 | `--duration` / `--from` / `--to` | 时长 / 只渲某段（秒）。给了范围时输出名变成 `名.起-止s.mp4`，**不会覆盖成品** |
 | `--stills=0.5,2.0` | 只导出这些时刻的 PNG，不编码 |
 | `--fps` / `--width` / `--height` | 帧率与分辨率 |
+| `--preset=<名>` | 按平台预设定尺寸：`douyin` / `tiktok` / `vertical`（1080×1920）、`xiaohongshu`（1080×1440）、`instagram`（1080×1350）、`square`（1080×1080）、`bilibili` / `youtube` / `landscape`（1920×1080） |
+| `--presets=a,b,c` | **一条命令出全套比例**，每个比例一个成片（文件名自动加 `-比例名` 后缀）。跨平台发布用这个 |
 | `--theme=<名>` | 换主题（`midnight` / `paper` / `neon`），覆盖模板里的 `CFG.theme`，不用改文件。名字打错会明确告警并回退 midnight |
 | `--out=<文件>` | 指定成片路径（默认同目录同名）。一份 HTML 出多套配色时用它，否则后渲的会盖掉前一个；上级目录不存在会自动建 |
+| `--json` | stdout 只输出一行结果 JSON（`output` / `duration` / `frames` / `warnings` 等），人读日志全部走 stderr。给 Agent 解析用 |
 | `--concurrency` | 并行 worker 数（每个 worker 一个 Chromium 页面，注意内存）。给 `auto` 按 CPU 与内存自己挑 |
-| `--audio=<file>` | 编码后自动混音（视频流直接 copy，不重编码） |
+| `--audio=<file>` | 编码后自动混音（视频流直接 copy，不重编码）。**没给 `--duration` 时自动按音频长度出片**（向上取整到整帧，尾音不被削） |
+| `--audio-fit=trim\|pad` | 音画长度不一致时怎么办：`trim` 按音轨收尾（默认）／`pad` 给音频补静音、保住视频长度 |
 | `--gop=<秒>` | 关键帧间隔，如 `--gop=1` 每秒一个关键帧，方便后期按秒 seek |
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码时不必重截） |
 | `--tmpdir=<目录>` | 逐帧 PNG 放哪块盘（默认挨着 HTML）。1080p 一分钟约 2.4 GB，系统盘没余量时指到别的盘 |
@@ -299,6 +303,72 @@ function drawFrame(t) {
 涨到 16.8KB（alpha 数据写进去了），但 Chromium 播出来整帧 alpha 全 0 —— 连文字都透明；
 换 lossless、固定码率、`-lag-in-frames 0` 都一样。既然没法自证正确，就不把它作为选项发布。
 要小体积透明素材，用 ProRes 导入剪辑软件后再导 webm，那是那边的活。
+
+### 配音对齐：先有声音，再定画面长度
+
+真实工作流是「写文案 → 配音 → 配画面」，而不是先定 6 秒再想办法把配音塞进去。
+所以**给了 `--audio` 又没给 `--duration` 时，视频按音频长度出片**：
+
+```bash
+bash assets/render.sh title-card.html --audio=voice.m4a --story=shots.json
+# ▸ audio: 音频 12.48s，未指定 --duration → 视频按音频定长（12.5s，向上取整到整帧）
+```
+
+- **向上取整到整帧**，不是四舍五入：少半帧就会把最后一个字的尾音削掉。
+- 显式给了 `--duration` 且与音频差超过 0.35s 会**明确告警**，说清差多少、伤在哪边。
+  旧版本这里会静默出一支短片 —— 画面后半段整段消失，日志却只有一句 `✓ Done`。
+- `--audio-fit=pad`：音频比视频短时补静音，保住整段画面（默认 `trim` 按音轨收尾）。
+
+注意：`trim` 下成片**不会精确等于音频秒数**。视频流是 `-c:v copy` 直接复制的，
+ffmpeg 只能按帧包边界收尾，实测会多留 0.3–0.5s。想要毫秒级对齐得重编码，
+那是拿画质换精度，不值得 —— 片尾多留几帧通常看不出来。
+
+### 一稿多发：一条命令出全套平台比例
+
+同一条片子要发抖音、小红书、B 站，剪辑软件里得一个比例一个序列、导一次盯一次。
+这里版式本来就是参数化的，多渲一遍只是多一次循环：
+
+```bash
+bash assets/render.sh bar-chart.html --duration=8 \
+  --presets=douyin,xiaohongshu,square --out=dist/chart.mp4
+# → dist/chart-douyin.mp4       1080×1920
+#   dist/chart-xiaohongshu.mp4  1080×1440
+#   dist/chart-square.mp4       1080×1080
+```
+
+| 预设 | 尺寸 | 给谁用 |
+|---|---|---|
+| `douyin` / `tiktok` / `vertical` | 1080×1920 | 抖音、快手、视频号、Reels、Shorts |
+| `xiaohongshu` / `xhs` | 1080×1440 | 小红书 3:4 |
+| `instagram` / `ig` | 1080×1350 | IG 信息流 4:5 |
+| `square` | 1080×1080 | 方版 1:1 |
+| `bilibili` / `youtube` / `landscape` | 1920×1080 | 横屏 16:9 |
+
+- 单个比例用 `--preset=xiaohongshu`；多个用 `--presets=a,b`（**至少两个**，只想要一个就用 `--preset`）。
+- 预设名拼错会直接失败并列出可用名字 —— 不会悄悄按 1920×1080 渲一版比例错误的片子。
+- **版式能不能撑住是另一回事**：模板跟视口自适应，但 9:16 与 16:9 的信息密度不同，
+  3:4 上字号偏大 / 内容偏挤要自己看一眼。`--presets` 只保证尺寸对，不保证构图好看。
+- 与 `--stills` 互斥（一个是出多片、一个是只截图）；与 `--batch` 不能嵌套。
+
+### 给 Agent 用：`--json`
+
+这个工具的主力调用方是 AI Agent。人读 `✓ Done: xxx.mp4 (1.2 MB · 30fps · 12s)` 没问题，
+Agent 只能拿正则去猜 —— 路径里带空格、中文、括号就崩。`--json` 把结果结构化：
+
+```bash
+bash assets/render.sh title-card.html --duration=6 --json
+```
+
+```json
+{"ok":true,"exitCode":0,"input":"…/title-card.html","output":"…/title-card.mp4",
+ "width":1920,"height":1080,"fps":60,"duration":6,"frames":360,"bytes":2411724,
+ "gif":null,"poster":null,"warnings":[],"mode":"video","theme":null,"preset":null}
+```
+
+- **stdout 只有这一行**，进度与人读日志全部改道 stderr —— 直接 `JSON.parse(stdout)` 即可。
+- `warnings` 是数组：参数冲突、音画长度不符、主题名不认识都进这里。空数组 = 干净。
+- `duration` 是**成片实际时长**（ffmpeg 读回来的），不是计划值。
+- `--presets` 时 `output` 变成数组，另附 `presets: [{name,width,height,output,ok,bytes}]`。
 
 ### 字幕挂外部时间轴：配音改了，字幕跟着走
 
