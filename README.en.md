@@ -182,6 +182,9 @@ ones — it never quietly renders a wrong-shaped video at 1920×1080.
 Honest limit: `--presets` guarantees the **size**, not the **composition**. 9:16 and 16:9 carry
 different information density; check the 3:4 cut yourself before shipping.
 
+The empty band at the bottom of a vertical render is deliberate, not a layout bug: platform
+progress bars and buttons live there, so templates reserve a 15% safe area for burned-in captions.
+
 ### Voiceover drives the duration
 
 The real workflow is script → voiceover → visuals, not "pick 6 seconds then squeeze the audio in":
