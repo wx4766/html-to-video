@@ -11,6 +11,11 @@
 <sub>这段片子就是 [`docs/demo-hero.html`](docs/demo-hero.html)（447 行、零依赖）渲出来的。自己复现一遍：<br>
 `node scripts/render-video-seek.js docs/demo-hero.html --duration=10 --fps=60`</sub>
 
+[![](docs/demo-multiratio-cover.jpg)](docs/demo-multiratio.mp4)
+
+<sub>**同一份 HTML，一条命令出全套平台比例。** 三个画面是真实渲染输出（1920×1080 / 1080×1440 / 1080×1920），
+不是示意图：`--presets=douyin,xiaohongshu,youtube`。</sub>
+
 把 HTML / Canvas 动画**逐帧渲染成 MP4**（可配乐、可出 GIF）。
 
 不是 AI 文生视频，而是：
@@ -33,7 +38,7 @@
 | **零费用** | 本地跑，不调任何 API |
 | **有质量门** | 内置自动化验收：确定性、卡顿、跳变、半截字、叠字、字幕带、字体回退 |
 | **开箱即用** | 11 个模板改个配置块就出片，不用从零学 canvas |
-| **横竖屏都行** | 模板跟视口自适应，16:9 / 9:16 换 `--width/--height` 即可，不裁切 |
+| **横竖屏都行** | 模板跟视口自适应；`--presets=douyin,xiaohongshu,youtube` 一条命令出全套比例，不裁切 |
 | **能出「一支片子」** | 多镜头 + 8 种转场 + 持续运镜，一个 HTML 出整支，不用渲几段再拼 |
 | **自带素材** | 40+ 图标 / 参数化人物 / 卡片箭头 / 背景纹理，纯代码零依赖零版权风险 |
 | **能叠能配** | `--alpha` 出透明层叠到实拍上；`--srt` 挂外部字幕时间轴 |
@@ -126,6 +131,10 @@ bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1280 --heigh
 bash assets/render.sh bar-chart.html --duration=8 \
   --presets=douyin,xiaohongshu,square --out=dist/chart.mp4
 ```
+
+[![](docs/demo-multiratio.gif)](docs/demo-multiratio.mp4)
+
+<sub>三个画面同源同帧，只是视口不同 —— 版式跟着变，内容一个字没改。</sub>
 
 ```text
 dist/chart-douyin.mp4       1080×1920   抖音 / 快手 / 视频号

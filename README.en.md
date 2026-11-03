@@ -11,6 +11,11 @@
 <sub>That clip is [`docs/demo-hero.html`](docs/demo-hero.html) — 447 lines, zero dependencies. Reproduce it:<br>
 `node scripts/render-video-seek.js docs/demo-hero.html --duration=10 --fps=60`</sub>
 
+[![](docs/demo-multiratio-cover.jpg)](docs/demo-multiratio.mp4)
+
+<sub>**One HTML file, one command, every platform format.** Those three frames are real
+renders (1920×1080 / 1080×1440 / 1080×1920), not mockups: `--presets=douyin,xiaohongshu,youtube`.</sub>
+
 **Render an HTML/Canvas animation to MP4, frame by frame.**
 
 Not text-to-video. You write a page whose whole output is a pure function of time —
@@ -167,6 +172,10 @@ dist/chart-douyin.mp4       1080×1920   TikTok / Reels / Shorts
 dist/chart-xiaohongshu.mp4  1080×1440   Xiaohongshu 3:4
 dist/chart-square.mp4       1080×1080   Square 1:1
 ```
+
+[![](docs/demo-multiratio.gif)](docs/demo-multiratio.mp4)
+
+<sub>Same file, same timestamp, three viewports. Only the layout changes — not a word of content.</sub>
 
 | Preset | Size | For |
 |---|---|---|
