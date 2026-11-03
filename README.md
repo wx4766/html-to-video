@@ -6,6 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
 
+**[在线预览 · wx4766.github.io/html-to-video](https://wx4766.github.io/html-to-video/)** —— 不用 clone，先看效果
+
 [![10 秒演示：HTML in，MP4 out —— 这段片子本身就是一份 HTML 文件渲出来的](docs/demo-hero.gif)](docs/demo-hero.mp4)
 
 <sub>这段片子就是 [`docs/demo-hero.html`](docs/demo-hero.html)（447 行、零依赖）渲出来的。自己复现一遍：<br>

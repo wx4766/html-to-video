@@ -6,6 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
 
+**[Live preview · wx4766.github.io/html-to-video](https://wx4766.github.io/html-to-video/)** — see the output before cloning anything
+
 [![10-second demo: HTML in, MP4 out — this clip is itself one HTML file, rendered](docs/demo-hero.gif)](docs/demo-hero.mp4)
 
 <sub>That clip is [`docs/demo-hero.html`](docs/demo-hero.html) — 447 lines, zero dependencies. Reproduce it:<br>
