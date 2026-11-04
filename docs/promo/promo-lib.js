@@ -14,8 +14,10 @@
     bg: '#07090F',
     bg2: '#0D1220',
     ink: '#F2F6FF',
-    sub: 'rgba(242,246,255,0.56)',
-    dim: 'rgba(242,246,255,0.34)',
+    // B站 / YouTube 会二次压制，0.5 以下的灰在手机上一压就没了。
+    // 独立审片指出小字偏灰，这里整体抬一档，层次靠字号而不是靠压暗。
+    sub: 'rgba(242,246,255,0.68)',
+    dim: 'rgba(242,246,255,0.46)',
     faint: 'rgba(242,246,255,0.10)',
     line: 'rgba(255,255,255,0.085)',
     panel: 'rgba(255,255,255,0.045)',
@@ -24,7 +26,7 @@
     accent2: '#7C9CFF',
     cyan: '#5EEAD4',
     good: '#4ADE80',
-    bad: '#FF6B6B',
+    bad: '#FF8585',   // 原 #FF6B6B 经 H.264 + 平台二次压制后偏暗红，独立审片点名
   };
 
   const F = {
@@ -208,7 +210,7 @@
     g.restore();
 
     P.text(g, label || 'HTML → VIDEO', W - 56, H - 40, {
-      size: 15, font: F.mono, color: 'rgba(242,246,255,0.28)', align: 'right', track: 1.2,
+      size: 15, font: F.mono, color: 'rgba(242,246,255,0.42)', align: 'right', track: 1.2,
     });
   };
 
@@ -306,8 +308,14 @@
     return out;
   };
 
-  /* 一个「真实渲染结果」的小画面：数字滚动 + 进度条 + 圆点，
-     用来在多个镜头里证明同一份画面可以出现在任意比例里。 */
+  /* 一个「真实渲染结果」的小画面：时间码 + 时间轴 + 圆点。
+     用来在多个镜头里证明同一份画面可以出现在任意比例里。
+
+     ⚠️ 早期版本这里放了一个滚到 12,800 的假「已渲染帧数」。独立审片判定为
+     P1：本片主打「确定性 / 逐像素精确」，画面里却同时出现 12,782、12,800
+     和全片的 978 帧，而且三种不同尺寸都显示同一个 12,800 —— 观众会认为
+     所有数据都是编的。现在只呈现 frame(t) 的自变量 t：同一个 t，在任意
+     比例里必然是同一帧、同一个时间码，这正是要卖的东西。 */
   P.miniFrame = function (g, x, y, w, h, t, o) {
     o = o || {};
     g.save();
@@ -322,18 +330,23 @@
     // 顶部小标签
     g.fillStyle = P.rgba(C.accent, 0.85);
     g.fillRect(x + pad, y + h * 0.16, w * 0.13, Math.max(2, h * 0.018));
-    // 大数字：随 t 滚动，但用确定性的循环
-    const cyc = (t * 0.55) % 6;
-    const p = P.expoOut(P.seg(cyc, 0.2, 2.2));
-    const val = Math.round(lerp(0, 12800, p));
+
+    // 唯一的大数字 = 当前帧的时间码（frame(t) 的自变量），不是任何计数。
+    // 单位与数字一体绘制：之前把 "s" 单独用 0.42 倍字号画在右边，
+    // 静帧目验发现在小框里那个 s 看起来就是一个多余的小句点
+    // （"28.30."），对一个主打像素级精确的工具是硬伤。
     const fsize = Math.min(w * 0.20, h * 0.26);
-    P.text(g, val.toLocaleString('en-US'), x + pad, y + h * 0.55, {
+    P.text(g, t.toFixed(2) + 's', x + pad, y + h * 0.55, {
       size: fsize, weight: 700, font: F.en, color: C.ink,
+      maxW: w - pad * 2,
     });
-    P.text(g, o.caption || 'FRAMES RENDERED', x + pad, y + h * 0.66, {
-      size: Math.max(9, w * 0.036), font: F.mono, color: P.rgba(C.ink, 0.42), track: 1,
+    P.text(g, o.caption || 'FRAME(t)', x + pad, y + h * 0.66, {
+      size: Math.max(9, w * 0.036), font: F.mono, color: P.rgba(C.ink, 0.58), track: 1,
+      maxW: w - pad * 2,
     });
-    // 进度条
+
+    // 底部时间轴：与 self 镜头浏览器窗里的 scrubber 同源（t / 全片时长）
+    const p = P.clamp(t / (o.total || 32.6), 0, 1);
     g.fillStyle = 'rgba(255,255,255,0.10)';
     P.rr(g, x + pad, y + h * 0.78, w - pad * 2, Math.max(3, h * 0.028), 4); g.fill();
     g.fillStyle = C.accent;

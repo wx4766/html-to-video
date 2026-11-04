@@ -17,6 +17,14 @@
     hook1: ZH ? '做视频' : 'What if video',
     hook2: ZH ? '像写代码一样？' : 'worked like code?',
     hookSub: ZH ? '不抽卡 · 不录屏 · 每帧可复现' : 'No sampling. Every frame reproducible.',
+    hookKicker: ZH ? '同一句提示词 · 每次都不是同一支片子' : 'SAME PROMPT · DIFFERENT OUTPUT',
+    // 竖版开场下半屏原本空 500px，这里放一组对照，把留白变成信息
+    cmpBad: ZH ? '反复生成' : 'Regenerate',
+    cmpBadA: ZH ? '改一个字，重跑一遍' : 'Change one word, rerun',
+    cmpBadB: ZH ? '画面还是对不上' : 'Still not the same',
+    cmpGood: ZH ? 'frame(t)' : 'frame(t)',
+    cmpGoodA: ZH ? '改一行代码' : 'Change one line',
+    cmpGoodB: ZH ? '只变那一处，逐像素可复现' : 'Only that pixel changes',
     s2Tag: 'CODE → FRAME',
     s2Title: ZH ? '画面 = f(t)' : 'A frame = f(t)',
     s2Sub: ZH ? '写下 frame(t)，它就长成动画' : 'Write frame(t). Watch it move.',
@@ -32,7 +40,8 @@
     s4Title2: ZH ? '也是它渲的' : 'was rendered by it',
     s4Sub: ZH ? '本片每一帧都来自 frame(t)' : 'Every frame came from frame(t)',
     s4Url: 'github.com/wx4766/html-to-video',
-    s4Stats: ZH ? '178+ Star · 109 项测试 · v1.5.0' : '178+ stars · 109 tests · v1.5.0',
+    // 竖版只有 20.5s × 30fps = 615 帧，旧版写 978（横屏主片的帧数）是硬伤
+    s4Stats: ZH ? '615 帧 · 20.5s · 9:16 · Apache-2.0' : '615 frames · 20.5s · 9:16 · Apache-2.0',
     s4Foot: ZH ? '本片由 html-to-video 逐帧渲染' : 'Rendered frame by frame with html-to-video',
     s4Clone: 'git clone https://github.com/wx4766/html-to-video',
   };
@@ -96,15 +105,18 @@
 
   /* ── 1. 钩子 ──────────────────────────────────────────────────────── */
   function shotHook(lt, t) {
-    PL.text(g, S.brandLine, W0 / 2, 190, {
-      size: 20, font: BODY, color: C.sub, align: 'center', alpha: PL.at(lt, 0.02, 0.4),
+    PL.text(g, S.brandLine, W0 / 2, 170, {
+      size: 20, font: BODY, color: C.sub, align: 'center', alpha: PL.at(lt, 0, 0.30),
+    });
+    PL.text(g, S.hookKicker, W0 / 2, 248, {
+      size: 20, font: BODY, color: C.accent, align: 'center',
+      alpha: PL.at(lt, 0.02, 0.32), maxW: W0 - 120,
     });
 
-    const rev = PL.at(lt, 0.06, 0.90);
-    const exit = PL.at(lt, 1.75, 0.42);
+    const rev = PL.at(lt, 0.04, 0.72);
+    // 竖版垂直空间够：终端不撤，留到镜头结束。旧版 1.1s 就让它淡出，
+    // 静帧目验发现 1.5–3.0s 上半屏（y 300–800）整整空掉一半，划走风险高。
     g.save();
-    g.globalAlpha *= (1 - exit);
-    g.translate(0, -exit * 40);
     const bx = 70, by = 300, bw = W0 - 140, bh = 290;
     PL.panel(g, bx, by, bw, bh, { r: 16, fill: 'rgba(6,9,16,0.84)', stroke: 'rgba(255,255,255,0.12)' });
     PL.text(g, '>', bx + 30, by + 62, { size: 28, font: F.mono, color: C.accent });
@@ -115,19 +127,22 @@
       g.fillRect(bx + 66 + shown.length * 16, by + 40, 2, 28);
     }
     PL.text(g, 'attempt #' + (8 + Math.floor(lt * 13)), bx + bw - 30, by + 62, {
-      size: 17, font: F.mono, color: C.dim, align: 'right', alpha: PL.at(lt, 0.3, 0.4),
+      size: 19, font: F.mono, color: C.bad, align: 'right', alpha: PL.at(lt, 0.02, 0.30),
     });
     for (let i = 0; i < S.hookFail.length; i++) {
-      const a = PL.at(lt, 0.48 + i * 0.24, 0.36);
+      const a = PL.at(lt, 0.10 + i * 0.16, 0.24);
+      if (a <= 0) continue;
       g.save(); g.globalAlpha *= a;
+      g.fillStyle = C.bad;
+      g.fillRect(bx + 40, by + 133 + i * 54, 8, 8);
       PL.text(g, S.hookFail[i], bx + 62, by + 142 + i * 54, {
-        size: 23, font: BODY, color: C.bad,
+        size: 25, font: BODY, color: C.bad,
       });
       g.restore();
     }
     g.restore();
 
-    const a = PL.at(lt, 1.95, 0.62, PL.expoOut);
+    const a = PL.at(lt, 1.35, 0.55, PL.expoOut);
     g.save();
     g.globalAlpha *= a;
     g.translate(0, (1 - a) * 40);
@@ -139,13 +154,47 @@
       size: 82, weight: 700, font: BODY, color: C.accent, align: 'center',
       maxW: W0 - 100, shadow: 'rgba(255,184,107,0.20)', shadowBlur: 40,
     });
-    const u = PL.at(lt, 2.35, 0.45, PL.expoOut);
+    const u = PL.at(lt, 1.80, 0.45, PL.expoOut);
     g.fillStyle = C.accent;
     g.fillRect(W0 / 2 - 130 * u, 1058, 260 * u, 3);
     PL.text(g, S.hookSub, W0 / 2, 1130, {
       size: 24, font: BODY, color: C.sub, align: 'center', maxW: W0 - 120,
     });
     g.restore();
+
+    // 对照卡：把 1230–1480 的空白变成「为什么值得继续看」的答案。
+    // 独立审片指出竖版开场下半屏留白过大，短视频划走率极高。
+    const ca = PL.at(lt, 1.05, 0.55, PL.expoOut);
+    if (ca > 0) {
+      g.save();
+      g.globalAlpha *= ca;
+      g.translate(0, (1 - ca) * 28);
+      const cy = 1230, ch = 250, cw = 440, rx = 570;
+      PL.panel(g, 70, cy, cw, ch, {
+        r: 16, fill: 'rgba(255,133,133,0.07)', stroke: 'rgba(255,133,133,0.32)', lw: 1.5,
+      });
+      PL.icon(g, 'cross', 116, cy + 52, 26, C.bad, 2.4);
+      PL.text(g, S.cmpBad, 154, cy + 62, {
+        size: 29, weight: 700, font: BODY, color: C.bad, maxW: cw - 100,
+      });
+      PL.text(g, S.cmpBadA, 110, cy + 138, { size: 21, font: BODY, color: C.sub, maxW: cw - 80 });
+      PL.text(g, S.cmpBadB, 110, cy + 182, { size: 21, font: BODY, color: C.sub, maxW: cw - 80 });
+
+      PL.panel(g, rx, cy, cw, ch, {
+        r: 16, fill: PL.rgba(C.good, 0.07), stroke: PL.rgba(C.good, 0.34), lw: 1.5,
+      });
+      PL.icon(g, 'check', rx + 46, cy + 52, 26, C.good, 2.4);
+      PL.text(g, S.cmpGood, rx + 84, cy + 62, {
+        size: 29, weight: 700, font: F.mono, color: C.good, maxW: cw - 100,
+      });
+      PL.text(g, S.cmpGoodA, rx + 40, cy + 138, { size: 21, font: BODY, color: C.sub, maxW: cw - 80 });
+      PL.text(g, S.cmpGoodB, rx + 40, cy + 182, { size: 21, font: BODY, color: C.sub, maxW: cw - 80 });
+
+      PL.text(g, '→', W0 / 2, cy + 148, {
+        size: 34, font: BODY, color: C.accent, align: 'center',
+      });
+      g.restore();
+    }
   }
 
   /* ── 2. 代码在上、画面在下（竖屏天然适合这个因果链） ──────────────── */
@@ -157,7 +206,7 @@
       size: 23, lineH: 45, title: 'frame.js',
     });
     PL.text(g, '// no Math.random() · no Date.now()', 116, 906, {
-      size: 19, font: F.mono, color: 'rgba(242,246,255,0.32)',
+      size: 19, font: F.mono, color: 'rgba(242,246,255,0.54)',
       alpha: PL.at(lt, 1.4, 0.5),
     });
 
@@ -203,14 +252,14 @@
       size: 30, weight: 600, font: BODY, color: C.accent,
     });
     g.restore();
-    PL.text(g, 'frame ' + String(Math.floor((lt * 30) % 979)).padStart(3, '0') + ' / 978',
-      px + pw - 26, py + ph - 26, {
-        size: 16, font: F.mono, color: 'rgba(242,246,255,0.46)', align: 'right',
-      });
+    // 竖版自己的总帧数是 615，不再借用横屏的 978；全片帧数只在 CTA 出现一次
+    PL.text(g, 'seek-driven · zero drift', px + pw - 26, py + ph - 26, {
+      size: 16, font: F.mono, color: 'rgba(242,246,255,0.66)', align: 'right',
+    });
 
     PL.text(g, ZH ? '不录屏 · 不抽卡 · 逐帧可复现' : 'No recording. No sampling. Reproducible.',
       W0 / 2, 1580, {
-        size: 23, font: BODY, color: 'rgba(242,246,255,0.56)', align: 'center',
+        size: 23, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center',
         alpha: PL.at(lt, 1.3, 0.5),
       });
   }
@@ -226,7 +275,7 @@
     g.translate(big.x + big.w / 2, big.y + big.h / 2);
     g.scale(0.94 + 0.06 * a0, 0.94 + 0.06 * a0);
     g.translate(-(big.x + big.w / 2), -(big.y + big.h / 2));
-    PL.miniFrame(g, big.x, big.y, big.w, big.h, t, { caption: 'FRAME(t)', r: 10 });
+    PL.miniFrame(g, big.x, big.y, big.w, big.h, t, { caption: 'FRAME(t)', r: 10, total: DUR });
     g.restore();
 
     const smalls = [
@@ -239,7 +288,7 @@
       g.save();
       g.globalAlpha *= a;
       g.translate(0, (1 - a) * 24);
-      PL.miniFrame(g, b.x, b.y, b.w, b.h, t, { caption: 'FRAME(t)', r: 9 });
+      PL.miniFrame(g, b.x, b.y, b.w, b.h, t, { caption: 'FRAME(t)', r: 9, total: DUR });
       PL.text(g, i === 0 ? '1080 × 1440' : '1080 × 1920', b.x + b.w / 2, 1426, {
         size: 18, font: F.mono, color: C.sub, align: 'center', maxW: b.w + 80,
       });
@@ -251,7 +300,7 @@
     cbar(1470, S.s3Cmd, lt, 1.55);
     // 底部 15%（y>1632）是平台按钮区，所有关键文字必须收在安全线以上
     PL.text(g, S.s3Foot, W0 / 2, 1596, {
-      size: 21, font: BODY, color: 'rgba(242,246,255,0.50)', align: 'center',
+      size: 21, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center',
       alpha: PL.at(lt, 1.9, 0.5),
     });
   }
@@ -277,13 +326,15 @@
     });
     g.restore();
 
-    // 渲染进度：把「978 帧」这个自证做成视觉锚
+    // 渲染进度：本片真实帧数 = DUR × 30 = 615，与 s4Stats 同源。
+    // 旧版借用横屏主片的 978，是本片最明显的自相矛盾。
+    const TOTAL = Math.round(DUR * 30);
     const pp = PL.at(lt, 0.6, 1.5, PL.expoOut);
     g.fillStyle = 'rgba(255,255,255,0.10)';
     PL.rr(g, 110, 830, W0 - 220, 12, 6); g.fill();
     g.fillStyle = C.accent;
     PL.rr(g, 110, 830, (W0 - 220) * pp, 12, 6); g.fill();
-    PL.text(g, Math.round(pp * 978) + ' / 978 frames', W0 / 2, 894, {
+    PL.text(g, Math.round(pp * TOTAL) + ' / ' + TOTAL + ' frames', W0 / 2, 894, {
       size: 21, font: F.mono, color: C.sub, align: 'center',
     });
 
@@ -298,7 +349,7 @@
     });
     g.restore();
     PL.text(g, S.s4Stats, W0 / 2, 1250, {
-      size: 20, font: F.mono, color: 'rgba(242,246,255,0.56)', align: 'center',
+      size: 21, font: F.mono, color: 'rgba(242,246,255,0.78)', align: 'center',
       alpha: PL.at(lt, 1.6, 0.5), maxW: W0 - 120,
     });
 
@@ -308,7 +359,7 @@
     g.strokeStyle = 'rgba(255,255,255,0.12)';
     g.beginPath(); g.moveTo(190, 1360); g.lineTo(890, 1360); g.stroke();
     PL.text(g, S.s4Foot, W0 / 2, 1422, {
-      size: 21, font: BODY, color: 'rgba(242,246,255,0.56)', align: 'center',
+      size: 21, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center',
       maxW: W0 - 120,
     });
     g.restore();

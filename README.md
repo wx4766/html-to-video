@@ -680,7 +680,7 @@ html-to-video/
 
 ```bash
 npm install          # 装 playwright（ffmpeg 见上面「安装」，必须是完整版）
-npm test             # 99 个用例，约 2 分钟
+npm test             # 109 个用例，约 2 分钟
 npm run bench        # 量本机渲染速度 → bench/bench.md
 ```
 

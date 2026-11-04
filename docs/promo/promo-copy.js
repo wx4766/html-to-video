@@ -20,6 +20,8 @@
     hookTitle: '做视频，能不能',
     hookTitle2: '像写代码一样？',
     hookSub: '不抽卡 · 不录屏 · 每一帧都可复现',
+    // 0 秒就能看见的一行冲突陈述：B站技术区前 3 秒决定留存
+    hookKicker: '同一句提示词 · 每次跑出来都不是同一支片子',
     s2Tag: 'CODE → FRAME',
     s2Title: '画面，是时间 t 的函数',
     s2Sub: '写下 frame(t)，它就长成一段动画',
@@ -34,7 +36,7 @@
     s4Sub: '一条命令，横屏 / 3:4 / 竖屏一次出齐；版式跟视口自适应',
     s4Labels: ['YouTube · B站', '小红书', '抖音 · Shorts'],
     s4Sizes: ['1920 × 1080', '1080 × 1440', '1080 × 1920'],
-    s4Cmd: 'node render-video-seek.js slide.html --presets=youtube,xiaohongshu,douyin',
+    s4Cmd: 'node scripts/render-video-seek.js slide.html --presets=youtube,xiaohongshu,douyin',
     s5Title: '为自动化而生',
     s5Sub: '不是又一个剪辑器，是能写进脚本和 CI 的渲染管线',
     s5Cards: [
@@ -48,7 +50,7 @@
     s6Sub: '本片 978 帧，全部由 frame(t) 逐帧 seek 生成',
     s6Log: [
       '▸ freeze clock · seek frame by frame',
-      '▸ frames  978 / 978',
+      '▸ frames  {CUR} / {TOTAL}',
       '▸ ffmpeg  -crf 18  -preset medium',
       '✓ Done: promo.mp4  (32.6s · 1920×1080)',
     ],
@@ -56,6 +58,8 @@
     s7Sub: 'Apache-2.0 · 零费用 · 可进 CI · 中文不糊',
     s7Cmd: 'git clone https://github.com/wx4766/html-to-video',
     s7Url: 'github.com/wx4766/html-to-video',
+    // CTA 只写本片自身可核验的硬数字，不写会过时的 star 数
+    s7Stats: '978 帧 · 32.6s · 109/109 项测试 · Apache-2.0',
     s7Foot: '本片由 html-to-video 逐帧渲染 · 1920×1080 · 30fps',
   };
 
@@ -67,6 +71,7 @@
     hookTitle: 'What if video worked',
     hookTitle2: 'like code?',
     hookSub: 'No sampling. No screen recording. Every frame is reproducible.',
+    hookKicker: 'SAME PROMPT · DIFFERENT OUTPUT EVERY RUN',
     s2Tag: 'CODE → FRAME',
     s2Title: 'A frame is just a function of time',
     s2Sub: 'Write frame(t). Watch it become motion.',
@@ -81,7 +86,7 @@
     s4Sub: 'One command renders landscape, 3:4 and vertical — layout follows the viewport',
     s4Labels: ['YouTube', 'Xiaohongshu', 'Shorts / TikTok'],
     s4Sizes: ['1920 × 1080', '1080 × 1440', '1080 × 1920'],
-    s4Cmd: 'node render-video-seek.js slide.html --presets=youtube,xiaohongshu,douyin',
+    s4Cmd: 'node scripts/render-video-seek.js slide.html --presets=youtube,xiaohongshu,douyin',
     s5Title: 'Built for automation',
     s5Sub: 'Not another editor — a render pipeline you can script and put in CI',
     s5Cards: [
@@ -95,7 +100,7 @@
     s6Sub: 'All 978 frames of this film came from frame(t)',
     s6Log: [
       '▸ freeze clock · seek frame by frame',
-      '▸ frames  978 / 978',
+      '▸ frames  {CUR} / {TOTAL}',
       '▸ ffmpeg  -crf 18  -preset medium',
       '✓ Done: promo.mp4  (32.6s · 1920×1080)',
     ],
@@ -103,6 +108,7 @@
     s7Sub: 'Apache-2.0 · Free · CI-friendly · Perfect CJK text',
     s7Cmd: 'git clone https://github.com/wx4766/html-to-video',
     s7Url: 'github.com/wx4766/html-to-video',
+    s7Stats: '978 frames · 32.6s · 109/109 tests · Apache-2.0',
     s7Foot: 'Rendered frame by frame with html-to-video · 1920×1080 · 30fps',
   };
 

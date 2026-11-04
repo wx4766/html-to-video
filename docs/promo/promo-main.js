@@ -74,16 +74,22 @@
 
   /* ── 镜头 1：痛点钩子 ─────────────────────────────────────────────── */
   function shotHook(lt, t) {
-    const cmdReveal = PL.at(lt, 0.06, 0.92);
-    const exit = PL.at(lt, 1.90, 0.48);
+    const cmdReveal = PL.at(lt, 0.04, 0.72);
+    const exit = PL.at(lt, 1.12, 0.40);
     const keep = 1 - exit;
 
-    // 开场就给品牌上下文，避免前 1 秒空到让人划走
+    // 0 秒三件东西同时在场：品牌、一句冲突陈述、正在失败的终端。
+    // 独立审片指出前 3 秒信息密度低（主问句原来要等到 2.10s 才出现），
+    // B站技术区这个时间已经流失一半观众了，这里整体前移约 1 秒。
     PL.text(g, CP.lang === 'zh' ? 'html-to-video · 一种不同的做法' : 'html-to-video · a different approach',
-      W0 / 2, 186, {
+      W0 / 2, 150, {
         size: 20, font: BODY, color: C.sub, align: 'center',
-        alpha: PL.at(lt, 0.02, 0.45),
+        alpha: PL.at(lt, 0, 0.30),
       });
+    PL.text(g, CP.hookKicker, W0 / 2, 214, {
+      size: 22, font: BODY, color: C.accent, align: 'center',
+      alpha: PL.at(lt, 0.02, 0.34), maxW: W0 - 240, track: 0.5,
+    });
 
     // 终端里的一行命令 + 三条失败反馈 + 递增重试次数
     g.save();
@@ -101,21 +107,23 @@
     // 重试计数：把「抽卡」的荒谬量化出来，且是 t 的纯函数
     const attempt = 8 + Math.floor(lt * 13);
     PL.text(g, 'attempt #' + attempt, bx + bw - 34, by + 62, {
-      size: 19, font: F.mono, color: C.dim, align: 'right',
-      alpha: PL.at(lt, 0.35, 0.4),
+      size: 22, font: F.mono, color: C.bad, align: 'right',
+      alpha: PL.at(lt, 0.02, 0.30),
     });
     for (let i = 0; i < CP.hookFail.length; i++) {
-      const a = PL.at(lt, 0.52 + i * 0.22, 0.38);
+      const a = PL.at(lt, 0.10 + i * 0.13, 0.24);
       if (a <= 0) continue;
       const yy = by + 132 + i * 44;
       g.save(); g.globalAlpha *= a;
-      PL.text(g, CP.hookFail[i], bx + 68, yy, { size: 22, font: BODY, color: C.bad });
+      g.fillStyle = C.bad;
+      g.fillRect(bx + 46, yy - 9, 7, 7);
+      PL.text(g, CP.hookFail[i], bx + 68, yy, { size: 23, font: BODY, color: C.bad });
       g.restore();
     }
     g.restore();
 
-    // 主问句砸入
-    const inA = PL.at(lt, 2.10, 0.70, PL.expoOut);
+    // 主问句砸入（与终端做交叉溶解：痛点被答案顶掉）
+    const inA = PL.at(lt, 1.15, 0.62, PL.expoOut);
     if (inA > 0) {
       g.save();
       g.globalAlpha *= inA;
@@ -131,7 +139,7 @@
       g.restore();
     }
     // 下划线 + 副标题
-    const u = PL.at(lt, 2.55, 0.62, PL.expoOut);
+    const u = PL.at(lt, 1.62, 0.62, PL.expoOut);
     g.save();
     g.globalAlpha *= u;
     g.fillStyle = C.accent;
@@ -153,7 +161,7 @@
     PL.codeBox(g, cx, cy, cw, ch, CP.s2Code, reveal, { size: 21, lineH: 40, title: 'frame.js' });
     // 用一行注释填满代码框下半部，同时把「确定性」这条主张再说一遍
     PL.text(g, '// no Math.random() · no Date.now()', cx + 62, cy + ch - 54, {
-      size: 18, font: F.mono, color: 'rgba(242,246,255,0.32)',
+      size: 18, font: F.mono, color: 'rgba(242,246,255,0.54)',
       alpha: PL.at(lt, 1.4, 0.5),
     });
 
@@ -180,7 +188,7 @@
     g.fillRect(px, py + 34, pw, 14);
     g.restore();
     PL.text(g, 'preview.html  ·  frame(1.20s)', px + 26, py + 31, {
-      size: 17, font: F.mono, color: 'rgba(242,246,255,0.44)',
+      size: 17, font: F.mono, color: 'rgba(242,246,255,0.62)',
     });
     // 内容区
     const ix = px + 66, iy = py + 96;
@@ -210,12 +218,13 @@
     g.restore();
     // 底部输出条：左侧规格、右侧持续滚动的帧号（与「逐帧渲染」的主张呼应）
     PL.text(g, CP.s2Out, px + 26, py + ph - 28, {
-      size: 15, font: F.mono, color: 'rgba(242,246,255,0.46)', track: 1,
+      size: 15, font: F.mono, color: 'rgba(242,246,255,0.66)', track: 1,
     });
-    PL.text(g, 'frame ' + String(Math.floor((lt * 30) % 979)).padStart(3, '0') + ' / 978',
-      px + pw - 26, py + ph - 28, {
-        size: 15, font: F.mono, color: 'rgba(242,246,255,0.46)', align: 'right',
-      });
+    // 不再放「frame NNN / 978」：那会和 self 镜头的渲染进度形成第二套
+    // 互不相干的计数。全片只允许 self 镜头一处出现帧数。
+    PL.text(g, 'seek-driven · zero drift', px + pw - 26, py + ph - 28, {
+      size: 15, font: F.mono, color: 'rgba(242,246,255,0.66)', align: 'right',
+    });
 
     PL.text(g, CP.lang === 'zh' ? '每一帧 = f(t)。不录屏，不抽卡。' : 'Every frame = f(t). No recording. No sampling.',
       W0 / 2, 960, { size: 23, font: BODY, color: C.sub, align: 'center' });
@@ -238,8 +247,10 @@
       PL.text(g, CP.s3Frame, xs[i] + fw, fy - 24, {
         size: 16, font: F.mono, color: C.dim, align: 'right',
       });
-      // 两张卡里是「同一帧」：固定 t0，逐像素一致
-      PL.miniFrame(g, xs[i], fy, fw, fh, 3.8, { caption: 'RENDERED FRAME' });
+      // 两张卡里是「同一帧」：固定 t0=3.80s，时间码与 s3Frame 完全对应
+      PL.miniFrame(g, xs[i], fy, fw, fh, 3.8, {
+        caption: 'FRAME(t) · SAME PIXELS', total: DUR,
+      });
       // 卡面扫描光（让画面保持「活」）
       const sx = xs[i] + ((lt * 190 + i * 90) % (fw + 200)) - 100;
       g.save();
@@ -315,7 +326,7 @@
     if (scale && scale !== 1) g2.scale(scale, scale);
     for (let i = 0; i < boxes.length; i++) {
       const b = boxes[i];
-      PL.miniFrame(g2, b.x, b.y, b.w, b.h, t, { caption: 'FRAME(t)', r: 7 });
+      PL.miniFrame(g2, b.x, b.y, b.w, b.h, t, { caption: 'FRAME(t)', r: 7, total: DUR });
     }
     g2.restore();
   }
@@ -332,7 +343,7 @@
       g.translate(b.x + b.w / 2, b.y + b.h / 2);
       g.scale(0.90 + 0.10 * a, 0.90 + 0.10 * a);
       g.translate(-(b.x + b.w / 2), -(b.y + b.h / 2));
-      PL.miniFrame(g, b.x, b.y, b.w, b.h, t, { caption: 'FRAME(t)', r: 8 });
+      PL.miniFrame(g, b.x, b.y, b.w, b.h, t, { caption: 'FRAME(t)', r: 8, total: DUR });
       g.restore();
 
       g.save();
@@ -346,8 +357,12 @@
       g.restore();
     }
     cmdBar(300, 790, 1320, CP.s4Cmd, lt, 1.45);
-    PL.text(g, CP.lang === 'zh' ? '尺寸保证，构图也跟视口自适应' : 'Sizes guaranteed; layout follows the viewport',
-      W0 / 2, 910, { size: 21, font: BODY, color: 'rgba(242,246,255,0.54)', align: 'center' });
+    // README 明确写的是「保证尺寸，不保证构图」，旧文案「构图也自适应」
+    // 属于过度承诺，和一个主打确定性的工具定位相冲，这里改回诚实表述。
+    PL.text(g, CP.lang === 'zh'
+      ? '三种尺寸真实渲染，不是把横屏裁一刀；版式跟视口自适应'
+      : 'Three real renders, not a crop; layout follows the viewport',
+      W0 / 2, 910, { size: 21, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center' });
   }
 
   /* ── 镜头 5：为自动化而生 ─────────────────────────────────────────── */
@@ -393,8 +408,10 @@
       g.restore();
     }
     cmdBar(140, 760, 1640, CP.s5Cmd, lt, 1.25);
-    PL.text(g, CP.lang === 'zh' ? '109 项测试全通过 · 一行 JSON 结果，不用正则去猜日志' : '109 tests passing · one JSON line, no log scraping',
-      W0 / 2, 892, { size: 21, font: BODY, color: 'rgba(242,246,255,0.54)', align: 'center' });
+    PL.text(g, CP.lang === 'zh'
+      ? '109/109 项测试通过 · --json 一行结果，不用正则去猜日志'
+      : '109/109 tests passing · --json, no log scraping',
+      W0 / 2, 892, { size: 21, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center' });
   }
 
   /* ── 镜头 6：自指 ─────────────────────────────────────────────────── */
@@ -471,26 +488,39 @@
     });
     g.strokeStyle = 'rgba(255,255,255,0.08)';
     g.beginPath(); g.moveTo(tx + 24, ty + 62); g.lineTo(tx + tw - 24, ty + 62); g.stroke();
+    // 全片唯一的帧数来源：DUR × 30 = 978。日志、进度条、Done 标记全部
+    // 由同一个 pp 派生。旧版把「978 / 978 完成态」写死在日志里，又同时
+    // 画「522 / 978 进行态」进度条，独立审片判定为定位级 P1：
+    // 一个主打确定性的工具，自己的宣传片里数字对不上，等于自毁。
+    const TOTAL = Math.round(DUR * 30);
+    const pp = PL.clamp((lt - 0.40) / 3.00, 0, 1);
+    const cur = Math.round(pp * TOTAL);
+    const delays = [0.30, 0.58, 3.02, 3.42];   // ffmpeg / Done 要等快渲完才出现
+    const durs   = [0.38, 0.32, 0.32, 0.30];
     for (let i = 0; i < CP.s6Log.length; i++) {
-      const a = PL.at(lt, 0.45 + i * 0.48, 0.45);
+      if (i === 3 && pp < 1) continue;         // ✓ Done 只在真的渲完时出现
+      const a = PL.at(lt, delays[i], durs[i]);
       if (a <= 0) continue;
-      const full = CP.s6Log[i];
-      const n = Math.floor(full.length * PL.clamp((lt - (0.45 + i * 0.48)) / 0.55, 0, 1));
+      const full = CP.s6Log[i]
+        .replace('{CUR}', String(cur))
+        .replace('{TOTAL}', String(TOTAL));
+      // 进度行不做打字机：数字必须跟着进度条实时走
+      const n = i === 1 ? full.length
+        : Math.floor(full.length * PL.clamp((lt - delays[i]) / 0.30, 0, 1));
       g.save(); g.globalAlpha *= a;
       PL.text(g, full.slice(0, n), tx + 28, ty + 116 + i * 62, {
         size: 19, font: F.mono,
-        color: full[0] === '✓' ? C.good : (i === 3 ? C.accent : 'rgba(242,246,255,0.74)'),
+        color: full[0] === '✓' ? C.good : (i === 2 ? C.accent : 'rgba(242,246,255,0.82)'),
         maxW: tw - 56,
       });
       g.restore();
     }
     // 进度条
-    const pp = PL.clamp((lt - 0.4) / 3.0, 0, 1);
     g.fillStyle = 'rgba(255,255,255,0.09)';
     PL.rr(g, tx + 28, ty + th - 106, tw - 56, 10, 5); g.fill();
     g.fillStyle = C.accent;
     PL.rr(g, tx + 28, ty + th - 106, (tw - 56) * pp, 10, 5); g.fill();
-    PL.text(g, Math.round(pp * 978) + ' / 978 frames', tx + 28, ty + th - 62, {
+    PL.text(g, cur + ' / ' + TOTAL + ' frames', tx + 28, ty + th - 62, {
       size: 17, font: F.mono, color: C.sub,
     });
     if (pp >= 1) PL.icon(g, 'play', tx + tw - 48, ty + th - 70, 22, C.accent, 2);
@@ -523,14 +553,12 @@
     });
     g.restore();
 
-    // 可核验的数字，比形容词更能促成行动
-    PL.text(g, CP.lang === 'zh'
-      ? '178+ GitHub Star   ·   109 项测试   ·   v1.5.0   ·   Apache-2.0'
-      : '178+ GitHub stars   ·   109 tests   ·   v1.5.0   ·   Apache-2.0',
-      W0 / 2, 752, {
-        size: 20, font: F.mono, color: 'rgba(242,246,255,0.56)', align: 'center',
-        alpha: PL.at(lt, 1.25, 0.5), maxW: W0 - 200,
-      });
+    // 只写本片自身可核验的硬数字。旧版写了会过时的 star 数，且
+    // 20px / 0.56 灰的小字被独立审片误读成「189 项测试」，这里一并抬亮加大。
+    PL.text(g, CP.s7Stats, W0 / 2, 752, {
+      size: 23, font: F.mono, color: 'rgba(242,246,255,0.80)', align: 'center',
+      alpha: PL.at(lt, 1.25, 0.5), maxW: W0 - 200,
+    });
 
     // 片尾署名：整支片子的自证
     const f = PL.at(lt, 1.45, 0.6);
@@ -539,7 +567,7 @@
     g.strokeStyle = 'rgba(255,255,255,0.12)';
     g.beginPath(); g.moveTo(560, 792); g.lineTo(1360, 792); g.stroke();
     PL.text(g, CP.s7Foot, W0 / 2, 840, {
-      size: 20, font: BODY, color: 'rgba(242,246,255,0.56)', align: 'center',
+      size: 20, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center',
     });
     g.restore();
   }
