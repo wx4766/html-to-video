@@ -315,10 +315,12 @@
     // 把卡片里的大数字明确锚定为 frame(t) 的自变量，而不是片长；动态取 t，
     // 说明与三张卡的时间码逐帧严格一致（又一处确定性自证）。
     // 旧版写死「B站」，英文版残留汉字，被独立审片判为本地化硬伤。
+    // 独立复审 P1：说明原来只有 19px 灰字，手机竖屏上读不清，
+    // 巨大的 11.00s 因而容易被当成片长。放大到与主时间码同级的醒目度。
     PL.text(g, (ZH ? '同一帧 t = ' : 'One frame, t = ') + t.toFixed(2) + 's · 1920×1080',
-      W0 / 2, 1000, {
-      size: 19, font: F.mono, color: 'rgba(242,246,255,0.82)', align: 'center', alpha: a0,
-      maxW: W0 - 80,
+      W0 / 2, 1008, {
+      size: 28, font: ZH ? BODY : F.mono, color: 'rgba(242,246,255,0.96)',
+      align: 'center', alpha: a0, maxW: W0 - 60,
     });
     cbar(1470, S.s3Cmd, lt, 1.55);
     // 底部 15%（y>1632）是平台按钮区，所有关键文字必须收在安全线以上
@@ -376,6 +378,13 @@
     PL.text(g, S.s4Stats, W0 / 2, 1250, {
       size: 21, font: F.mono, color: 'rgba(242,246,255,0.78)', align: 'center',
       alpha: PL.at(lt, 1.6, 0.5), maxW: W0 - 120,
+    });
+
+    // 独立复审 P1：CTA 有「是什么 / 去哪拿」，缺「为什么现在就该试」。
+    PL.text(g, ZH ? '现在就把第一支片子写成代码' : 'Render your first video from code today',
+      W0 / 2, 1306, {
+      size: 26, font: BODY, color: C.accent, align: 'center',
+      alpha: PL.at(lt, 1.75, 0.5), maxW: W0 - 120,
     });
 
     const f = PL.at(lt, 2.0, 0.6);
