@@ -83,11 +83,11 @@
     // B站技术区这个时间已经流失一半观众了，这里整体前移约 1 秒。
     PL.text(g, CP.lang === 'zh' ? 'html-to-video · 一种不同的做法' : 'html-to-video · a different approach',
       W0 / 2, 150, {
-        size: 20, font: BODY, color: C.sub, align: 'center',
+        size: 23, font: BODY, color: 'rgba(242,246,255,0.80)', align: 'center',
         alpha: PL.at(lt, 0, 0.30),
       });
     PL.text(g, CP.hookKicker, W0 / 2, 214, {
-      size: 22, font: BODY, color: C.accent, align: 'center',
+      size: 25, font: BODY, color: C.accent, align: 'center',
       alpha: PL.at(lt, 0.02, 0.34), maxW: W0 - 240, track: 0.5,
     });
 
@@ -148,12 +148,47 @@
       size: 25, font: BODY, color: C.sub, align: 'center', maxW: W0 - 240,
     });
     g.restore();
+
+    // 1.05s 起填满下半屏：独立审片指出 1.6s 那一帧「整屏只有一句提问，
+    // 上下 60% 是空场，没有产品名、没有演示」，B站技术区划走风险最高。
+    // 这里补一条三步流程 + 一句产品定义，把「它到底是什么」提前说清。
+    const flow = PL.at(lt, 1.05, 0.50, PL.expoOut);
+    if (flow > 0) {
+      g.save();
+      g.globalAlpha *= flow;
+      const items = CP.hookFlow, bw = 300, bh = 62, gap = 74;
+      const totalW = items.length * bw + (items.length - 1) * gap;
+      let fx = (W0 - totalW) / 2;
+      for (let i = 0; i < items.length; i++) {
+        PL.panel(g, fx, 790, bw, bh, {
+          r: 12, fill: 'rgba(255,255,255,0.055)', stroke: PL.rgba(C.accent, 0.34),
+        });
+        PL.text(g, '0' + (i + 1), fx + 22, 832, {
+          size: 18, font: F.mono, color: C.accent,
+        });
+        PL.text(g, items[i], fx + 62, 832, {
+          size: 22, font: BODY, color: C.ink, maxW: bw - 76,
+        });
+        if (i < items.length - 1) {
+          PL.text(g, '→', fx + bw + gap / 2, 832, {
+            size: 24, font: BODY, color: C.sub, align: 'center',
+          });
+        }
+        fx += bw + gap;
+      }
+      PL.text(g, CP.hookFlowCap, W0 / 2, 904, {
+        size: 20, font: F.mono, color: 'rgba(242,246,255,0.74)', align: 'center',
+      });
+      g.restore();
+    }
   }
 
   /* ── 镜头 2：代码长成画面 ─────────────────────────────────────────── */
   function shotCode(lt, t) {
     sectionHead(92, CP.s2Tag, CP.s2Title, CP.s2Sub, lt);
-    const reveal = PL.at(lt, 0.28, 2.30, PL.expoOut);
+    // 打字机提前收尾：旧版 5.5s 静帧里第 07 行停在 "window.__seek = fram"，
+    // 独立审片读成「代码没写完 / 渲染 bug」。1.35s 内打完，之后始终是完整代码。
+    const reveal = PL.at(lt, 0.24, 1.35, PL.expoOut);
     const p = PL.expoOut(PL.seg(reveal, 0, 1));
 
     const cx = 140, cy = 300, cw = 760, ch = 560;
@@ -161,7 +196,7 @@
     PL.codeBox(g, cx, cy, cw, ch, CP.s2Code, reveal, { size: 21, lineH: 40, title: 'frame.js' });
     // 用一行注释填满代码框下半部，同时把「确定性」这条主张再说一遍
     PL.text(g, '// no Math.random() · no Date.now()', cx + 62, cy + ch - 54, {
-      size: 18, font: F.mono, color: 'rgba(242,246,255,0.54)',
+      size: 18, font: F.mono, color: 'rgba(242,246,255,0.74)',
       alpha: PL.at(lt, 1.4, 0.5),
     });
 
@@ -187,13 +222,15 @@
     g.fillStyle = 'rgba(255,255,255,0.045)'; g.fill();
     g.fillRect(px, py + 34, pw, 14);
     g.restore();
-    PL.text(g, 'preview.html  ·  frame(1.20s)', px + 26, py + 31, {
-      size: 17, font: F.mono, color: 'rgba(242,246,255,0.62)',
+    // 不写死 1.20s：否则和同屏 "p = 1.00" 的满格进度看起来像
+    // 「进度 100% 却只到 1.20 秒」。用 frame(t) 表达「任意一帧」。
+    PL.text(g, 'preview.html  ·  frame(t)', px + 26, py + 31, {
+      size: 17, font: F.mono, color: 'rgba(242,246,255,0.80)',
     });
     // 内容区
     const ix = px + 66, iy = py + 96;
     PL.text(g, 'RENDER PROGRESS', ix, iy, {
-      size: 16, font: F.mono, color: C.dim, track: 2,
+      size: 16, font: F.mono, color: 'rgba(242,246,255,0.66)', track: 2,
     });
     g.fillStyle = 'rgba(255,255,255,0.09)';
     PL.rr(g, ix, iy + 46, pw - 132, 18, 9); g.fill();
@@ -416,13 +453,22 @@
 
   /* ── 镜头 6：自指 ─────────────────────────────────────────────────── */
   function shotSelf(lt, t) {
+    // 全片唯一的进度源：DUR × 30 = 978 帧。副标题、日志、进度条、
+    // 浏览器预览卡时间码、时间轴 scrubber、Done 行全部由 pp 派生，
+    // 保证 619/978 ↔ 20.63s、978/978 ↔ 32.60s ↔ Done 32.6s 严格互证。
+    // 独立审片「不建议发布」的两条 P1 都源于这里曾用两套时间轴：
+    // 副标题写死完成态、预览卡用全局 t，右侧却画进行态进度条。
+    const TOTAL = Math.round(DUR * 30);
+    const pp = PL.clamp((lt - 0.40) / 3.00, 0, 1);
+    const cur = Math.round(pp * TOTAL);
+    const previewT = cur / 30;          // 帧数 → 时间码，恒定 30fps
     const a0 = PL.at(lt, 0.05, 0.5);
     PL.chip(g, CP.s6Tag, 140, 76, { size: 16, h: 34 });
     PL.text(g, CP.s6Title, 140, 176, {
       size: 52, weight: 700, font: BODY, color: C.ink, alpha: a0, maxW: W0 - 280,
     });
-    PL.text(g, CP.s6Sub, 140, 218, {
-      size: 22, font: BODY, color: C.sub, alpha: PL.at(lt, 0.18, 0.5),
+    PL.text(g, CP.s6Sub.replace('{CUR}', cur).replace('{TOTAL}', TOTAL), 140, 218, {
+      size: 22, font: BODY, color: 'rgba(242,246,255,0.78)', alpha: PL.at(lt, 0.18, 0.5),
     });
 
     const bx = 120, by = 270, bw = 1060, bh = 600;
@@ -439,8 +485,9 @@
       g.beginPath(); g.arc(bx + 32 + i * 24, by + 28, 6, 0, TAU); g.fill();
     }
     PL.panel(g, bx + 130, by + 12, 620, 32, { r: 16, fill: 'rgba(0,0,0,0.30)', stroke: 'rgba(255,255,255,0.06)' });
-    PL.text(g, 'localhost:8787/promo-zh.html', bx + 150, by + 34, {
-      size: 15, font: F.mono, color: C.dim,
+    // 英文版曾残留中文文件名 promo-zh.html，YouTube 观众会出戏。
+    PL.text(g, 'localhost:8787/promo-' + CP.lang + '.html', bx + 150, by + 34, {
+      size: 15, font: F.mono, color: 'rgba(242,246,255,0.62)',
     });
     // 窗内的「被渲染的一帧」：缩小的三比例画面，按真实比例居中铺满取景区
     const sc = 0.80;
@@ -458,12 +505,15 @@
     const grd = g.createLinearGradient(bx, by, bx + bw, by + bh);
     grd.addColorStop(0, '#0A0E1A'); grd.addColorStop(1, '#111827');
     g.fillStyle = grd; g.fillRect(bx + 24, by + 76, bw - 48, bh - 116);
-    drawRatios(g, boxes, t);
+    // 预览卡显示「正在渲的那一帧」，不是观众所处的全局时间。
+    // 这样 cur/30 的时间码、cur/978 的帧数、pp 的进度条与 scrubber
+    // 四个指示永远同步；完成态时卡片自然走到 32.60s，与 Done 32.6s 对齐。
+    drawRatios(g, boxes, previewT);
     // 取景区底部的时间轴：暗示「这是成片里的一帧」，同时填掉下方留白
     const tlX = bx + 70, tlY = by + bh - 58, tlW = bw - 140;
     g.fillStyle = 'rgba(255,255,255,0.10)';
     PL.rr(g, tlX, tlY, tlW, 4, 2); g.fill();
-    const tq = PL.clamp(t / DUR, 0, 1);
+    const tq = pp;
     g.fillStyle = C.accent;
     PL.rr(g, tlX, tlY, tlW * tq, 4, 2); g.fill();
     g.beginPath(); g.arc(tlX + tlW * tq, tlY + 2, 6, 0, TAU); g.fill();
@@ -488,13 +538,6 @@
     });
     g.strokeStyle = 'rgba(255,255,255,0.08)';
     g.beginPath(); g.moveTo(tx + 24, ty + 62); g.lineTo(tx + tw - 24, ty + 62); g.stroke();
-    // 全片唯一的帧数来源：DUR × 30 = 978。日志、进度条、Done 标记全部
-    // 由同一个 pp 派生。旧版把「978 / 978 完成态」写死在日志里，又同时
-    // 画「522 / 978 进行态」进度条，独立审片判定为定位级 P1：
-    // 一个主打确定性的工具，自己的宣传片里数字对不上，等于自毁。
-    const TOTAL = Math.round(DUR * 30);
-    const pp = PL.clamp((lt - 0.40) / 3.00, 0, 1);
-    const cur = Math.round(pp * TOTAL);
     const delays = [0.30, 0.58, 3.02, 3.42];   // ffmpeg / Done 要等快渲完才出现
     const durs   = [0.38, 0.32, 0.32, 0.30];
     for (let i = 0; i < CP.s6Log.length; i++) {
@@ -538,11 +581,17 @@
       maxW: W0 - 160, track: 2, shadow: 'rgba(124,156,255,0.20)', shadowBlur: 48,
     });
     PL.text(g, CP.s7Sub, W0 / 2, 458, {
-      size: 26, font: BODY, color: C.sub, align: 'center', maxW: W0 - 200,
+      size: 26, font: BODY, color: 'rgba(242,246,255,0.84)', align: 'center', maxW: W0 - 200,
     });
     g.restore();
 
     cmdBar(340, 530, 1240, CP.s7Cmd, lt, 0.55);
+
+    // 独立审片：CTA 只有属性标签和 URL，缺「为什么现在就该试」。
+    PL.text(g, CP.s7Cta, W0 / 2, 628, {
+      size: 23, font: BODY, color: C.accent, align: 'center',
+      alpha: PL.at(lt, 0.85, 0.5), maxW: W0 - 200,
+    });
 
     const s = PL.at(lt, 1.00, 0.6);
     g.save();
@@ -567,7 +616,7 @@
     g.strokeStyle = 'rgba(255,255,255,0.12)';
     g.beginPath(); g.moveTo(560, 792); g.lineTo(1360, 792); g.stroke();
     PL.text(g, CP.s7Foot, W0 / 2, 840, {
-      size: 20, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center',
+      size: 22, font: BODY, color: 'rgba(242,246,255,0.88)', align: 'center',
     });
     g.restore();
   }

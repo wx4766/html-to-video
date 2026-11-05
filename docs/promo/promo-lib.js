@@ -210,7 +210,7 @@
     g.restore();
 
     P.text(g, label || 'HTML → VIDEO', W - 56, H - 40, {
-      size: 15, font: F.mono, color: 'rgba(242,246,255,0.42)', align: 'right', track: 1.2,
+      size: 18, font: F.mono, color: 'rgba(242,246,255,0.68)', align: 'right', track: 1.2,
     });
   };
 

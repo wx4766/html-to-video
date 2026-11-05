@@ -38,7 +38,10 @@
     s4Tag: 'DOGFOODING',
     s4Title: ZH ? '你正在看的这一帧' : 'The frame you are watching',
     s4Title2: ZH ? '也是它渲的' : 'was rendered by it',
-    s4Sub: ZH ? '本片每一帧都来自 frame(t)' : 'Every frame came from frame(t)',
+    // {CUR}/{TOTAL} 与 CTA 进度条同源。竖版也曾「完成态陈述 + 进行态
+    // 进度」并置，和横屏被独立审片判 P1 的是同一处叙事错误。
+    s4Sub: ZH ? 'frame(t) 逐帧 seek · 此刻第 {CUR} / {TOTAL} 帧'
+              : 'frame(t) seek · frame {CUR} / {TOTAL} now',
     s4Url: 'github.com/wx4766/html-to-video',
     // 竖版只有 20.5s × 30fps = 615 帧，旧版写 978（横屏主片的帧数）是硬伤
     s4Stats: ZH ? '615 帧 · 20.5s · 9:16 · Apache-2.0' : '615 frames · 20.5s · 9:16 · Apache-2.0',
@@ -200,13 +203,14 @@
   /* ── 2. 代码在上、画面在下（竖屏天然适合这个因果链） ──────────────── */
   function shotCode(lt, t) {
     head(120, S.s2Tag, S.s2Title, S.s2Sub, lt);
-    const rev = PL.at(lt, 0.28, 2.10, PL.expoOut);
+    // 与横屏一致：打字机提前收尾，避免静帧里第 07 行停在半截 "fram"。
+    const rev = PL.at(lt, 0.24, 1.35, PL.expoOut);
     const p = PL.expoOut(PL.seg(rev, 0, 1));
     PL.codeBox(g, 70, 420, W0 - 140, 540, CP.s2Code, rev, {
       size: 23, lineH: 45, title: 'frame.js',
     });
     PL.text(g, '// no Math.random() · no Date.now()', 116, 906, {
-      size: 19, font: F.mono, color: 'rgba(242,246,255,0.54)',
+      size: 19, font: F.mono, color: 'rgba(242,246,255,0.74)',
       alpha: PL.at(lt, 1.4, 0.5),
     });
 
@@ -231,8 +235,10 @@
     PL.rr(g, px, py, pw, 48, 16); g.fillStyle = 'rgba(255,255,255,0.05)'; g.fill();
     g.fillRect(px, py + 34, pw, 14);
     g.restore();
-    PL.text(g, 'preview.html · frame(1.20s)', px + 26, py + 31, {
-      size: 16, font: F.mono, color: C.dim,
+    // 与横屏一致：不写死 1.20s，避免和满格 p = 1.00 同屏被误读成
+    // 「进度 100% 却只到 1.20 秒」。
+    PL.text(g, 'preview.html · frame(t)', px + 26, py + 31, {
+      size: 16, font: F.mono, color: 'rgba(242,246,255,0.68)',
     });
     g.fillStyle = 'rgba(255,255,255,0.09)';
     PL.rr(g, px + 44, py + 108, pw - 88, 18, 9); g.fill();
@@ -289,12 +295,12 @@
       g.globalAlpha *= a;
       g.translate(0, (1 - a) * 24);
       PL.miniFrame(g, b.x, b.y, b.w, b.h, t, { caption: 'FRAME(t)', r: 9, total: DUR });
-      PL.text(g, i === 0 ? '1080 × 1440' : '1080 × 1920', b.x + b.w / 2, 1426, {
+      PL.text(g, i === 0 ? '1080×1440' : '1080×1920', b.x + b.w / 2, 1426, {
         size: 18, font: F.mono, color: C.sub, align: 'center', maxW: b.w + 80,
       });
       g.restore();
     }
-    PL.text(g, '1920 × 1080 · YouTube / B站', W0 / 2, 1000, {
+    PL.text(g, '1920×1080 · YouTube / B站', W0 / 2, 1000, {
       size: 19, font: F.mono, color: C.sub, align: 'center', alpha: a0,
     });
     cbar(1470, S.s3Cmd, lt, 1.55);
@@ -307,6 +313,10 @@
 
   /* ── 4. 自指 + CTA ────────────────────────────────────────────────── */
   function shotCta(lt, t) {
+    // 唯一进度源：DUR × 30 = 615 帧。副标题、进度条、统计行全部同源。
+    const TOTAL = Math.round(DUR * 30);
+    const pp = PL.at(lt, 0.6, 1.5, PL.expoOut);
+    const cur = Math.round(pp * TOTAL);
     PL.chip(g, S.s4Tag, 70, 150, { size: 15, h: 34 });
     PL.orb(g, W0 / 2, 620, 560, PL.rgba(C.accent, 0.07 + 0.02 * Math.sin(t * 1.3)));
     const a = PL.at(lt, 0.10, 0.62, PL.expoOut);
@@ -321,21 +331,19 @@
       size: 62, weight: 700, font: BODY, color: C.accent, align: 'center',
       maxW: W0 - 90, shadow: 'rgba(255,184,107,0.20)', shadowBlur: 40,
     });
-    PL.text(g, S.s4Sub, W0 / 2, 720, {
-      size: 24, font: BODY, color: C.sub, align: 'center', maxW: W0 - 100,
+    PL.text(g, S.s4Sub.replace('{CUR}', cur).replace('{TOTAL}', TOTAL), W0 / 2, 720, {
+      size: 24, font: BODY, color: 'rgba(242,246,255,0.84)', align: 'center', maxW: W0 - 100,
     });
     g.restore();
 
-    // 渲染进度：本片真实帧数 = DUR × 30 = 615，与 s4Stats 同源。
+    // 渲染进度：本片真实帧数 = DUR × 30 = 615，与 s4Sub / s4Stats 同源。
     // 旧版借用横屏主片的 978，是本片最明显的自相矛盾。
-    const TOTAL = Math.round(DUR * 30);
-    const pp = PL.at(lt, 0.6, 1.5, PL.expoOut);
     g.fillStyle = 'rgba(255,255,255,0.10)';
     PL.rr(g, 110, 830, W0 - 220, 12, 6); g.fill();
     g.fillStyle = C.accent;
     PL.rr(g, 110, 830, (W0 - 220) * pp, 12, 6); g.fill();
-    PL.text(g, Math.round(pp * TOTAL) + ' / ' + TOTAL + ' frames', W0 / 2, 894, {
-      size: 21, font: F.mono, color: C.sub, align: 'center',
+    PL.text(g, cur + ' / ' + TOTAL + ' frames', W0 / 2, 894, {
+      size: 21, font: F.mono, color: 'rgba(242,246,255,0.78)', align: 'center',
     });
 
     cbar(980, S.s4Clone, lt, 0.9);
@@ -359,7 +367,7 @@
     g.strokeStyle = 'rgba(255,255,255,0.12)';
     g.beginPath(); g.moveTo(190, 1360); g.lineTo(890, 1360); g.stroke();
     PL.text(g, S.s4Foot, W0 / 2, 1422, {
-      size: 21, font: BODY, color: 'rgba(242,246,255,0.72)', align: 'center',
+      size: 22, font: BODY, color: 'rgba(242,246,255,0.86)', align: 'center',
       maxW: W0 - 120,
     });
     g.restore();
