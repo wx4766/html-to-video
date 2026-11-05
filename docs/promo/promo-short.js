@@ -10,8 +10,11 @@
   const CP = window.__PROMO_COPY || window.PROMO_COPY.zh;
   const BODY = F[CP.font];
   const ZH = CP.lang === 'zh';
+  // 竖版开场痛点文字压在近黑底上偏灰，独立审片判「唯一制造痛点的文字却读不清」。
+  // 只在本文件抬亮，不动共用色板 —— 横屏成片已过审，源码必须能原样复现它。
+  const BAD = '#FF9A9A';
   const S = {
-    brandLine: ZH ? 'html-to-video · 一种不同的做法' : 'html-to-video · a different approach',
+    brandLine: 'html-to-video · HTML / Canvas → MP4',
     hookCmd: ZH ? 'ai.generate("改一个字")' : 'ai.generate("change one word")',
     hookFail: ZH ? ['× 画面又变了', '× 文字糊了'] : ['× different output again', '× unreadable text'],
     hook1: ZH ? '做视频' : 'What if video',
@@ -34,7 +37,7 @@
     s3Title2: ZH ? '三套比例' : 'Three formats.',
     s3Sub: ZH ? '一条命令，横屏 / 3:4 / 竖屏一次出齐' : 'One command. Landscape, 3:4, vertical.',
     s3Cmd: '--presets=youtube,xiaohongshu,douyin',
-    s3Foot: ZH ? '尺寸按比例真实渲染' : 'Real pixels, not cropped',
+    s3Foot: ZH ? '三种尺寸真实渲染，不是把横屏裁一刀' : 'Three real renders, not a crop',
     s4Tag: 'DOGFOODING',
     s4Title: ZH ? '你正在看的这一帧' : 'The frame you are watching',
     s4Title2: ZH ? '也是它渲的' : 'was rendered by it',
@@ -43,8 +46,10 @@
     s4Sub: ZH ? 'frame(t) 逐帧 seek · 此刻第 {CUR} / {TOTAL} 帧'
               : 'frame(t) seek · frame {CUR} / {TOTAL} now',
     s4Url: 'github.com/wx4766/html-to-video',
-    // 竖版只有 20.5s × 30fps = 615 帧，旧版写 978（横屏主片的帧数）是硬伤
-    s4Stats: ZH ? '615 帧 · 20.5s · 9:16 · Apache-2.0' : '615 frames · 20.5s · 9:16 · Apache-2.0',
+    // 竖版只有 20.5s × 30fps = 615 帧，旧版写 978（横屏主片的帧数）是硬伤。
+    // 这里也不写 20.5s：独立审片把片长与画面里的帧时间码 11.00s 读成两个
+    // 互相打架的时长。全片只保留 frame(t) 的时间码这一套时间表述。
+    s4Stats: ZH ? '615 帧 · 9:16 · Apache-2.0' : '615 frames · 9:16 · Apache-2.0',
     s4Foot: ZH ? '本片由 html-to-video 逐帧渲染' : 'Rendered frame by frame with html-to-video',
     s4Clone: 'git clone https://github.com/wx4766/html-to-video',
   };
@@ -108,15 +113,19 @@
 
   /* ── 1. 钩子 ──────────────────────────────────────────────────────── */
   function shotHook(lt, t) {
+    // 0 秒就说清「这是什么」：独立审片判旧版首帧没有产品名、看不出在卖什么。
     PL.text(g, S.brandLine, W0 / 2, 170, {
-      size: 20, font: BODY, color: C.sub, align: 'center', alpha: PL.at(lt, 0, 0.30),
+      size: 24, font: F.mono, color: 'rgba(242,246,255,0.86)', align: 'center',
+      alpha: PL.at(lt, 0, 0.24), maxW: W0 - 80,
     });
     PL.text(g, S.hookKicker, W0 / 2, 248, {
-      size: 20, font: BODY, color: C.accent, align: 'center',
-      alpha: PL.at(lt, 0.02, 0.32), maxW: W0 - 120,
+      size: 23, font: BODY, color: C.accent, align: 'center',
+      alpha: PL.at(lt, 0.02, 0.28), maxW: W0 - 120,
     });
 
-    const rev = PL.at(lt, 0.04, 0.72);
+    // 0.5s 前把命令打完：旧版首帧停在半截 "ai.generate(\"change on"，
+    // 引号括号未闭合，观众第一眼会当成字幕被裁 / 渲染没写完。
+    const rev = PL.at(lt, 0.02, 0.30);
     // 竖版垂直空间够：终端不撤，留到镜头结束。旧版 1.1s 就让它淡出，
     // 静帧目验发现 1.5–3.0s 上半屏（y 300–800）整整空掉一半，划走风险高。
     g.save();
@@ -130,22 +139,24 @@
       g.fillRect(bx + 66 + shown.length * 16, by + 40, 2, 28);
     }
     PL.text(g, 'attempt #' + (8 + Math.floor(lt * 13)), bx + bw - 30, by + 62, {
-      size: 19, font: F.mono, color: C.bad, align: 'right', alpha: PL.at(lt, 0.02, 0.30),
+      size: 19, font: F.mono, color: BAD, align: 'right', alpha: PL.at(lt, 0.02, 0.30),
     });
     for (let i = 0; i < S.hookFail.length; i++) {
-      const a = PL.at(lt, 0.10 + i * 0.16, 0.24);
+      const a = PL.at(lt, 0.04 + i * 0.10, 0.20);
       if (a <= 0) continue;
       g.save(); g.globalAlpha *= a;
-      g.fillStyle = C.bad;
+      g.fillStyle = BAD;
       g.fillRect(bx + 40, by + 133 + i * 54, 8, 8);
       PL.text(g, S.hookFail[i], bx + 62, by + 142 + i * 54, {
-        size: 25, font: BODY, color: C.bad,
+        size: 25, font: BODY, color: BAD,
       });
       g.restore();
     }
     g.restore();
 
-    const a = PL.at(lt, 1.35, 0.55, PL.expoOut);
+    // 大标题提到首屏：旧版 1.35s 才出现，0.5s 帧下 2/3 全是空场，
+    // 短视频信息流里这是最容易划走的一秒（独立审片判 P1）。
+    const a = PL.at(lt, 0.08, 0.42, PL.expoOut);
     g.save();
     g.globalAlpha *= a;
     g.translate(0, (1 - a) * 40);
@@ -157,7 +168,7 @@
       size: 82, weight: 700, font: BODY, color: C.accent, align: 'center',
       maxW: W0 - 100, shadow: 'rgba(255,184,107,0.20)', shadowBlur: 40,
     });
-    const u = PL.at(lt, 1.80, 0.45, PL.expoOut);
+    const u = PL.at(lt, 0.18, 0.28, PL.expoOut);
     g.fillStyle = C.accent;
     g.fillRect(W0 / 2 - 130 * u, 1058, 260 * u, 3);
     PL.text(g, S.hookSub, W0 / 2, 1130, {
@@ -167,7 +178,8 @@
 
     // 对照卡：把 1230–1480 的空白变成「为什么值得继续看」的答案。
     // 独立审片指出竖版开场下半屏留白过大，短视频划走率极高。
-    const ca = PL.at(lt, 1.05, 0.55, PL.expoOut);
+    // 0.5s 时对照卡已完整入场，把 y=1230–1480 那段空白也填满。
+    const ca = PL.at(lt, 0.12, 0.36, PL.expoOut);
     if (ca > 0) {
       g.save();
       g.globalAlpha *= ca;
@@ -176,9 +188,9 @@
       PL.panel(g, 70, cy, cw, ch, {
         r: 16, fill: 'rgba(255,133,133,0.07)', stroke: 'rgba(255,133,133,0.32)', lw: 1.5,
       });
-      PL.icon(g, 'cross', 116, cy + 52, 26, C.bad, 2.4);
+      PL.icon(g, 'cross', 116, cy + 52, 26, BAD, 2.4);
       PL.text(g, S.cmpBad, 154, cy + 62, {
-        size: 29, weight: 700, font: BODY, color: C.bad, maxW: cw - 100,
+        size: 29, weight: 700, font: BODY, color: BAD, maxW: cw - 100,
       });
       PL.text(g, S.cmpBadA, 110, cy + 138, { size: 21, font: BODY, color: C.sub, maxW: cw - 80 });
       PL.text(g, S.cmpBadB, 110, cy + 182, { size: 21, font: BODY, color: C.sub, maxW: cw - 80 });
@@ -300,8 +312,13 @@
       });
       g.restore();
     }
-    PL.text(g, '1920×1080 · YouTube / B站', W0 / 2, 1000, {
-      size: 19, font: F.mono, color: C.sub, align: 'center', alpha: a0,
+    // 把卡片里的大数字明确锚定为 frame(t) 的自变量，而不是片长；动态取 t，
+    // 说明与三张卡的时间码逐帧严格一致（又一处确定性自证）。
+    // 旧版写死「B站」，英文版残留汉字，被独立审片判为本地化硬伤。
+    PL.text(g, (ZH ? '同一帧 t = ' : 'One frame, t = ') + t.toFixed(2) + 's · 1920×1080',
+      W0 / 2, 1000, {
+      size: 19, font: F.mono, color: 'rgba(242,246,255,0.82)', align: 'center', alpha: a0,
+      maxW: W0 - 80,
     });
     cbar(1470, S.s3Cmd, lt, 1.55);
     // 底部 15%（y>1632）是平台按钮区，所有关键文字必须收在安全线以上
