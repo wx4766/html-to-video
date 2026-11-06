@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>抽卡一下午，不如编译一次 · html-to-video 推广片</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  canvas { display: block; position: absolute; left: 0; top: 0; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<!-- 渲染器会把 styles.js 注进页面；这里再引一次，是为了浏览器直接打开、
+     storyboard.js 的 readTimeline() 独立启动时也拿得到 SV。 -->
+<script src="../lib/styles.js"></script>
+<script src="../lib/scenes.js"></script>
+<script>
+/* =========================================================================
+   推广片 · 《抽卡一下午，不如编译一次》
+   -------------------------------------------------------------------------
+   这支片本身就是产品演示：12 个镜头、8 种视觉语言、逐帧确定性、字幕与
+   配音按镜头对齐（时间轴由 audio/make-audio.cjs 生成），配乐也是代码合成的。
+
+   出片：
+     node scripts/render-video-seek.js assets/examples/promo-zh.html \
+       --story=out/story.json --duration=<总长> --fps=30 --audio=out/mix.wav \
+       --out=out/promo-zh.mp4
+   预演：
+     node scripts/storyboard.js assets/examples/promo-zh.html --story=out/story.json --cols=3
+
+   约定（STYLES.md 四条）：card() 用返回值排版 / 每镜自己画满背景 /
+   overlay 放最外层 / 不用 Math.random()。
+   ========================================================================= */
+
+const cv = document.getElementById('stage');
+const g  = cv.getContext('2d');
+
+const DEFAULT_SHOTS = [
+  { id: 'hook', dur: 5.9, style: 'swiss', cue: '让 AI 做一条五秒的产品视频，我抽了十七次卡，能用的还是零。',
+    h1: '17', h2: '次抽卡', tag: 'AI VIDEO / 2026', kicker: '第 17 次重抽 · 还是不对' },
+  { id: 'outro', dur: 6.2, style: 'ink', cue: '别再抽卡了。把想法写成代码，开源地址在简介，评论区见。',
+    big: '把想法写成代码', url: 'github.com/wx4766/html-to-video', sub: 'MIT 开源 · 免费 · 中文友好',
+    cta: '评论区聊聊：你被「抽卡」坑过几次？' },
+];
+const STORY = (Array.isArray(window.__story) && window.__story.length) ? window.__story : DEFAULT_SHOTS;
+const SHOTS = STORY.filter((s) => s && typeof s === 'object').map((s, i) => ({
+  ...s, id: s.id || 'shot' + (i + 1), dur: Number(s.dur) > 0 ? Number(s.dur) : 4,
+}));
+
+/* ── 尺寸 ─────────────────────────────────────────────────────────── */
+let W = 0, H = 0, SX = 1, SY = 1, SF = 1, M = 0;
+function measure() {
+  W = cv.width = window.innerWidth;
+  H = cv.height = window.innerHeight;
+  SX = W / 1920; SY = H / 1080; SF = Math.sqrt(SX * SY);
+  M = 110 * SX;
+}
+measure();
+
+/* 8 种风格对象预先取好，蒙太奇一秒一换不重复构造 */
+const STYLES = ['riso', 'cutpaper', 'blueprint', 'chalk', 'isometric', 'synthwave', 'swiss', 'ink'];
+const ST = {};
+STYLES.forEach((k) => { ST[k] = SV.get(k); });
+const styleOf = (s) => ST[s && s.style] || ST.riso;
+const RGB = (hex, a) => {
+  const h = String(hex || '#000000').replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+const P = (t, delay, dur) => SV.clamp((t - delay) / dur);
+const E = (p) => SV.ease.outCubic(p);
+
+/* 一行字按视觉宽度折行（中文按字、英文按词）；返回最多 maxLines 行 */
+function wrap(g2, txt, maxW, size, fam, weight, maxLines) {
+  g2.font = `${weight || 700} ${size}px ${fam || 'sans-serif'}`;
+  const isCJK = /[\u4e00-\u9fff]/.test(txt);
+  const units = isCJK ? txt.split('') : txt.split(/(\s+)/);
+  const lines = [];
+  let cur = '';
+  for (const u of units) {
+    const test = cur + u;
+    if (g2.measureText(test).width > maxW && cur) { lines.push(cur.trim()); cur = u.trim() ? u : ''; }
+    else cur = test;
+  }
+  if (cur.trim()) lines.push(cur.trim());
+  return lines.slice(0, maxLines || 2);
+}
+
+/* 自适应字号：长中文标题不会被裁掉 */
+function fitSize(g2, txt, maxW, size, fam, weight) {
+  let s = size;
+  while (s > 12) {
+    g2.font = `${weight || 900} ${s}px ${fam || 'sans-serif'}`;
+    if (g2.measureText(txt).width <= maxW) break;
+    s -= 2;
+  }
+  return s;
+}
+
+/* 每个镜头自己画满背景（SC.paintShot 会先 clearRect）。
+   bgCached 的 key 带 st.id，所以 8 张底纹各缓存一张，切风格不会串味。 */
+function backdrop(g2, st, c) {
+  SV.bgCached(g2, st, W, H, (c && c.global) || 0, {}, 1);
+}
+
+/* ── 通用装饰：一条引线 + 小标签 ─────────────────────────────────── */
+function label(g2, st, txt, x, y, o) {
+  o = o || {};
+  SV.text(g2, st, txt, x, y, o.size || 24 * SF,
+    { kind: 'mono', color: o.color || st.theme.accent, align: o.align || 'left' });
+}
+function rule(g2, st, x, y, w, p, color, thick) {
+  g2.save();
+  g2.globalAlpha = 0.85;
+  g2.fillStyle = color || st.theme.ink;
+  g2.fillRect(x, y, w * SV.clamp(p), (thick || 3) * SF);
+  g2.restore();
+}
+
+/* ── 镜头 01 · hook（瑞士网格）：17 次抽卡 ──────────────────────── */
+function shotHook(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  const p0 = E(P(lt, 0.05, 0.65));
+
+  label(g2, st, s.tag || 'AI VIDEO / 2026', M, 150 * SY);
+  label(g2, st, s.kicker || '', W - M, 150 * SY, { align: 'right', color: st.theme.sub });
+
+  const num = s.h1 || '17';
+  const size = 400 * SF;
+  g2.save();
+  g2.globalAlpha = p0;
+  g2.translate(0, (1 - p0) * 40 * SY);
+  SV.text(g2, st, num, M - 12 * SX, 620 * SY, size, { kind: 'display' });
+  g2.restore();
+
+  /* 红色反白块：瑞士风的招牌 */
+  const bw = 430 * SX, bh = 150 * SY;
+  const bx = M + 690 * SX, by = 455 * SY;
+  const p1 = E(P(lt, 0.35, 0.55));
+  g2.save();
+  g2.globalAlpha = 1;
+  g2.fillStyle = st.theme.accent;
+  g2.fillRect(bx, by, bw * p1, bh);
+  if (p1 > 0.6) {
+    g2.globalAlpha = E((p1 - 0.6) / 0.4);
+    SV.text(g2, st, s.h2 || '次抽卡', bx + 34 * SX, by + bh * 0.72, 92 * SF,
+      { kind: 'display', color: st.theme.onAccent || '#fff' });
+  }
+  g2.restore();
+
+  const p2 = E(P(lt, 0.75, 0.55));
+  g2.save();
+  g2.globalAlpha = p2;
+  SV.text(g2, st, '能用的：0', M, 690 * SY, 92 * SF, { kind: 'display', color: st.theme.accent });
+  g2.restore();
+
+  /* 17 格抽卡记录：16 个叉 + 最后一格闪 —— 全片最容易被截图传播的细节。
+     y 必须 ≤745：两行字幕的上沿在 781，压到这里就看不见了。 */
+  const cell = 38 * SF, gap = 9 * SF;
+  const gx = M, gy = 730 * SY;
+  for (let i = 0; i < 17; i++) {
+    const ap = E(P(lt, 0.55 + i * 0.035, 0.22));
+    if (ap <= 0) continue;
+    g2.save();
+    g2.globalAlpha = ap;
+    const x = gx + i * (cell + gap), y = gy;
+    g2.strokeStyle = st.theme.ink; g2.lineWidth = 2 * SF;
+    g2.strokeRect(x, y, cell, cell);
+    if (i < 16) {
+      g2.strokeStyle = st.theme.sub; g2.lineWidth = 2.4 * SF;
+      const q = cell * 0.28;
+      g2.beginPath();
+      g2.moveTo(x + q, y + q); g2.lineTo(x + cell - q, y + cell - q);
+      g2.moveTo(x + cell - q, y + q); g2.lineTo(x + q, y + cell - q);
+      g2.stroke();
+    } else {
+      const blink = 0.55 + 0.45 * Math.sin(lt * 8);
+      g2.fillStyle = RGB(st.theme.accent, blink);
+      g2.fillRect(x, y, cell, cell);
+    }
+    g2.restore();
+  }
+}
+
+/* ── 镜头 02 · pain（黑板粉笔）：三宗罪逐条打叉 ─────────────────── */
+function shotPain(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  SV.text(g2, st, s.head || '生成式视频的三宗罪', M, 210 * SY, 76 * SF, { kind: 'display' });
+  rule(g2, st, M, 238 * SY, 520 * SX, 1, st.theme.accent, 3);
+
+  const items = s.items || [];
+  const rowH = 160 * SY, top = 300 * SY;
+  items.forEach((it, i) => {
+    const p = E(P(lt, 0.2 + i * 0.42, 0.5));
+    if (p <= 0.01) return;
+    g2.save();
+    g2.globalAlpha = p;
+    g2.translate((1 - p) * 30 * SX, 0);
+    const y = top + i * rowH;
+    SV.text(g2, st, it.n, M, y + 62 * SY, 54 * SF, { kind: 'mono', color: st.theme.accent2 || st.theme.accent });
+    SV.text(g2, st, it.t, M + 145 * SX, y + 58 * SY, 62 * SF, { kind: 'display' });
+    SV.text(g2, st, it.d, M + 640 * SX, y + 56 * SY, 38 * SF, { kind: 'sub' });
+
+    /* 粉笔叉：两笔按进度画出，像讲师现场打叉 */
+    const cp = SV.clamp((lt - (0.55 + i * 0.42)) / 0.35);
+    const x = W - M - 110 * SX;
+    g2.strokeStyle = st.theme.bad || '#F28B82';
+    g2.lineWidth = 8 * SF; g2.lineCap = 'round';
+    g2.beginPath();
+    g2.moveTo(x - 32 * SF, y + 18 * SY);
+    g2.lineTo(x - 32 * SF + 64 * SF * Math.min(1, cp * 2), y + 18 * SY + 46 * SY * Math.min(1, cp * 2));
+    g2.moveTo(x + 32 * SF, y + 18 * SY);
+    if (cp > 0.5) g2.lineTo(x + 32 * SF - 64 * SF * Math.min(1, (cp - 0.5) * 2), y + 18 * SY + 46 * SY * Math.min(1, (cp - 0.5) * 2));
+    g2.stroke();
+    g2.restore();
+  });
+}
+
+/* ── 镜头 03 · evidence（工程蓝图）：公开实测三张卡片 ───────────── */
+function shotEvidence(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  SV.text(g2, st, s.head || '不是我一个人的问题', M, 190 * SY, 68 * SF, { kind: 'display' });
+  label(g2, st, 'FIELD NOTES / 2026', W - M, 190 * SY, { align: 'right', color: st.theme.sub });
+
+  const cards = s.cards || [];
+  const cw = (W - 2 * M - 2 * 36 * SX) / 3, ch = 400 * SY;
+  cards.forEach((d, i) => {
+    const p = E(P(lt, 0.18 + i * 0.34, 0.5));
+    if (p <= 0.01) return;
+    g2.save();
+    g2.globalAlpha = p;
+    g2.translate(0, (1 - p) * 26 * SY);
+    const x = M + i * (cw + 36 * SX), y = 275 * SY;
+    const box = SV.card(g2, st, { x, y, w: cw, h: ch }, { S: SF, seed: i + 2 });
+    SV.text(g2, st, d.n, box.x, box.y + 52 * SY, 30 * SF, { kind: 'mono', color: st.theme.accent });
+    const ts = fitSize(g2, d.t, box.w, 62 * SF, st.type.display, 900);
+    SV.text(g2, st, d.t, box.x, box.y + 145 * SY, ts, { kind: 'display' });
+    SV.text(g2, st, d.d, box.x, box.y + 215 * SY, 34 * SF, { kind: 'body', color: st.theme.sub });
+    /* 卡片底部一条刻度线 + 来源 */
+    rule(g2, st, box.x, box.y + 250 * SY, box.w * 0.72, 1, st.theme.faint, 2);
+    SV.text(g2, st, d.s, box.x, box.y + 292 * SY, 24 * SF, { kind: 'mono', color: st.theme.sub });
+    g2.restore();
+  });
+
+  const p2 = E(P(lt, 1.25, 0.6));
+  g2.save();
+  g2.globalAlpha = p2;
+  SV.text(g2, st, s.source || '', M, 735 * SY, 25 * SF, { kind: 'mono', color: st.theme.sub });
+  g2.restore();
+}
+
+/* ── 镜头 04 · turn（瑞士网格）：把「抽卡」划掉 ─────────────────── */
+function shotTurn(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  const y1 = 400 * SY, y2 = 700 * SY;
+  const l1 = s.line1 || '视频不该是抽卡';
+  const s1 = fitSize(g2, l1, W - 2 * M, 132 * SF, st.type.display, 900);
+  SV.text(g2, st, l1, M, y1, s1, { kind: 'display', color: st.theme.sub });
+
+  /* 删除线：从左扫到右 */
+  const p = E(P(lt, 0.35, 0.7));
+  const lineW = Math.min(W - 2 * M, fitSize(g2, l1, W - 2 * M, s1, st.type.display, 900) * l1.length * 0.98);
+  g2.save();
+  g2.fillStyle = st.theme.accent;
+  g2.fillRect(M, y1 - s1 * 0.34, lineW * p, 14 * SF);
+  g2.restore();
+
+  /* 红色大块顶上来，反白「应该是编译」 */
+  const p2 = E(P(lt, 0.95, 0.6));
+  if (p2 > 0.01) {
+    const bw = W - 2 * M, bh = 290 * SY;
+    g2.save();
+    g2.globalAlpha = 1;
+    g2.fillStyle = st.theme.accent;
+    g2.fillRect(M, y2 - bh * 0.86, bw, bh * p2);
+    g2.restore();
+    if (p2 > 0.55) {
+      g2.save();
+      g2.globalAlpha = E((p2 - 0.55) / 0.45);
+      const l2 = s.line2 || '应该是编译';
+      const s2 = fitSize(g2, l2, bw - 80 * SX, 150 * SF, st.type.display, 900);
+      /* 基线压在红块内：原来的 742 会把字的下半截切掉 */
+      SV.text(g2, st, l2, M + 40 * SX, y2 - 10 * SY, s2,
+        { kind: 'display', color: st.theme.onAccent || '#fff' });
+      g2.restore();
+    }
+  }
+  const p3 = E(P(lt, 1.5, 0.5));
+  g2.save();
+  g2.globalAlpha = p3;
+  SV.text(g2, st, s.en || 'DETERMINISTIC · NOT PROBABILISTIC', M, 780 * SY, 27 * SF,
+    { kind: 'mono', color: st.theme.sub });
+  g2.restore();
+}
+
+/* ── 镜头 05 · reveal（孔版印刷）：产品名 ───────────────────────── */
+function shotReveal(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  const lines = s.lines || ['HTML', '→ VIDEO'];
+  label(g2, st, 'OPEN SOURCE / MIT', M, 160 * SY);
+  lines.forEach((ln, i) => {
+    const p = E(P(lt, 0.15 + i * 0.28, 0.6));
+    g2.save();
+    g2.globalAlpha = p;
+    g2.translate(0, (1 - p) * 34 * SY);
+    const size = fitSize(g2, ln, W * 0.62, 178 * SF, st.type.display, 900);
+    SV.text(g2, st, ln, M, 420 * SY + i * 205 * SY, size,
+      { kind: 'display', color: i === 1 ? st.theme.accent : st.theme.ink });
+    g2.restore();
+  });
+  const p2 = E(P(lt, 0.85, 0.6));
+  g2.save();
+  g2.globalAlpha = p2;
+  SV.text(g2, st, s.sub || '', M, 740 * SY, 40 * SF, { kind: 'body', color: st.theme.sub });
+  g2.restore();
+
+  /* 右下角套印方块 */
+  const p3 = E(P(lt, 0.7, 0.7));
+  if (p3 > 0.01) {
+    const bw = 370 * SX, bh = 370 * SY;
+    const bx = W - M - bw, by = 400 * SY;
+    g2.save();
+    g2.globalAlpha = p3;
+    const box = SV.card(g2, st, { x: bx, y: by, w: bw, h: bh }, { S: SF, accent: true, seed: 7 });
+    /* 只放两行短字：第一版塞了 OPEN SOURCE + FREE，长字直接压到 FREE 上 */
+    SV.text(g2, st, 'MIT LICENSE', box.x, box.y + box.h * 0.30, 26 * SF,
+      { kind: 'mono', color: box.ink });
+    const fs = fitSize(g2, 'FREE', box.w, 96 * SF, st.type.display, 900);
+    SV.text(g2, st, 'FREE', box.x, box.y + box.h * 0.76, fs,
+      { kind: 'display', color: box.ink });
+    g2.restore();
+  }
+}
+
+/* ── 镜头 06/07 · montage：一镜四风格，硬切在拍点上 ─────────────── */
+function shotMontage(g2, lt, c) {
+  const s = SHOTS[c.index];
+  const list = s.styles || STYLES.slice(0, 4);
+  const names = s.names || list;
+  const step = s.dur / list.length;
+  const idx = Math.min(list.length - 1, Math.floor(lt / step));
+  const local = lt - idx * step;
+  const st = ST[list[idx]] || ST.riso;
+  backdrop(g2, st, { ...c, global: c.global });
+
+  /* 顶部统一信息条：浅色/深色风格下都读得清 */
+  g2.save();
+  g2.fillStyle = st.dark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.72)';
+  g2.fillRect(0, 0, W, 96 * SY);
+  const ink = st.dark ? '#FFFFFF' : st.theme.ink;
+  SV.text(g2, st, 'SAME HTML · 1 WORD CHANGED', M, 62 * SY, 25 * SF,
+    { kind: 'mono', color: ink });
+  SV.text(g2, st, `${String(idx + 1 + (s.range && s.range.startsWith('05') ? 4 : 0)).padStart(2, '0')} / 08`,
+    W - M, 62 * SY, 25 * SF, { kind: 'mono', color: ink, align: 'right' });
+  g2.restore();
+
+  /* 同一句文案，在 8 种视觉语言下重画。
+     文字不做 alpha 淡入：分镜板取镜头中点时可能正好落在风格切点上，
+     第一版那一帧是纯白空画面（观众也会看到一帧闪白）。这里只做 0.12s
+     位移入场，任何时刻画面里都有字。 */
+  const lines = s.lines || ['用代码', '做视频'];
+  lines.forEach((ln, i) => {
+    const p = E(P(local, 0, 0.12 + i * 0.05));
+    g2.save();
+    g2.translate(0, (1 - p) * 22 * SY);
+    const size = fitSize(g2, ln, W * 0.70, 168 * SF, st.type.display, 900);
+    SV.text(g2, st, ln, M, 430 * SY + i * 190 * SY, size, { kind: 'display' });
+    g2.restore();
+  });
+  g2.save();
+  SV.text(g2, st, names[idx] || list[idx], M, 735 * SY, 46 * SF,
+    { kind: 'display', color: st.theme.accent });
+  /* 往左让出 10%：切点前的窄色带正好从右侧推进来，贴边会被切断 */
+  SV.text(g2, st, list[idx].toUpperCase(), W - M - W * 0.10, 735 * SY, 26 * SF,
+    { kind: 'mono', color: st.theme.sub, align: 'right' });
+  g2.restore();
+
+  /* 切点前 0.12s：右侧一条窄色带推进，给硬切一个「打点」的理由。
+     第一版用整屏填充，把浅色风格整个盖成一块橙 —— 分镜板里两格直接废了。 */
+  const sweep = step - local;
+  if (sweep < 0.12 && idx < list.length - 1) {
+    const q = SV.clamp((0.12 - sweep) / 0.12);
+    g2.save();
+    g2.globalAlpha = q * 0.9;
+    g2.fillStyle = st.theme.accent;
+    const bandW = W * 0.085;
+    g2.fillRect(W - bandW * q, 96 * SY, bandW * q, H - 96 * SY);
+    g2.fillRect(0, 96 * SY, W * q, 5 * SY);
+    g2.restore();
+  }
+}
+
+/* ── 镜头 08 · how（蓝图）：命令行 + frame(t) ───────────────────── */
+function shotHow(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  SV.text(g2, st, s.head || '把视频当程序写', M, 168 * SY, 62 * SF, { kind: 'display' });
+  const pF = E(P(lt, 0.15, 0.5));
+  g2.save();
+  g2.globalAlpha = pF;
+  SV.text(g2, st, s.formula || 'frame(t) → pixels', W - M, 168 * SY, 40 * SF,
+    { kind: 'mono', color: st.theme.accent, align: 'right' });
+  g2.restore();
+
+  /* 代码块：命令行逐字打出来 */
+  const bx = M, by = 225 * SY, bw = W - 2 * M, bh = 148 * SY;
+  g2.save();
+  g2.fillStyle = 'rgba(3,18,38,0.88)';
+  g2.fillRect(bx, by, bw, bh);
+  g2.strokeStyle = st.theme.faint; g2.lineWidth = 2 * SF;
+  g2.strokeRect(bx, by, bw, bh);
+  const code = s.code || 'node scripts/render-video-seek.js demo.html --fps=60';
+  const chars = Math.floor(SV.clamp((lt - 0.3) / 2.1) * code.length);
+  const shown = code.slice(0, chars);
+  const csize = fitSize(g2, code, bw - 60 * SX, 29 * SF, st.type.mono, 700);
+  SV.text(g2, st, '$ ' + shown, bx + 30 * SX, by + 88 * SY, csize,
+    { kind: 'mono', color: st.theme.good || '#5CE1A0' });
+  if (chars < code.length && Math.floor(lt * 3) % 2 === 0) {
+    g2.fillStyle = st.theme.good || '#5CE1A0';
+    g2.fillRect(bx + 30 * SX + g2.measureText('$ ' + shown).width + 4 * SX, by + 62 * SY, 12 * SX, csize);
+  }
+  g2.restore();
+
+  /* 三步流程 */
+  const steps = s.steps || [];
+  const sw = (bw - 2 * 40 * SX) / 3;
+  steps.forEach((d, i) => {
+    const p = E(P(lt, 0.75 + i * 0.28, 0.42));
+    g2.save();
+    g2.globalAlpha = p;
+    g2.translate(0, (1 - p) * 22 * SY);
+    const x = bx + i * (sw + 40 * SX), y = 430 * SY;
+    const box = SV.card(g2, st, { x, y, w: sw, h: 145 * SY }, { S: SF, seed: 20 + i });
+    SV.text(g2, st, d.n, box.x, box.y + 44 * SY, 26 * SF, { kind: 'mono', color: st.theme.accent });
+    SV.text(g2, st, d.t, box.x, box.y + 108 * SY, 50 * SF, { kind: 'display' });
+    if (i < steps.length - 1) {
+      SV.text(g2, st, '→', x + sw + 8 * SX, y + 100 * SY, 40 * SF,
+        { kind: 'mono', color: st.theme.sub });
+    }
+    g2.restore();
+  });
+
+  /* 时间轴：高亮「第 7 秒第 12 帧」 */
+  const ty = 660 * SY, tw = bw;
+  g2.save();
+  g2.strokeStyle = st.theme.faint; g2.lineWidth = 2 * SF;
+  g2.beginPath(); g2.moveTo(bx, ty); g2.lineTo(bx + tw, ty); g2.stroke();
+  const N = 60;
+  const hp = E(P(lt, 1.5, 0.6));
+  for (let i = 0; i < N; i++) {
+    const x = bx + (i / N) * tw;
+    const major = i % 10 === 0;
+    g2.strokeStyle = st.theme.faint;
+    g2.lineWidth = (major ? 3 : 1.5) * SF;
+    g2.beginPath(); g2.moveTo(x, ty); g2.lineTo(x, ty + (major ? 22 : 11) * SY); g2.stroke();
+  }
+  const hx = bx + (12 / 60) * tw;
+  g2.globalAlpha = hp;
+  g2.fillStyle = st.theme.accent;
+  g2.fillRect(hx - 5 * SX, ty - 34 * SY, 10 * SX, 56 * SY);
+  SV.text(g2, st, '1 FRAME', hx + 20 * SX, ty - 40 * SY, 22 * SF,
+    { kind: 'mono', color: st.theme.accent });
+  g2.restore();
+  const p3 = E(P(lt, 1.7, 0.5));
+  g2.save();
+  g2.globalAlpha = p3;
+  SV.text(g2, st, s.note || '', M, 740 * SY, 34 * SF, { kind: 'body', color: st.theme.sub });
+  g2.restore();
+}
+
+/* ── 镜头 09 · preview（等距线稿）：分镜板 ─────────────────────── */
+function shotPreview(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  SV.text(g2, st, s.head || '渲全片之前，先看一页', M, 170 * SY, 62 * SF, { kind: 'display' });
+
+  /* 8 张分镜缩略：每张取一种风格的底色 + 强调色，像一页 contact sheet */
+  const cols = 4, rows = 2;
+  const gw = (W - 2 * M - 3 * 26 * SX) / cols, gh = 210 * SY;
+  const gx0 = M, gy0 = 275 * SY;
+  for (let r = 0; r < rows; r++) {
+    for (let i = 0; i < cols; i++) {
+      const k = r * cols + i;
+      const p = E(P(lt, 0.15 + k * 0.12, 0.4));
+      if (p <= 0.01) continue;
+      const other = ST[STYLES[k]];
+      const x = gx0 + i * (gw + 26 * SX), y = gy0 + r * (gh + 30 * SY);
+      g2.save();
+      g2.globalAlpha = p;
+      g2.translate(0, (1 - p) * 20 * SY);
+      g2.fillStyle = other.theme.bg;
+      g2.fillRect(x, y, gw, gh);
+      g2.strokeStyle = st.theme.ink; g2.lineWidth = 2 * SF;
+      g2.strokeRect(x, y, gw, gh);
+      g2.fillStyle = other.theme.accent;
+      g2.fillRect(x + 14 * SX, y + 14 * SY, gw * 0.46, 14 * SY);
+      g2.fillStyle = RGB(other.theme.ink, 0.35);
+      for (let q = 0; q < 3; q++) g2.fillRect(x + 14 * SX, y + 52 * SY + q * 25 * SY, gw * (0.72 - q * 0.12), 9 * SY);
+      g2.fillStyle = other.theme.accentDeep || other.theme.accent;
+      g2.fillRect(x, y + gh - 34 * SY, gw, 34 * SY);
+      SV.text(g2, st, String(k + 1).padStart(2, '0'), x + 12 * SX, y + gh - 9 * SY, 20 * SF,
+        { kind: 'mono', color: '#FFFFFF' });
+      g2.restore();
+    }
+  }
+  const p2 = E(P(lt, 1.3, 0.5));
+  g2.save();
+  g2.globalAlpha = p2;
+  /* 放在标题与缩略卡之间：第一版放 800 压住了第 5/6 张卡的编号条 */
+  SV.text(g2, st, s.file || 'storyboard.png', M, 245 * SY, 40 * SF,
+    { kind: 'mono', color: st.theme.accent });
+  SV.text(g2, st, s.note || '', W - M, 245 * SY, 30 * SF,
+    { kind: 'body', color: st.theme.sub, align: 'right' });
+  g2.restore();
+}
+
+/* ── 镜头 10 · specs（瑞士网格）：88 种观感 ─────────────────────── */
+function shotSpecs(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  label(g2, st, s.formula || '11 模板 × 8 风格', M, 160 * SY);
+  const p0 = E(P(lt, 0.08, 0.65));
+  g2.save();
+  g2.globalAlpha = p0;
+  g2.translate(0, (1 - p0) * 36 * SY);
+  SV.text(g2, st, s.value || '88', M - 10 * SX, 570 * SY, 400 * SF, { kind: 'display' });
+  g2.restore();
+  const p1 = E(P(lt, 0.45, 0.55));
+  if (p1 > 0.01) {
+    g2.save();
+    g2.fillStyle = st.theme.accent;
+    g2.fillRect(M + 610 * SX, 400 * SY, 420 * SX * p1, 170 * SY);
+    if (p1 > 0.6) {
+      g2.globalAlpha = E((p1 - 0.6) / 0.4);
+      SV.text(g2, st, s.unit || '种观感', M + 640 * SX, 520 * SY, 76 * SF,
+        { kind: 'display', color: st.theme.onAccent || '#fff' });
+    }
+    g2.restore();
+  }
+  const specs = s.specs || [];
+  const bx = W - M - 620 * SX, by = 610 * SY;
+  specs.forEach((d, i) => {
+    const p = E(P(lt, 0.55 + i * 0.18, 0.4));
+    g2.save();
+    g2.globalAlpha = p;
+    const y = by + i * 44 * SY;
+    SV.text(g2, st, d.k, bx, y, 30 * SF, { kind: 'mono', color: st.theme.sub });
+    SV.text(g2, st, d.v, bx + 620 * SX, y, 30 * SF,
+      { kind: 'mono', color: st.theme.ink, align: 'right' });
+    g2.restore();
+  });
+  rule(g2, st, M, 610 * SY, W - 2 * M, 1, st.theme.faint, 2);
+}
+
+/* ── 镜头 11 · selfproof（霓虹复古）：本片由代码渲染 ───────────── */
+function shotSelfproof(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  label(g2, st, s.tag || 'MADE WITH HTML-TO-VIDEO', M, 160 * SY);
+  const p0 = E(P(lt, 0.15, 0.6));
+  g2.save();
+  g2.globalAlpha = p0;
+  g2.translate(0, (1 - p0) * 26 * SY);
+  const big = s.big || '本片由代码渲染';
+  const size = fitSize(g2, big, W - 2 * M, 128 * SF, st.type.display, 900);
+  SV.text(g2, st, big, M, 400 * SY, size, { kind: 'display' });
+  g2.restore();
+  const p1 = E(P(lt, 0.6, 0.5));
+  g2.save();
+  g2.globalAlpha = p1;
+  SV.text(g2, st, s.sub || '', M, 480 * SY, 38 * SF, { kind: 'body', color: st.theme.sub });
+  g2.restore();
+
+  /* 确定性波形：跟 112 BPM 同拍跳动，纯函数，不用随机 */
+  const cx = M, cy = 675 * SY, ww = W - 2 * M, wh = 150 * SY;
+  g2.save();
+  g2.fillStyle = 'rgba(12,4,32,0.32)';
+  g2.fillRect(cx, cy - wh * 0.46, ww, wh * 0.92);
+  g2.restore();
+  g2.save();
+  g2.strokeStyle = RGB(st.theme.accent, 0.95);
+  g2.lineWidth = 3.6 * SF;
+  g2.shadowColor = st.theme.accent; g2.shadowBlur = 12 * SF;
+  g2.beginPath();
+  for (let i = 0; i <= 180; i++) {
+    const u = i / 180;
+    const x = cx + u * ww;
+    const beat = Math.abs(Math.sin((lt * CFG_BPM / 60 + u * 7) * Math.PI));
+    const env = 0.35 + 0.65 * Math.pow(Math.sin(u * Math.PI), 0.6);
+    const v = (Math.sin(u * 96 + lt * 9) * 0.42 + Math.sin(u * 37 - lt * 5) * 0.3) * beat * env;
+    const y = cy + v * wh * 0.42;
+    if (i === 0) g2.moveTo(x, y); else g2.lineTo(x, y);
+  }
+  g2.stroke();
+  g2.shadowBlur = 0;
+  g2.strokeStyle = RGB(st.theme.accent2 || st.theme.accent, 0.35);
+  g2.lineWidth = 1.2 * SF;
+  g2.beginPath(); g2.moveTo(cx, cy); g2.lineTo(cx + ww, cy); g2.stroke();
+  g2.restore();
+}
+const CFG_BPM = 112;
+
+/* ── 镜头 12 · outro（水墨）：把想法写成代码 ───────────────────── */
+function shotOutro(g2, lt, c) {
+  const s = SHOTS[c.index], st = styleOf(s);
+  backdrop(g2, st, c);
+  const p0 = E(P(lt, 0.12, 0.8));
+  g2.save();
+  g2.globalAlpha = p0;
+  const big = s.big || '把想法写成代码';
+  const size = fitSize(g2, big, W - 2 * M - 100 * SX, 132 * SF, st.type.display, 900);
+  SV.text(g2, st, big, M, 430 * SY, size, { kind: 'display' });
+  g2.restore();
+
+  /* 朱红印章 */
+  const p1 = E(P(lt, 0.7, 0.6));
+  if (p1 > 0.01) {
+    g2.save();
+    g2.globalAlpha = p1;
+    const sw = 108 * SF, sx = W - M - sw, sy = 300 * SY;
+    g2.fillStyle = st.theme.accent;
+    g2.fillRect(sx, sy, sw, sw);
+    SV.text(g2, st, '开', sx + sw * 0.5, sy + sw * 0.45, 42 * SF,
+      { kind: 'display', color: '#FFF', align: 'center' });
+    SV.text(g2, st, '源', sx + sw * 0.5, sy + sw * 0.88, 42 * SF,
+      { kind: 'display', color: '#FFF', align: 'center' });
+    g2.restore();
+  }
+  const p2 = E(P(lt, 0.95, 0.6));
+  g2.save();
+  g2.globalAlpha = p2;
+  rule(g2, st, M, 500 * SY, 620 * SX, 1, st.theme.accent, 4);
+  SV.text(g2, st, s.url || '', M, 585 * SY, 42 * SF, { kind: 'mono', color: st.theme.ink });
+  SV.text(g2, st, s.sub || '', M, 650 * SY, 34 * SF, { kind: 'body', color: st.theme.sub });
+  g2.restore();
+  const p3 = E(P(lt, 1.5, 0.6));
+  g2.save();
+  g2.globalAlpha = p3;
+  g2.fillStyle = RGB(st.theme.ink, 0.09);
+  g2.fillRect(M, 680 * SY, W - 2 * M, 80 * SY);
+  g2.fillStyle = st.theme.accent;
+  g2.fillRect(M, 680 * SY, 7 * SX, 80 * SY);
+  SV.text(g2, st, s.cta || '', M + 32 * SX, 730 * SY, 36 * SF,
+    { kind: 'body', color: st.theme.accent });
+  g2.restore();
+}
+
+/* ── 镜头分派 ───────────────────────────────────────────────────── */
+const DRAW = {
+  hook: shotHook, pain: shotPain, evidence: shotEvidence, turn: shotTurn,
+  reveal: shotReveal, montageA: shotMontage, montageB: shotMontage,
+  how: shotHow, preview: shotPreview, specs: shotSpecs,
+  selfproof: shotSelfproof, outro: shotOutro,
+};
+
+let TL = null;
+function buildTimeline() {
+  /* 全片硬切：SC.build 里 cut 不会让相邻镜头重叠，镜头起点 = 配音起点，
+     音画才能逐镜对齐。节奏靠镜头内动画与音效，不靠交叉溶解。 */
+  TL = SC.build(SHOTS.map((s) => ({
+    id: s.id, dur: s.dur,
+    trans: { in: 'cut' },
+    draw: (g2, lt, ctx) => {
+      const fn = DRAW[s.id];
+      if (!fn) return;
+      g2.save(); fn(g2, lt, ctx); g2.restore();
+    },
+  })), { lead: 0.3, tail: 0.45 });
+}
+
+/* 当前镜头（按全局时间找），给 overlay / 字幕用 */
+function shotAt(t) {
+  const list = TL.shots;
+  for (let i = list.length - 1; i >= 0; i--) if (t >= list[i].start) return { shot: SHOTS[i], tl: list[i] };
+  return { shot: SHOTS[0], tl: list[0] };
+}
+
+/* ── 字幕与品牌层：画在最外层，不随镜头转场闪动 ───────────────── */
+function subtitles(g2, t) {
+  const { shot, tl } = shotAt(t);
+  const lt = t - tl.start;
+  const txt = shot.cue || '';
+  if (!txt) return;
+  const p = E(P(lt, 0.02, 0.22));
+  if (p <= 0.01) return;
+
+  const maxW = W - 2 * M - 80 * SX;
+  const size = 40 * SF;
+  const lines = wrap(g2, txt, maxW, size, '"Microsoft YaHei", sans-serif', 700, 2);
+  const lineH = size * 1.35;
+  const boxH = lines.length * lineH + 34 * SY;
+  const boxY = H * 0.855 - boxH;   /* 避开 B 站进度条 / 底部 15% 安全带 */
+  const boxW = Math.min(W - 2 * M,
+    Math.max(...lines.map((l) => { g2.font = `700 ${size}px "Microsoft YaHei", sans-serif`; return g2.measureText(l).width; })) + 64 * SX);
+
+  g2.save();
+  g2.globalAlpha = p;
+  g2.fillStyle = 'rgba(14,16,22,0.82)';
+  g2.fillRect((W - boxW) / 2, boxY, boxW, boxH);
+  g2.fillStyle = '#FF4A8B';
+  g2.fillRect((W - boxW) / 2, boxY, 6 * SX, boxH);
+  g2.textAlign = 'center';
+  g2.textBaseline = 'alphabetic';
+  g2.font = `700 ${size}px "Microsoft YaHei", sans-serif`;
+  g2.fillStyle = '#FFFFFF';
+  g2.shadowColor = 'rgba(0,0,0,0.6)'; g2.shadowBlur = 4 * SF;
+  lines.forEach((l, i) => g2.fillText(l, W / 2, boxY + 22 * SY + (i + 1) * lineH - 8 * SY));
+  g2.restore();
+}
+
+function chrome(g2, t) {
+  const { shot } = shotAt(t);
+  const idx = SHOTS.indexOf(shot) + 1;
+  /* 浅底风格（瑞士 / 孔版 / 水墨 / 等距）上白字会消失，改成深字；
+     蒙太奇自带顶部信息条，别在 46px 处再叠一层品牌字。 */
+  if (shot.style !== 'montage') {
+    const cur = styleOf(shot);
+    const dark = !!cur.dark;
+    g2.save();
+    g2.globalAlpha = 0.92;
+    g2.font = `600 ${20 * SF}px ui-monospace, Consolas, monospace`;
+    g2.textAlign = 'left';
+    g2.fillStyle = dark ? 'rgba(255,255,255,0.9)' : 'rgba(18,18,22,0.78)';
+    g2.shadowColor = dark ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.8)';
+    g2.shadowBlur = 5 * SF;
+    g2.fillText('HTML → VIDEO', M, 46 * SY);
+    g2.textAlign = 'right';
+    g2.fillText(`${String(idx).padStart(2, '0')} / ${String(SHOTS.length).padStart(2, '0')}`, W - M, 46 * SY);
+    g2.restore();
+  }
+  /* 顶部进度：一眼看到还剩多少，降低跳出 */
+  const p = SV.clamp(t / TL.dur);
+  g2.save();
+  g2.fillStyle = 'rgba(255,255,255,0.18)'; g2.fillRect(0, 0, W, 5 * SY);
+  g2.fillStyle = '#FF4A8B'; g2.fillRect(0, 0, W * p, 5 * SY);
+  g2.restore();
+}
+
+/* ── 帧入口 ─────────────────────────────────────────────────────── */
+function frame(t) {
+  measure();
+  window.__probe = { W, H, bg: '#000000', dur: TL && TL.dur, t };
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+  const tt = SV.clamp(t, 0, TL.dur - 1e-4);
+  SC.paint(g, TL, tt, { W, H, bg: '#000000', SF });
+  /* overlay 用当前镜头的风格，放在最外层 */
+  const { shot } = shotAt(tt);
+  const cur = shot.style === 'montage' ? ST.riso : styleOf(shot);
+  SV.overlay(g, cur, W, H, tt, { S: SF });
+  subtitles(g, tt);
+  chrome(g, tt);
+}
+
+buildTimeline();
+SC.expose(TL);
+window.__seek = frame;
+window.__ready = true;
+
+if (!window.__seekRender) {
+  const t0 = performance.now();
+  (function loop(now) { frame(((now - t0) / 1000) % TL.dur); requestAnimationFrame(loop); })(performance.now());
+} else {
+  frame(0);
+}
+</script>
+</body>
+</html>

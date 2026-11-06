@@ -1,0 +1,270 @@
+[
+  {
+    "id": "hook",
+    "style": "swiss",
+    "gap": 0.55,
+    "h1": "17",
+    "h2": "次抽卡",
+    "tag": "AI VIDEO / 2026",
+    "kicker": "第 17 次重抽 · 还是不对",
+    "dur": 5.89,
+    "start": 0,
+    "voStart": 0.1,
+    "voDur": 5.24,
+    "cue": "让 AI 做一条五秒的产品视频，我抽了十七次卡，能用的还是零。",
+    "index": 1
+  },
+  {
+    "id": "pain",
+    "style": "chalk",
+    "gap": 0.45,
+    "head": "生成式视频的三宗罪",
+    "items": [
+      {
+        "n": "01",
+        "t": "文字扭曲",
+        "d": "近看全是造出来的字"
+      },
+      {
+        "n": "02",
+        "t": "改字重来",
+        "d": "一个字，整段重新抽"
+      },
+      {
+        "n": "03",
+        "t": "音画错位",
+        "d": "字幕和配音差半拍"
+      }
+    ],
+    "dur": 6.81,
+    "start": 5.89,
+    "voStart": 5.99,
+    "voDur": 6.26,
+    "cue": "文字扭曲、凭空造字；改一个字，整段重来；字幕和配音，永远差半拍。",
+    "index": 2
+  },
+  {
+    "id": "evidence",
+    "style": "blueprint",
+    "gap": 0.45,
+    "head": "不是我一个人的问题",
+    "cards": [
+      {
+        "n": "01",
+        "t": "字幕乱码",
+        "d": "几乎无法避免",
+        "s": "公开实测 · 2026"
+      },
+      {
+        "n": "02",
+        "t": "反复重试",
+        "d": "抽卡成本按次计",
+        "s": "开发者实测"
+      },
+      {
+        "n": "03",
+        "t": "抽卡师",
+        "d": "一个新岗位出现了",
+        "s": "行业报道 · 2026"
+      }
+    ],
+    "source": "素材来源：澎湃新闻《决战视频 AI》/ Seedance 2.0 实测 / CSDN 抽卡实测",
+    "dur": 8.01,
+    "start": 12.7,
+    "voStart": 12.8,
+    "voDur": 7.46,
+    "cue": "这不是我较真。今年的公开实测里，字幕乱码几乎没法避免，行业甚至多了个岗位，叫抽卡师。",
+    "index": 3
+  },
+  {
+    "id": "turn",
+    "style": "swiss",
+    "gap": 0.5,
+    "line1": "视频不该是抽卡",
+    "line2": "应该是编译",
+    "en": "DETERMINISTIC · NOT PROBABILISTIC",
+    "dur": 4,
+    "start": 20.71,
+    "voStart": 20.81,
+    "voDur": 3.4,
+    "cue": "所以换个思路：视频不靠生成，靠编译。",
+    "index": 4
+  },
+  {
+    "id": "reveal",
+    "style": "riso",
+    "gap": 0.45,
+    "lines": [
+      "HTML",
+      "→ VIDEO"
+    ],
+    "sub": "开源 · MIT · 逐帧确定性渲染",
+    "badge": "OPEN SOURCE",
+    "dur": 6.39,
+    "start": 24.71,
+    "voStart": 24.81,
+    "voDur": 5.84,
+    "cue": "这是个开源工具，能把网页直接渲成视频。写一份 HTML，出一条片。",
+    "index": 5
+  },
+  {
+    "id": "montageA",
+    "style": "montage",
+    "gap": 0.3,
+    "styles": [
+      "riso",
+      "cutpaper",
+      "blueprint",
+      "chalk"
+    ],
+    "names": [
+      "孔版印刷",
+      "剪纸拼贴",
+      "工程蓝图",
+      "黑板粉笔"
+    ],
+    "lines": [
+      "用代码",
+      "做视频"
+    ],
+    "range": "01—04 / 08",
+    "dur": 6.76,
+    "start": 31.1,
+    "voStart": 31.2,
+    "voDur": 6.36,
+    "cue": "同一份 HTML，只改一个单词，就是另一支片：孔版、剪纸、蓝图、黑板。",
+    "index": 6
+  },
+  {
+    "id": "montageB",
+    "style": "montage",
+    "gap": 0.35,
+    "styles": [
+      "isometric",
+      "synthwave",
+      "swiss",
+      "ink"
+    ],
+    "names": [
+      "等距线稿",
+      "霓虹复古",
+      "瑞士网格",
+      "水墨宣纸"
+    ],
+    "lines": [
+      "用代码",
+      "做视频"
+    ],
+    "range": "05—08 / 08",
+    "dur": 6.79,
+    "start": 37.86,
+    "voStart": 37.96,
+    "voDur": 6.34,
+    "cue": "等距、霓虹、瑞士、水墨。八种视觉语言，八支完全不同的成片。",
+    "index": 7
+  },
+  {
+    "id": "how",
+    "style": "blueprint",
+    "gap": 0.5,
+    "head": "把视频当程序写",
+    "code": "node scripts/render-video-seek.js demo.html --fps=60 --audio=voice.wav",
+    "formula": "frame(t) → pixels",
+    "steps": [
+      {
+        "n": "01",
+        "t": "写画面"
+      },
+      {
+        "n": "02",
+        "t": "渲帧"
+      },
+      {
+        "n": "03",
+        "t": "编码"
+      }
+    ],
+    "note": "改第 7 秒第 12 帧 → 只重渲那一帧",
+    "dur": 10.46,
+    "start": 44.65,
+    "voStart": 44.75,
+    "voDur": 9.86,
+    "cue": "原理很朴素：每一帧都是时间 t 的纯函数。写画面、渲帧、编码，三步出片；改第七秒第十二帧，就只重渲那一帧。",
+    "index": 8
+  },
+  {
+    "id": "preview",
+    "style": "isometric",
+    "gap": 0.5,
+    "head": "渲全片之前，先看一页",
+    "file": "storyboard.png",
+    "note": "每个镜头一张中点静帧 · 十几秒出图",
+    "dur": 6.74,
+    "start": 55.11,
+    "voStart": 55.21,
+    "voDur": 6.14,
+    "cue": "怕渲完才发现不好看？先出一张分镜板，全片镜头的中点，渲之前一眼看完。",
+    "index": 9
+  },
+  {
+    "id": "specs",
+    "style": "swiss",
+    "gap": 0.5,
+    "value": "88",
+    "unit": "种观感",
+    "formula": "11 模板 × 8 风格",
+    "specs": [
+      {
+        "k": "1920×1080",
+        "v": "60 fps"
+      },
+      {
+        "k": "纯 CPU",
+        "v": "无需显卡"
+      },
+      {
+        "k": "字幕 / 配乐",
+        "v": "代码里改"
+      },
+      {
+        "k": "竖屏 9:16",
+        "v": "一个参数"
+      }
+    ],
+    "dur": 11.1,
+    "start": 61.85,
+    "voStart": 61.95,
+    "voDur": 10.5,
+    "cue": "十一个模板乘八种风格，八十八种观感；1080p、六十帧、纯 CPU，不用显卡。字幕、配乐、竖屏，也全在代码里改。",
+    "index": 10
+  },
+  {
+    "id": "selfproof",
+    "style": "synthwave",
+    "gap": 0.55,
+    "big": "本片由代码渲染",
+    "sub": "0 实拍素材 · 0 剪辑软件 · 1 份 HTML",
+    "tag": "MADE WITH HTML-TO-VIDEO",
+    "dur": 6.07,
+    "start": 72.95,
+    "voStart": 73.05,
+    "voDur": 5.42,
+    "cue": "这支片的画面、字幕、配乐，全是代码生成的，没有一帧实拍素材。",
+    "index": 11
+  },
+  {
+    "id": "outro",
+    "style": "ink",
+    "gap": 1,
+    "big": "把想法写成代码",
+    "url": "github.com/wx4766/html-to-video",
+    "sub": "MIT 开源 · 免费 · 中文友好",
+    "cta": "评论区聊聊：你被「抽卡」坑过几次？",
+    "dur": 6.32,
+    "start": 79.02,
+    "voStart": 79.12,
+    "voDur": 5.22,
+    "cue": "别再抽卡了。把想法写成代码，开源地址在简介，评论区见。",
+    "index": 12
+  }
+]

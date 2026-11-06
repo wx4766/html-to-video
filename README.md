@@ -359,6 +359,20 @@ node scripts/render-video-seek.js assets/style-gallery.html --stills=0.5,1.5,2.5
 bash assets/render.sh assets/style-film.html --duration=13 --fps=60
 ```
 
+**一支完整的多风格推广片**：`assets/examples/promo-zh.html` + `promo-zh.story.json`
+是 12 镜 / 8 风格 / 85 秒的真实案例，镜头表由配音净时长反推，所以解说、字幕、
+画面天然对轴，不用手工卡秒。它演示了两条很实用的做法：每个镜头单独指定
+`shot.style`（一镜一风格，蒙太奇一镜里还能连切四种），以及把字幕画在所有镜头
+之上（转场时不闪、不随风格变色）。
+
+```bash
+node scripts/storyboard.js assets/examples/promo-zh.html \
+  --story=assets/examples/promo-zh.story.json --cols=3
+node scripts/render-video-seek.js assets/examples/promo-zh.html \
+  --story=assets/examples/promo-zh.story.json --duration=85.34 --fps=30 \
+  --audio=voice.wav --out=promo.mp4
+```
+
 ## 先看分镜，再渲全片
 
 60 秒 1080p 逐帧渲要 3~10 分钟。渲完才发现「第 4 镜字太小」，改一轮又是几分钟。
