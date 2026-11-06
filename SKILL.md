@@ -1,6 +1,6 @@
 ---
 name: html-to-video
-description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」时使用。自带渲染器与 11 个开箱即用模板（含多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡）、图标/人物/运镜素材库，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
+description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」「换个风格」时使用。自带渲染器、11 个版式模板（多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡）、8 种视觉风格（孔版印刷 / 剪纸 / 蓝图 / 粉笔 / 等距 / 霓虹 / 瑞士 / 水墨，一条命令切换）、分镜预演脚本（渲全片前先出一页分镜板）、图标/人物/运镜素材库，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
 agent_created: true
 ---
 
@@ -40,6 +40,15 @@ agent_created: true
 每个模板**单文件自包含**，顶部有一个显眼的 `CFG` 配置块，改文案/数据即可 ——
 不用懂 canvas 也能出片。**11 个模板全部支持换主题**（见「换配色」一节）。
 想做别的，再看 `assets/animation-skeleton.html` 从零写。
+
+**上面 11 个是「版式」。想要不同的「观感」，加一个 `--theme` 就有 8 种视觉语言**：
+
+```bash
+bash assets/render.sh assets/style-film.html --duration=13 --theme=ink      # 水墨
+bash assets/render.sh assets/style-film.html --duration=13 --theme=swiss    # 瑞士网格
+```
+
+版式 × 风格 = 12 × 8 种组合。想先挑风格，跑一次八宫格即可（见「风格」一节）。
 
 **做「一支片子」而不是「一段动画」**：用 `assets/lib/scenes.js` 写多镜头 + 转场，
 镜头表还能用 `--story=shots.json` 外置 —— LLM 写 JSON 比写几百行 canvas 代码可靠得多。
@@ -599,6 +608,126 @@ bash assets/render.sh explainer.html --duration=17.6 --fps=30 --story=shots.json
  { "kind": "talk",  "id": "why",  "dur": 3.5, "say": "...", "trans": { "in": "fade", "dur": 0.45 } }]
 ```
 
+## 先看分镜，再渲全片（省时间的关键一步）
+
+一支 60 秒 1080p 的片子逐帧渲要 3~10 分钟。渲完才发现「第 4 镜字太小」「转场太赶」，
+改一轮又要几分钟。**分镜板**只取每镜中点渲一张静帧，十几秒出，一页看完：
+
+```bash
+node scripts/storyboard.js my.html                    # 4 列网格
+node scripts/storyboard.js my.html --cols=2 --theme=chalk
+node scripts/storyboard.js my.html --story=shots.json --width=1080 --height=1920
+```
+
+产出 `<名>.storyboard/`：每个镜头一张 PNG、一页带标注的 `storyboard.html`、一张整页截图
+`storyboard.png`（贴给别人问「这样行不行」最方便）。
+
+**什么时候必须先跑**：
+
+- 镜头 >= 3 个，或总时长 >= 10 秒
+- 改了版式/文案之后要重渲全片
+- 用户还没看过这支片长什么样
+
+**它靠什么知道镜头表**：页面里调过 `SC.expose(TL)` 就能读到 `window.__sceneTable`；
+没调就按总时长均分（会提示）。所以写多镜头页面时，记得 expose 一句。
+
+分镜板能看出的问题：镜头时长分配、层级（标题/正文/注释大小）、有没有哪一镜是空的、
+风格与内容的匹配度。**看不出的**：动效手感、转场是否顺、音画是否对齐 —— 那些要出片或
+`--stills` 抽帧连看。
+
+## 风格：8 种视觉语言，一条命令换
+
+模板决定**画什么**（标题 / 要点 / 条形图），风格决定**长什么样**（什么纸、什么墨、线多粗、
+字多紧、入场怎么动、签名元素是什么）。`assets/lib/styles.js` 把这两层拆开了。
+
+```bash
+bash assets/render.sh assets/style-film.html --duration=13 --theme=chalk
+bash assets/render.sh assets/style-film.html --duration=13 --theme=水墨 --width=1080 --height=1920
+```
+
+| id | 中文 | 一句话 | 适合 |
+|---|---|---|---|
+| `riso` | 孔版印刷 | 米白纸 + 三色网点（真实网角）+ 标题套印错位 | 观点、数据、独立杂志感（**默认**，辨识度最高） |
+| `cutpaper` | 剪纸拼贴 | 四边手撕的纸片 + 锐利硬投影 + 两张纸叠着 | 故事、人物、教育 |
+| `blueprint` | 工程蓝图 | 深蓝 + 双层格网 + 四角十字标记 + 等宽字 | 技术、架构、API |
+| `chalk` | 黑板粉笔 | 墨绿板 + 双线抖动笔触 + 粉尘 + 楷体 | 教学、科普 |
+| `isometric` | 等距线稿 | 白底 + 2:1 等距立体块 + 白面遮挡 | 机制、结构、流程 |
+| `synthwave` | 霓虹复古 | 条纹太阳 + 透视地面网格 + CRT 扫描线 | 音乐、游戏、复古科技 |
+| `swiss` | 瑞士网格 | 白底 + 超大字号 + 单一信号红 + 零圆角 | 品牌、观点、发布会 |
+| `ink` | 水墨宣纸 | 宣纸纤维 + 三层洇墨 + 朱红印章色 | 国风、文化、历史 |
+
+**中文名也认**（`--theme=水墨`、`--theme=剪纸`）。完整选择指南、每种风格的签名元素与禁忌
+见 `assets/STYLES.md`。
+
+两个现成入口：
+
+```bash
+# 八宫格：一秒一个风格，出 8 张全屏静帧，一眼挑风格
+node scripts/render-video-seek.js assets/style-gallery.html --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5
+
+# 一支 13 秒的风格短片（片头 / 要点 / 数据 / 片尾），支持 --story 外置文案
+bash assets/render.sh assets/style-film.html --duration=13 --fps=60 --theme=riso
+```
+
+**自己写页面时，四条硬约定**（踩过，都是"画出来是黑的"这种）：
+
+1. `SV.card()` **必须用返回值排版**。它返回 `{x, y, w, h, ink}` —— 内容安全框。
+   每种风格能放字的地方不同（等距只给顶面、水墨只给内圈、瑞士要反白），
+   拿原始 box 硬排，字一定压边或消失。
+2. **每个镜头的 `draw` 自己画满背景**（`SV.bg(...)`）。`SC.paint` 里 `paintShot()`
+   会先 `clearRect`，漏了这步背景就是黑的。
+3. **`SV.overlay` 放在最外层**，在所有镜头之上。放镜头里，转场时扫描线会跟着淡入淡出。
+4. 纹理噪点用 `SV.rng(seed)`、手抖用 `SV.boil(st, t, i, amp)`，**不要 `Math.random()`** ——
+   它们是纯函数，换机器渲出来一模一样。
+
+**原来的 11 个模板已经全部接上风格**，不用改一行代码：
+
+```bash
+bash assets/render.sh assets/templates/bar-chart.html --theme=blueprint --duration=6
+bash assets/render.sh assets/templates/explainer.html --theme=riso --duration=18
+bash assets/render.sh assets/templates/vertical-card.html --theme=synthwave --width=1080 --height=1920
+```
+
+换的不只是配色，背景整层被换成该风格的纸纹 / 网点 / 格网 / 透视地面，
+气泡、图标底这些可选色也跟着明暗走。机制只有一句：模板背景层判断 `TH.__style`，
+有就走 `SV.bgCached(...)`。**`styles.js` 不需要在模板里引** —— 渲染器启动时注入，
+所以模板可以单独拷走、也可以在临时目录里跑测试，不会因为相对路径 404 被判失败。
+
+哪种模板配哪种风格顺手，见 `assets/STYLES.md` 末尾的匹配表。
+
+### 镜头类型：8 种，一条 JSON 排顺序
+
+`style-film.html` 内置 8 种镜头。给 `--story` 就是整份替换（给了 6 个镜头就渲 6 个，
+不是只覆盖前 4 个）：
+
+| id | 用途 | 关键字段 |
+|---|---|---|
+| `hook` | 片头 | `kicker` / `lines[]` / `sub` / `badgeNum` / `badge` |
+| `points` | 要点清单（2~4 条） | `head` / `items[{n,t,d}]` |
+| `quote` | 引用（左侧粗引线 + 大字） | `text` / `by` |
+| `steps` | 流程步骤（2~4 步，带箭头） | `head` / `items[{n,t}]` / `note` |
+| `metric` | 一个大数字 + 对比条 | `head` / `value` / `unit` / `note` / `bars[{label,p}]` |
+| `compare` | 前后对比 + 结论条 | `head` / `before{label,title,note}` / `after{...}` / `conclusion` |
+| `timeline` | 时间线（节点上下交错） | `head` / `items[{n,t}]` |
+| `outro` | 片尾 | `big` / `small` |
+
+每个镜头都要 `dur`（秒）。8 个镜头 = 64 种组合（8 镜头 × 8 风格）。
+
+```bash
+# 现成示例：8 个镜头串成一支 26 秒的片子
+node scripts/storyboard.js assets/style-film.html \
+  --story=assets/examples/story-8shots.json --cols=4     # 先看分镜板
+bash assets/render.sh assets/style-film.html \
+  --story=assets/examples/story-8shots.json --theme=chalk --duration=26
+```
+
+**加新镜头类型**：写一个 `shotXxx(g2, lt, c)`，从 `SHOTS[c.index]` 取数据，
+放进 `DRAW` 映射表。三条规矩：
+
+- 开头必须 `backdrop(g2, lt, c)` + `chrome(g2, 1)`
+- 所有卡片用 `SV.card()` 的返回值排版，字号用 `Math.min(理想值, cb.h * 比例)` 夹一道
+- 入场用 `SV.clamp((t - 延迟) / 时长)` + `SV.enter(ST, p)`，别自己写缓动
+
 ## 运镜：assets/lib/camera.js
 
 画面元素都到位之后还剩几秒 —— 那几秒最容易「死」，`qa.js` 会报「最长连续静止」。
@@ -700,6 +829,11 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 | `assets/lib/camera.js` | 运镜（推拉 / 呼吸 / 手持微抖 / 撞击震动），确定性伪噪声，不用随机数 |
 | `assets/lib/shapes.js` | 图形元件：40+ 线性图标 / 卡片 / 箭头 / 正交连接线 / 背景纹理 |
 | `assets/lib/figures.js` | 参数化人物（发型 / 表情 / 姿势 / 配色）+ 对话气泡 |
+| `assets/lib/styles.js` | **风格库**：8 种视觉语言（孔版印刷/剪纸/蓝图/粉笔/等距/霓虹/瑞士/水墨），`SV.bg` / `SV.text` / `SV.card` / `SV.bar` / `SV.overlay` / `SV.boil` / `SV.BEAT` |
+| `assets/STYLES.md` | 风格选择指南：每种风格的签名元素、适用场景、禁忌、加新风格的字段清单 |
+| `assets/style-film.html` | **风格短片**：片头/要点/数据/片尾 4 镜，8 风格通用，支持 `--story` 与横竖屏 |
+| `assets/style-gallery.html` | 八宫格风格样张，第 k 秒一个风格，配 `--stills` 一次出 8 张静帧 |
+| `scripts/storyboard.js` | **分镜预演**：每镜中点一张静帧 → 一页分镜板 HTML + 整页截图，渲全片前先确认 |
 
 ### 渲得有多慢：自己量一次，别信文档
 

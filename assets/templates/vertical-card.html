@@ -123,31 +123,37 @@ function drawFrame(T) {
   g.clearRect(0, 0, W, H);
 
   /* 背景：深色渐变 */
-  const bg = g.createLinearGradient(0, 0, W * 0.4, H);
-  bg.addColorStop(0, TH.bg);
-  bg.addColorStop(1, TH.bgFar || '#0E1420');
-  g.fillStyle = bg;
-  g.fillRect(0, 0, W, H);
+  /* 风格底：--theme=riso/chalk/ink… 时换成该风格的纸纹/网点/格网/透视地面。
+     没引 lib/styles.js 时自动走下面的旧画法，老命令逐像素不变。 */
+  if (TH.__style && window.SV) {
+    SV.bgCached(g, TH.__style, W, H, 0, {}, 0);
+  } else {
+    const bg = g.createLinearGradient(0, 0, W * 0.4, H);
+    bg.addColorStop(0, TH.bg);
+    bg.addColorStop(1, TH.bgFar || '#0E1420');
+    g.fillStyle = bg;
+    g.fillRect(0, 0, W, H);
 
-  /* 呼吸暖光：右下角，慢慢起伏 */
-  const glowP = outCubic(win(T, 0, 1.4));
-  const gx = W * 0.82, gy = H * 0.72 + Math.sin(T * 0.5) * 18 * U;
-  const rad = g.createRadialGradient(gx, gy, 0, gx, gy, W * 0.92);
-  rad.addColorStop(0, RGBA(TH.accent, 0.17 * glowP));
-  rad.addColorStop(0.5, RGBA(TH.accentDeep || '#FF8A3D', 0.06 * glowP));
-  rad.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = rad;
-  g.fillRect(0, 0, W, H);
+    /* 呼吸暖光：右下角，慢慢起伏 */
+    const glowP = outCubic(win(T, 0, 1.4));
+    const gx = W * 0.82, gy = H * 0.72 + Math.sin(T * 0.5) * 18 * U;
+    const rad = g.createRadialGradient(gx, gy, 0, gx, gy, W * 0.92);
+    rad.addColorStop(0, RGBA(TH.accent, 0.17 * glowP));
+    rad.addColorStop(0.5, RGBA(TH.accentDeep || '#FF8A3D', 0.06 * glowP));
+    rad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rad;
+    g.fillRect(0, 0, W, H);
 
-  /* 环境光扫：极淡光带缓慢下移 —— 定格待读时画面不死 */
-  const SWEEP = TH.sweep || '255,255,255';
-  const scy = (T / DUR * 1.7 - 0.35) * (H + 1400 * U) - 700 * U;
-  const sweep = g.createLinearGradient(0, scy - 700 * U, W, scy + 700 * U);
-  sweep.addColorStop(0, `rgba(${SWEEP},0)`);
-  sweep.addColorStop(0.5, `rgba(${SWEEP},0.045)`);
-  sweep.addColorStop(1, `rgba(${SWEEP},0)`);
-  g.fillStyle = sweep;
-  g.fillRect(0, 0, W, H);
+    /* 环境光扫：极淡光带缓慢下移 —— 定格待读时画面不死 */
+    const SWEEP = TH.sweep || '255,255,255';
+    const scy = (T / DUR * 1.7 - 0.35) * (H + 1400 * U) - 700 * U;
+    const sweep = g.createLinearGradient(0, scy - 700 * U, W, scy + 700 * U);
+    sweep.addColorStop(0, `rgba(${SWEEP},0)`);
+    sweep.addColorStop(0.5, `rgba(${SWEEP},0.045)`);
+    sweep.addColorStop(1, `rgba(${SWEEP},0)`);
+    g.fillStyle = sweep;
+    g.fillRect(0, 0, W, H);
+  }
 
   /* 顶部左侧短竖线（生长） */
   const barP = smooth(win(T, 0.10, 0.85));

@@ -1,7 +1,7 @@
 {
   "name": "html-to-video",
-  "version": "1.5.0",
-  "description": "Render HTML/Canvas animations to MP4 frame by frame — deterministic, frame-accurate, no GPU. · 用代码逐帧做视频：HTML / Canvas → MP4 / GIF / 透明层",
+  "version": "1.6.0",
+  "description": "Render HTML/Canvas animations to MP4 frame by frame — deterministic, frame-accurate, no GPU. 8 visual styles (riso / cut-paper / blueprint / chalk / isometric / synthwave / swiss / ink) + storyboard preview. · 用代码逐帧做视频：HTML / Canvas → MP4 / GIF / 透明层",
   "keywords": [
     "html-to-video",
     "html-to-mp4",
@@ -34,6 +34,7 @@
     "test": "node --test",
     "test:smoke": "node --test test/render-smoke.test.mjs",
     "render": "node scripts/render-video-seek.js",
+    "storyboard": "node scripts/storyboard.js",
     "qa": "node scripts/qa.js",
     "bench": "node scripts/bench.js"
   },

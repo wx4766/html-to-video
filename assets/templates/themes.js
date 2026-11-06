@@ -87,6 +87,28 @@
       window.__h2vThemeResolved = 'custom';
       return Object.assign({}, MIDNIGHT, name);
     }
+    /* 先问风格库（lib/styles.js 若已加载）：风格自带色板，且比纯配色多一套视觉语言。
+       这样 `--theme=riso` 对老模板也生效 —— 至少把配色换成孔版印刷的四色。
+       没装风格库（只引了 themes.js）时自动跳过，行为与旧版完全一致。 */
+    if (typeof name === 'string' && window.SV && window.SV.norm) {
+      const sid = window.SV.norm(name);
+      if (sid) {
+        const st = window.SV.get(sid);
+        window.__h2vThemeResolved = sid;
+        /* 返回浅拷贝并挂 __style：模板靠它判断「这是风格，不是配色」，
+           进而在背景那里换成带纸纹/网格/透视地面的底子。
+           风格对象自己是被 freeze 的，不能直接往它身上挂东西。 */
+        const th = Object.assign({}, st.theme);
+        th.__style = st;
+        /* 模板会用到的可选字段，风格表里没写就按明暗推一个。
+           不补的话，explainer 的对话气泡会回退成 `rgba(255,255,255,.95)` ——
+           在白底风格上等于凭空消失（实测在 riso 上气泡整个糊进纸里）。 */
+        if (!th.bubble) th.bubble = st.dark ? 'rgba(22,26,34,0.94)' : '#FFFFFF';
+        if (!th.bubbleInk) th.bubbleInk = st.dark ? '#F4F7FC' : '#1B1815';
+        if (!th.iconBg) th.iconBg = st.dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)';
+        return th;
+      }
+    }
     window.__h2vThemeResolved = window.H2V_THEMES[name] ? name : 'midnight';
     return window.H2V_THEMES[name] || MIDNIGHT;
   };

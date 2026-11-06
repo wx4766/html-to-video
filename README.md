@@ -6,17 +6,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
 
-**[在线预览 · wx4766.github.io/html-to-video](https://wx4766.github.io/html-to-video/)** —— 不用 clone，先看效果
-
 [![10 秒演示：HTML in，MP4 out —— 这段片子本身就是一份 HTML 文件渲出来的](docs/demo-hero.gif)](docs/demo-hero.mp4)
 
 <sub>这段片子就是 [`docs/demo-hero.html`](docs/demo-hero.html)（447 行、零依赖）渲出来的。自己复现一遍：<br>
 `node scripts/render-video-seek.js docs/demo-hero.html --duration=10 --fps=60`</sub>
-
-[![](docs/demo-multiratio-cover.jpg)](docs/demo-multiratio.mp4)
-
-<sub>**同一份 HTML，一条命令出全套平台比例。** 三个画面是真实渲染输出（1920×1080 / 1080×1440 / 1080×1920），
-不是示意图：`--presets=douyin,xiaohongshu,youtube`。</sub>
 
 把 HTML / Canvas 动画**逐帧渲染成 MP4**（可配乐、可出 GIF）。
 
@@ -40,7 +33,7 @@
 | **零费用** | 本地跑，不调任何 API |
 | **有质量门** | 内置自动化验收：确定性、卡顿、跳变、半截字、叠字、字幕带、字体回退 |
 | **开箱即用** | 11 个模板改个配置块就出片，不用从零学 canvas |
-| **横竖屏都行** | 模板跟视口自适应；`--presets=douyin,xiaohongshu,youtube` 一条命令出全套比例，不裁切 |
+| **横竖屏都行** | 模板跟视口自适应，16:9 / 9:16 换 `--width/--height` 即可，不裁切 |
 | **能出「一支片子」** | 多镜头 + 8 种转场 + 持续运镜，一个 HTML 出整支，不用渲几段再拼 |
 | **自带素材** | 40+ 图标 / 参数化人物 / 卡片箭头 / 背景纹理，纯代码零依赖零版权风险 |
 | **能叠能配** | `--alpha` 出透明层叠到实拍上；`--srt` 挂外部字幕时间轴 |
@@ -133,10 +126,6 @@ bash assets/render.sh title-card.html --duration=6 --fps=60 --width=1280 --heigh
 bash assets/render.sh bar-chart.html --duration=8 \
   --presets=douyin,xiaohongshu,square --out=dist/chart.mp4
 ```
-
-[![](docs/demo-multiratio.gif)](docs/demo-multiratio.mp4)
-
-<sub>三个画面同源同帧，只是视口不同 —— 版式跟着变，内容一个字没改。</sub>
 
 ```text
 dist/chart-douyin.mp4       1080×1920   抖音 / 快手 / 视频号
@@ -327,6 +316,67 @@ node scripts/render-video-seek.js subtitle-card.html --duration=8 --srt=voice.sr
 实测 4 句 / 80 帧，误差 0 ms。
 
 > 底部 15% 是各平台进度条 / 按钮区，字幕踩进去等于白写；`qa.js` 会提示「进字幕带」。
+
+## 8 种风格：同样的内容，换个样子
+
+模板解决「这段内容怎么排」，风格解决「这支片长什么样」。两者分开之后，
+11 个版式 × 8 种视觉语言 = 88 种观感，而不用写 88 个模板。
+
+```bash
+bash assets/render.sh assets/style-film.html --duration=13 --theme=chalk     # 黑板粉笔
+bash assets/render.sh assets/style-film.html --duration=13 --theme=水墨 --width=1080 --height=1920
+```
+
+| 风格 | 一句话 | 适合 |
+|---|---|---|
+| `riso` 孔版印刷 | 米白纸 + 荧光粉/蓝/绿三套网点（真实印刷网角）+ 标题套印错位 | 观点、数据、独立杂志感 |
+| `cutpaper` 剪纸拼贴 | 四边手撕的纸片 + 锐利硬投影 + 两层纸叠着 | 故事、人物、教育 |
+| `blueprint` 工程蓝图 | 深蓝 + 20/100px 双层格网 + 四角十字定位标记 + 等宽字 | 技术、架构、API |
+| `chalk` 黑板粉笔 | 墨绿板 + 双线抖动笔触 + 粉尘 + 楷体 | 教学、科普 |
+| `isometric` 等距线稿 | 白底 + 2:1 等距立体块（顶面/左面/右面）+ 白面遮挡 | 机制、结构、流程 |
+| `synthwave` 霓虹复古 | 条纹太阳 + 透视地面网格 + CRT 扫描线 + 色差 | 音乐、游戏、复古科技 |
+| `swiss` 瑞士网格 | 白底 + 超大字号 + 单一信号红 + 零圆角 | 品牌、观点、发布会 |
+| `ink` 水墨宣纸 | 宣纸纤维 + 三层洇墨 + 朱红印章色 + 大留白 | 国风、文化、历史 |
+
+`--theme` 也吃中文名（`--theme=水墨`）。**11 个老模板已经全部接上** ——
+换的不只是配色，背景整层会换成该风格的纸纹 / 网点 / 格网 / 透视地面：
+
+```bash
+bash assets/render.sh assets/templates/bar-chart.html --theme=blueprint --duration=6
+bash assets/render.sh assets/templates/explainer.html --theme=riso --duration=18
+```
+
+每种风格的签名元素、禁忌、在代码里怎么调、哪个模板配哪种风格，见
+**[assets/STYLES.md](assets/STYLES.md)**。
+
+**先看效果，再决定**：
+
+```bash
+# 八宫格：第 k 秒一个风格，出 8 张全屏静帧
+node scripts/render-video-seek.js assets/style-gallery.html --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5
+
+# 一支 13 秒的风格短片：片头 / 要点 / 数据 / 片尾
+bash assets/render.sh assets/style-film.html --duration=13 --fps=60
+```
+
+## 先看分镜，再渲全片
+
+60 秒 1080p 逐帧渲要 3~10 分钟。渲完才发现「第 4 镜字太小」，改一轮又是几分钟。
+所以先出一页分镜板：
+
+```bash
+node scripts/storyboard.js my.html --cols=3 --theme=riso
+```
+
+```
+my.storyboard/
+├── shot-01.png …        每镜一张中点静帧（在转场窗口之外，画面稳定）
+├── storyboard.html      带镜头名/时长/时间码/转场的一页板
+└── storyboard.png       整页截图，贴给别人问「这样行不行」
+```
+
+十几秒出，能看出：镜头时长分配、层级大小、有没有哪一镜是空的、风格跟内容搭不搭。
+看不出动效手感与转场顺不顺 —— 那些要出片或 `--stills` 抽帧连看。
 
 ## 安装
 
@@ -680,7 +730,7 @@ html-to-video/
 
 ```bash
 npm install          # 装 playwright（ffmpeg 见上面「安装」，必须是完整版）
-npm test             # 109 个用例，约 2 分钟
+npm test             # 99 个用例，约 2 分钟
 npm run bench        # 量本机渲染速度 → bench/bench.md
 ```
 

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>风格画廊 · html-to-video</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  canvas { display: block; position: absolute; left: 0; top: 0; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./lib/styles.js"></script>
+<script>
+/* =========================================================================
+   风格画廊 · 一屏一个风格，逐秒切换
+   -------------------------------------------------------------------------
+   同一段内容（标题 / 副标题 / 条 / 卡片 / 页脚）用 8 种视觉语言各画一遍。
+   内容不变、只换风格 —— 这样眼睛才能看出「风格」到底改了什么。
+
+   出 8 张全屏静帧（第 k 秒 = 第 k 个风格）：
+     node scripts/render-video-seek.js assets/style-gallery.html \
+       --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5
+
+   出整片（8 秒，每个风格 1 秒）：
+     bash assets/render.sh assets/style-gallery.html --duration=8 --fps=30
+   ========================================================================= */
+
+const cv = document.getElementById('stage');
+const g = cv.getContext('2d');
+
+const CFG = {
+  /* 想看某一个风格的全屏样张：把这里改成 'riso' / 'chalk' / 'ink' …
+     留 null 则按时间轮播 8 种。 */
+  only: null,
+  title: '用代码做视频',
+  sub: '逐帧可控 · 中文完美 · 零费用',
+  metric: { label: '渲染速度', value: 78, text: '78 fps' },
+  footer: 'HTML → MP4  ·  deterministic  ·  frame-accurate',
+};
+
+const ORDER = ['riso', 'cutpaper', 'blueprint', 'chalk', 'isometric', 'synthwave', 'swiss', 'ink'];
+const TOTAL = ORDER.length;
+
+let W = 0, H = 0, SX = 1, SY = 1, SF = 1;
+
+function resize() {
+  W = cv.width = window.innerWidth;
+  H = cv.height = window.innerHeight;
+  SX = W / 1920; SY = H / 1080; SF = Math.sqrt(SX * SY);
+}
+
+/* 一段内容，八种画法 ------------------------------------------------ */
+function drawStyle(g, st, tIn) {
+  const M = 150 * SX;                    // 左右边距
+  const topY = 230 * SY;
+
+  // 背景（风格自己决定是纸、是网格、还是透视地面）
+  // 缓存版：8 个风格各铺一次整屏底纹，实时画会让一张静帧多花 1 秒
+  SV.bgCached(g, st, W, H, tIn, {}, 1);
+
+  // 小标签：风格名 + 编号
+  const tagSize = 26 * SF;
+  SV.text(g, st, `STYLE ${String(ORDER.indexOf(st.id) + 1).padStart(2, '0')} · ${st.en.toUpperCase()}`,
+    M, topY - 92 * SY, tagSize, { kind: 'mono', color: st.theme.accent });
+
+  // 主标题：入场由风格自己的 motion 决定
+  const e1 = SV.enter(st, Math.min(1, tIn / st.motion.enter));
+  const titleSize = 148 * SF;
+  g.save();
+  g.globalAlpha = e1.alpha;
+  g.translate(0, e1.dy * SY);
+  SV.text(g, st, CFG.title, M, topY + titleSize * 0.80, titleSize, { kind: 'display' });
+  g.restore();
+
+  // 副标题：基线要落在标题基线下方「一个标题的降部 + 半行」处。
+  // 之前用 titleSize*1.28 直接当基线，字会贴着标题——中文字形撑满字身框，西文的经验值害人。
+  const e2 = SV.enter(st, Math.min(1, Math.max(0, (tIn - 0.12) / st.motion.enter)));
+  const titleBase = topY + titleSize * 0.80;
+  const subY = titleBase + titleSize * 0.62;
+  g.save();
+  g.globalAlpha = e2.alpha;
+  g.translate(0, e2.dy * SY);
+  SV.text(g, st, CFG.sub, M, subY, 44 * SF, { kind: 'sub' });
+  g.restore();
+
+  // 卡片：只放一个大数字；标签提到卡片上方当 eyebrow。
+  // 卡里塞两行是「信息卡片」的思路，等距/剪纸这类「图形块」撑不住 —— 统一成单行大字，
+  // 八种风格才都能站得住。
+  const cy = subY + 92 * SF;
+  const cardW = 620 * SX, cardH = 250 * SY;
+  const e3 = SV.enter(st, Math.min(1, Math.max(0, (tIn - 0.26) / st.motion.enter)));
+  SV.text(g, st, CFG.metric.label, M, cy - 22 * SF, 30 * SF, { kind: 'sub' });
+  g.save();
+  g.globalAlpha = e3.alpha;
+  // card 返回「内容安全框」：等距风格只给顶面，剪纸会内缩一圈
+  const inner = SV.card(g, st, { x: M, y: cy, w: cardW, h: cardH }, { S: SF, seed: 4 });
+  const innerTitle = Math.min(96 * SF, inner.h * 0.62);
+  SV.text(g, st, CFG.metric.text, inner.x, inner.y + inner.h * 0.55 + innerTitle * 0.35,
+    innerTitle, { kind: 'display', color: inner.ink });
+  g.restore();
+
+  // 条形：从 0 长到 78%
+  const barX = M + cardW + 90 * SX;
+  const barW = W - barX - M;
+  const bp = SV.ease.outCubic(Math.min(1, Math.max(0, (tIn - 0.4) / 0.7)));
+  for (let i = 0; i < 3; i++) {
+    const y = cy + i * 76 * SY + 10 * SY;
+    const p = Math.max(0, bp - i * 0.12) / (1 - i * 0.12);
+    SV.bar(g, st, { x: barX, y: y, w: barW, h: 34 * SY }, p * (0.9 - i * 0.22), {
+      S: SF,
+      accent: i === 0,
+      color: i === 0 ? st.theme.accent : (i === 1 ? st.theme.accent2 : null),
+    });
+  }
+
+  // 页脚
+  SV.text(g, st, CFG.footer, M, H - 96 * SY, 26 * SF, { kind: 'mono', color: st.theme.sub });
+
+  // 覆盖层放最后：扫描线 / 颗粒 / 暗角必须在所有内容之上
+  SV.overlay(g, st, W, H, tIn, { S: SF });
+}
+
+/* 契约：t → 一帧 */
+function frame(t) {
+  resize();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  let id, tIn;
+  if (CFG.only) {
+    id = SV.require(CFG.only).id;
+    tIn = t;
+  } else {
+    const idx = Math.min(TOTAL - 1, Math.max(0, Math.floor(t)));
+    id = ORDER[idx];
+    tIn = t - idx;                       // 每次切换都从头播入场，方便看动效
+  }
+  const st = SV.require(id);
+  drawStyle(g, st, tIn);
+}
+
+window.__seek = frame;
+window.__ready = true;
+
+if (!window.__seekRender) {
+  let t0 = performance.now();
+  (function loop(now) {
+    frame(((now - t0) / 1000) % TOTAL);
+    requestAnimationFrame(loop);
+  })(performance.now());
+} else {
+  frame(0);
+}
+</script>
+</body>
+</html>

@@ -6,17 +6,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
 
-**[Live preview · wx4766.github.io/html-to-video](https://wx4766.github.io/html-to-video/)** — see the output before cloning anything
-
 [![10-second demo: HTML in, MP4 out — this clip is itself one HTML file, rendered](docs/demo-hero.gif)](docs/demo-hero.mp4)
 
 <sub>That clip is [`docs/demo-hero.html`](docs/demo-hero.html) — 447 lines, zero dependencies. Reproduce it:<br>
 `node scripts/render-video-seek.js docs/demo-hero.html --duration=10 --fps=60`</sub>
-
-[![](docs/demo-multiratio-cover.jpg)](docs/demo-multiratio.mp4)
-
-<sub>**One HTML file, one command, every platform format.** Those three frames are real
-renders (1920×1080 / 1080×1440 / 1080×1920), not mockups: `--presets=douyin,xiaohongshu,youtube`.</sub>
 
 **Render an HTML/Canvas animation to MP4, frame by frame.**
 
@@ -113,6 +106,54 @@ the viewport, so `--width/--height` is the only switch.
 
 ---
 
+## 8 visual styles: same content, different film
+
+Templates decide **what goes on screen**; styles decide **what it looks like** —
+the paper, the ink, the line weight, the type, the entrance, the signature detail.
+Separate the two and 11 layouts × 8 styles = 88 looks, without writing 88 templates.
+
+```bash
+bash assets/render.sh assets/style-film.html --duration=13 --theme=chalk
+bash assets/render.sh assets/style-film.html --duration=13 --theme=ink --width=1080 --height=1920
+```
+
+| Style | What makes it | Best for |
+|---|---|---|
+| `riso` | Cream paper, three halftone screens at real print angles, misregistered title | Opinion, data, indie-magazine feel |
+| `cutpaper` | Torn edges on all four sides, hard shadow, two sheets stacked | Stories, people, education |
+| `blueprint` | Deep blue, 20/100px grid, corner crosshairs, monospace | Technical, architecture, API |
+| `chalk` | Green board, double-stroke jitter, dust, kai typeface | Teaching, explainers |
+| `isometric` | True 2:1 isometric blocks, white faces hiding what's behind | Mechanisms, systems, flow |
+| `synthwave` | Striped sun, perspective floor grid, CRT scanlines | Music, games, retro tech |
+| `swiss` | Huge type, one signal colour, zero radius | Brand, opinion, launch |
+| `ink` | Rice paper, three-layer ink bleed, vermilion seal colour | Chinese/ink-wash aesthetics |
+
+Chinese names work too (`--theme=水墨`). Signature elements, taboos and the code API for each
+style are in **[assets/STYLES.md](assets/STYLES.md)** (Chinese).
+
+```bash
+# Contact sheet: one style per second, 8 full-frame stills
+node scripts/render-video-seek.js assets/style-gallery.html --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5
+
+# A 13s style film: hook / points / metric / outro
+bash assets/render.sh assets/style-film.html --duration=13 --fps=60
+```
+
+## Storyboard first, render after
+
+A 60-second 1080p film takes 3–10 minutes to render. Finding out that shot 4 has a tiny
+headline *after* that is expensive. The storyboard pass samples one still per shot, mid-shot
+(outside the transition window), and lays them out with shot name, duration, timecode and
+transition:
+
+```bash
+node scripts/storyboard.js my.html --cols=3 --theme=riso
+```
+
+Output goes to `my.storyboard/`: per-shot PNGs, a labelled `storyboard.html`, and a
+full-page `storyboard.png` you can paste into a chat. It takes seconds instead of minutes,
+and it reads `window.__sceneTable` (exposed by `SC.expose`) so it knows the real timeline.
+
 ## Project status
 
 `v1.5.0` — used daily, 109 automated tests, MIT. Not a startup, not a framework, no
@@ -174,10 +215,6 @@ dist/chart-douyin.mp4       1080×1920   TikTok / Reels / Shorts
 dist/chart-xiaohongshu.mp4  1080×1440   Xiaohongshu 3:4
 dist/chart-square.mp4       1080×1080   Square 1:1
 ```
-
-[![](docs/demo-multiratio.gif)](docs/demo-multiratio.mp4)
-
-<sub>Same file, same timestamp, three viewports. Only the layout changes — not a word of content.</sub>
 
 | Preset | Size | For |
 |---|---|---|

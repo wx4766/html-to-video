@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>风格短片 · html-to-video</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  canvas { display: block; position: absolute; left: 0; top: 0; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<script src="./lib/styles.js"></script>
+<script src="./lib/scenes.js"></script>
+<script>
+/* =========================================================================
+   风格短片 · 一条命令出「有风格的」成片
+   -------------------------------------------------------------------------
+   和 templates/ 里那 11 个模板的分工：
+
+     templates/*.html  = 单一版式（条形图、字幕卡、流程图…），换配色
+     本文件            = 一支完整短片（片头 / 要点 / 数据 / 片尾）+ 8 种视觉语言
+
+   前者回答「这段数据怎么画」，后者回答「这支片子长什么样」。
+   版式是内容，风格是语法 —— 语法一换，同样的内容立刻是另一支片。
+
+   出片（默认孔版印刷风，13 秒）：
+     bash assets/render.sh assets/style-film.html --duration=13 --fps=60
+
+   换风格：
+     bash assets/render.sh assets/style-film.html --duration=13 --theme=chalk
+     bash assets/render.sh assets/style-film.html --duration=13 --theme=ink --width=1080 --height=1920
+
+   可用风格（也可写中文名）：riso 孔版印刷 / cutpaper 剪纸 / blueprint 蓝图 /
+     chalk 黑板 / isometric 等距 / synthwave 霓虹 / swiss 瑞士 / ink 水墨
+
+   改文案：只改下面 CFG 里的 shots —— 每个镜头一个对象，dur 是秒。
+   ========================================================================= */
+
+const cv = document.getElementById('stage');
+const g = cv.getContext('2d');
+
+/* 渲染器注入的 --story（镜头表 JSON）优先；没有就用下面这份 */
+const STORY = Array.isArray(window.__story) && window.__story.length ? window.__story : null;
+
+const CFG = {
+  /* null → 跟 --theme 走（templates/themes.js 会把风格名解析成该风格的色板） */
+  style: window.__h2vTheme || null,
+  brand: 'HTML → VIDEO',
+
+  shots: [
+    {
+      id: 'hook', dur: 3.2,
+      kicker: 'CODE-DRAWN VIDEO',
+      lines: ['用代码', '做视频'],
+      sub: '每一帧都是 t 的纯函数',
+    },
+    {
+      id: 'points', dur: 4.4,
+      head: '为什么不用生成模型',
+      items: [
+        { n: '01', t: '确定性', d: '同一份代码，渲一万次都是同一支片' },
+        { n: '02', t: '可控到帧', d: '第 7 秒第 12 帧要改，就改那一帧' },
+        { n: '03', t: '中文完美', d: '字是画的，不是拼的，不会糊成一团' },
+      ],
+    },
+    {
+      id: 'metric', dur: 3.4,
+      head: '一条命令',
+      value: '60',
+      unit: 'fps',
+      note: '1920×1080 · H.264 · 无 GPU',
+      bars: [
+        { label: '逐帧渲染', p: 1.00 },
+        { label: '多 worker', p: 0.72 },
+        { label: '热重渲', p: 0.44 },
+      ],
+    },
+    {
+      id: 'outro', dur: 2.8,
+      big: '把想法写成代码',
+      small: 'github.com/wx4766/html-to-video',
+    },
+  ],
+};
+
+/* ── 尺寸与版式骨架 ─────────────────────────────────────────────── */
+let W = 0, H = 0, SX = 1, SY = 1, SF = 1, M = 0;
+function measure() {
+  W = cv.width = window.innerWidth;
+  H = cv.height = window.innerHeight;
+  SX = W / 1920; SY = H / 1080; SF = Math.sqrt(SX * SY);
+  M = 150 * SX;                       // 左右边距：全片统一，镜头之间才对得齐
+}
+
+const ST = SV.get(CFG.style || SV.DEFAULT);
+
+/* 一行字按视觉宽度折行（中文按字、英文按词） */
+function wrap(g2, txt, maxW, size, fam, weight) {
+  g2.font = `${weight} ${size}px ${fam}`;
+  const isCJK = /[\u4e00-\u9fff]/.test(txt);
+  const units = isCJK ? txt.split('') : txt.split(/(\s+)/);
+  const lines = [];
+  let cur = '';
+  for (const u of units) {
+    const test = cur + u;
+    if (g2.measureText(test).width > maxW && cur) { lines.push(cur.trim()); cur = u.trim() ? u : ''; }
+    else cur = test;
+  }
+  if (cur.trim()) lines.push(cur.trim());
+  return lines;
+}
+
+/* 所有镜头共用的「页面外框」：brand 标签 + 页脚细线。
+   固定元素统一在这里画，镜头只负责自己的内容区。 */
+function chrome(g2, alpha) {
+  g2.save();
+  g2.globalAlpha = alpha;
+  SV.text(g2, ST, CFG.brand, M, 96 * SY, 24 * SF, { kind: 'mono', color: ST.theme.sub });
+  SV.text(g2, ST, String(Math.round(SHOTS.reduce((a, s) => a + s.dur, 0)) ) + 's',
+    W - M, 96 * SY, 24 * SF, { kind: 'mono', color: ST.theme.sub, align: 'right' });
+  g2.restore();
+}
+
+/* 每个镜头都必须自己画满背景。
+   原因：SC.paint 里 paintShot() 会先 clearRect —— 它是按「draw 负责整张画面」
+   设计的（转场时要把两镜分别画到离屏再合成）。少这一步，背景就是黑的。
+
+   用 bgCached 而不是 SV.bg：底纹（网点/纸纹/格网）整屏铺一次要 150ms+，
+   缓存成位图后每帧只剩一次 drawImage。传全局 t，别传镜头内 lt ——
+   lt 每个镜头从 0 重来，缓存每秒失效好几轮。 */
+function backdrop(g2, lt, c) {
+  SV.bgCached(g2, ST, W, H, (c && c.global) || lt || 0, {}, 1);
+}
+
+/* ── 镜头 1：片头 ───────────────────────────────────────────────── */
+function shotHook(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const topY = 300 * SY;
+  const size = 168 * SF;
+  const lines = D.lines || ['用代码', '做视频'];
+
+  SV.text(g2, ST, D.kicker || '', M, topY - 70 * SY, 26 * SF,
+    { kind: 'mono', color: ST.theme.accent });
+
+  // 标题逐行弹入：行间隔 0.1s，整块位移交给风格的 enter
+  lines.forEach((ln, i) => {
+    const p = SV.clamp((t - 0.12 - i * 0.10) / ST.motion.enter);
+    const e = SV.enter(ST, p);
+    g2.save();
+    g2.globalAlpha = e.alpha;
+    g2.translate(0, e.dy * SY * 1.6);
+    SV.text(g2, ST, ln, M, topY + size * 0.85 + i * size * 1.04, size, { kind: 'display' });
+    g2.restore();
+  });
+
+  const subP = SV.clamp((t - 0.55) / 0.7);
+  g2.save();
+  g2.globalAlpha = SV.ease.outCubic(subP);
+  SV.text(g2, ST, D.sub || '', M,
+    topY + size * 0.85 + size * 1.04 + 132 * SF, 44 * SF, { kind: 'sub' });
+  g2.restore();
+
+  /* 右下角一个方块，装「8 种风格」这个卖点。
+     早期版本这里是一条 340px 的细线 —— 又细又孤立，看着像渲染残留。
+     换成一个实心块 + 一个大数字，右侧的空才被压住。 */
+  const bp = SV.ease.outQuint(SV.clamp((t - 0.75) / 0.85));
+  if (bp > 0.01 && D.badge !== false) {
+    const bw = 330 * SX, bh = 330 * SY;
+    const bx = W - M - bw, by = H - 150 * SY - bh;
+    g2.save();
+    g2.globalAlpha = bp;
+    g2.translate(0, (1 - bp) * 24 * SY);
+    const cb = SV.card(g2, ST, { x: bx, y: by, w: bw, h: bh }, { S: SF, accent: true, seed: 9 });
+    // 字号跟着「内容安全框」算，不是跟着方块算 —— 等距只给顶面、水墨只给内圈，
+    // 按方块高度给字号，字会顶出边界被裁掉（第一版 8 就只剩上半截）。
+    const numSize = Math.min(200 * SF, cb.h * 0.58);
+    SV.text(g2, ST, D.badgeNum || '8', cb.x, cb.y + cb.h * 0.60 + numSize * 0.36, numSize,
+      { kind: 'display', color: cb.ink });
+    /* 等距/水墨这类「面」是斜的或糊的，标签放不进内容框 —— 挪到方块外面当标注。
+       硬塞进去的结果是白字压在立体块的侧面上，一眼假。 */
+    const outside = (ST.id === 'isometric' || ST.id === 'ink');
+    SV.text(g2, ST, D.badge || 'STYLES', cb.x,
+      outside ? by + bh + 44 * SY : cb.y + cb.h,
+      26 * SF, { kind: 'mono', color: outside ? ST.theme.sub : cb.ink });
+    g2.restore();
+  }
+}
+
+/* ── 镜头 2：三条要点 ───────────────────────────────────────────── */
+function shotPoints(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const headP = SV.enter(ST, SV.clamp(t / ST.motion.enter));
+  g2.save();
+  g2.globalAlpha = headP.alpha;
+  g2.translate(0, headP.dy * SY);
+  SV.text(g2, ST, D.head || '', M, 250 * SY, 92 * SF, { kind: 'display' });
+  g2.restore();
+
+  const items = D.items || [];
+  const rowH = Math.min(176 * SY, (H - 480 * SY) / Math.max(1, items.length));
+  const y0 = 360 * SY;
+
+  items.forEach((it, i) => {
+    const p = SV.clamp((t - 0.30 - i * 0.32) / 0.55);
+    if (p <= 0) return;
+    const e = SV.ease.outCubic(p);
+    const y = y0 + i * rowH;
+
+    g2.save();
+    g2.globalAlpha = e;
+    // 左边距缩进：数字在场外，进来时才滑到位
+    g2.translate((1 - e) * -40 * SX, 0);
+
+    // 编号
+    SV.text(g2, ST, it.n || String(i + 1).padStart(2, '0'), M, y + 64 * SF, 44 * SF,
+      { kind: 'mono', color: ST.theme.accent });
+    // 标题
+    SV.text(g2, ST, it.t || '', M + 110 * SX, y + 62 * SF, 62 * SF, { kind: 'display' });
+    // 说明
+    SV.text(g2, ST, it.d || '', M + 110 * SX, y + 118 * SF, 36 * SF, { kind: 'sub' });
+    g2.restore();
+
+    // 分割线：风格自己决定是细线、粉笔道、还是墨痕
+    const lp = SV.clamp((p - 0.25) / 0.5);
+    if (lp > 0 && i < items.length - 1) {
+      SV.bar(g2, ST, { x: M, y: y + rowH - 34 * SY, w: (W - M * 2) * lp, h: 3 * SY }, 1,
+        { S: SF, color: ST.theme.sub });
+    }
+  });
+}
+
+/* ── 镜头 3：一个大数字 ─────────────────────────────────────────── */
+function shotMetric(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const headP = SV.enter(ST, SV.clamp(t / ST.motion.enter));
+  g2.save();
+  g2.globalAlpha = headP.alpha;
+  SV.text(g2, ST, D.head || '', M, 250 * SY, 62 * SF, { kind: 'display' });
+  g2.restore();
+
+  // 数字从 0 滚到目标值：整数滚动比「淡入」有说服力
+  const target = parseFloat(D.value) || 0;
+  const cp = SV.ease.outQuint(SV.clamp((t - 0.15) / 1.1));
+  const val = Math.round(target * cp);
+
+  const bigY = 520 * SY;
+  const unitSize = 64 * SF;
+  g2.save();
+  // 先量数字宽度，单位才能紧跟在右边（不能拍脑袋写死 +180）
+  g2.font = `700 ${220 * SF}px ${ST.type.display}`;
+  const numW = g2.measureText(String(val)).width;
+  g2.restore();
+
+  SV.text(g2, ST, String(val), M, bigY, 220 * SF, { kind: 'display' });
+  SV.text(g2, ST, D.unit || '', M + numW + 16 * SX, bigY, unitSize,
+    { kind: 'display', color: ST.theme.accent });
+
+  SV.text(g2, ST, D.note || '', M, bigY + 62 * SY, 30 * SF, { kind: 'mono', color: ST.theme.sub });
+
+  // 右侧三条对比条
+  const bars = D.bars || [];
+  const barX = W * 0.52, barW = W - M - barX;
+  bars.forEach((b, i) => {
+    const p = SV.clamp((t - 0.5 - i * 0.18) / 0.8);
+    const y = 392 * SY + i * 128 * SY;
+    SV.text(g2, ST, b.label || '', barX, y - 22 * SY, 30 * SF, { kind: 'body', color: ST.theme.ink });
+    SV.bar(g2, ST, { x: barX, y: y, w: barW, h: 26 * SY }, b.p * SV.ease.outCubic(p),
+      { S: SF, accent: i === 0, color: i === 0 ? ST.theme.accent : ST.theme.accent2 });
+  });
+}
+
+/* ── 镜头 4：片尾 ───────────────────────────────────────────────── */
+function shotOutro(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const p = SV.clamp(t / (ST.motion.enter + 0.2));
+  const e = SV.enter(ST, p);
+  const size = 116 * SF;
+
+  g2.save();
+  g2.globalAlpha = e.alpha;
+  g2.translate(0, e.dy * SY);
+  const lines = wrap(g2, D.big || '', W - M * 2 - 40 * SX, size, ST.type.display, ST.type.weight);
+  const blockY = H * 0.44;                       // 视觉重心略高于几何中心，才「稳」
+  lines.forEach((ln, i) => {
+    SV.text(g2, ST, ln, M, blockY + i * size * 1.12, size, { kind: 'display' });
+  });
+  g2.restore();
+
+  const sp = SV.clamp((t - 0.5) / 0.8);
+  g2.save();
+  g2.globalAlpha = sp;
+  SV.text(g2, ST, D.small || '', M, blockY + lines.length * size * 1.12 + 66 * SY,
+    34 * SF, { kind: 'mono', color: ST.theme.sub });
+  g2.restore();
+
+  // 收尾一条从中间向两边展开的线，给片子「合上」的手感
+  const lp = SV.ease.outQuint(SV.clamp((t - 0.2) / 0.9));
+  const lw = (W - M * 2) * lp;
+  SV.bar(g2, ST, { x: W / 2 - lw / 2, y: H - 200 * SY, w: lw, h: 4 * SY }, 1,
+    { S: SF, color: ST.theme.accent });
+}
+
+/* ── 镜头 5：引用 ──────────────────────────────────────────────────
+   左侧一条粗引线（quote rule）+ 一句大字 + 出处。
+   短片里「有人说」比「我说」更有说服力。
+
+   为什么不画引号符号：全角引号的墨迹只占字号的一成多，按字号给尺寸永远对不上
+   （给 1 倍是颗小点，给 1.6 倍顶出方块）；改用几何图形又容易被看成斜杠 "//"。
+   引线是排版惯例，8 种风格里都成立，而且没有字体依赖。 */
+function shotQuote(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const text = D.text || '';
+  const maxW = W - M * 2 - 110 * SX;
+
+  // 长句自动降字号，短句放大到 3 行以内为止
+  let size = 104 * SF;
+  let lines = wrap(g2, text, maxW, size, ST.type.display, ST.type.weight);
+  for (let k = 0; k < 6 && lines.length > 3; k++) {
+    size *= 0.90;
+    lines = wrap(g2, text, maxW, size, ST.type.display, ST.type.weight);
+  }
+
+  const lineH = size * 1.24;
+  const blockH = lines.length * lineH;
+  const y0 = (H - blockH) / 2 + size * 0.78;        // 正文块垂直居中
+
+  // 引线：从中间向两端长出，比「淡入」更有「立起来」的感觉
+  const lp = SV.ease.outQuint(SV.clamp((t - 0.05) / 0.65));
+  const fullTop = y0 - size * 0.95 - 46 * SY;
+  const fullH = blockH + size * 0.95 + 92 * SY;
+  const barH = fullH * lp;
+  const barY = fullTop + (fullH - barH) / 2;
+  SV.bar(g2, ST, { x: M, y: barY, w: 9 * SX, h: barH }, 1,
+    { S: SF, accent: true, color: ST.theme.accent });
+
+  // QUOTE 标签：引线顶端，竖排太挑字体，横排小字更稳
+  g2.save();
+  g2.globalAlpha = SV.clamp((t - 0.3) / 0.5);
+  SV.text(g2, ST, 'QUOTE', M + 26 * SX, fullTop - 18 * SY, 24 * SF,
+    { kind: 'mono', color: ST.theme.accent });
+  g2.restore();
+
+  const tx = M + 92 * SX;
+  const ep = SV.clamp((t - 0.25) / (ST.motion.enter + 0.2));
+  const e = SV.enter(ST, ep);
+  g2.save();
+  g2.globalAlpha = e.alpha;
+  g2.translate(0, e.dy * SY);
+  lines.forEach((ln, i) => {
+    SV.text(g2, ST, ln, tx, y0 + i * lineH, size, { kind: 'display' });
+  });
+  g2.restore();
+
+  const ap = SV.clamp((t - 0.75) / 0.7);
+  g2.save();
+  g2.globalAlpha = ap;
+  SV.text(g2, ST, '— ' + (D.by || ''), tx, y0 + (lines.length - 1) * lineH + size * 0.9,
+    32 * SF, { kind: 'sub' });
+  g2.restore();
+}
+
+/* ── 镜头 6：步骤流程 ──────────────────────────────────────────────
+   横向三步 + 箭头。每步一个编号、一个词、一句说明。
+   步数超过 4 会自动缩窄字号，不会挤成一团。 */
+function shotSteps(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const headP = SV.enter(ST, SV.clamp(t / ST.motion.enter));
+  g2.save();
+  g2.globalAlpha = headP.alpha;
+  SV.text(g2, ST, D.head || '', M, 250 * SY, 76 * SF, { kind: 'display' });
+  g2.restore();
+
+  const items = D.items || [];
+  const n = Math.max(1, items.length);
+  const gap = 76 * SX;
+  const cw = (W - M * 2 - gap * (n - 1)) / n;
+  const ch = 286 * SY;
+  const cy = 400 * SY;
+
+  items.forEach((it, i) => {
+    const p = SV.clamp((t - 0.30 - i * 0.28) / 0.5);
+    if (p <= 0) return;
+    const e = SV.ease.outBack(p);
+    const x = M + i * (cw + gap);
+
+    g2.save();
+    g2.globalAlpha = SV.clamp(p * 1.6);
+    g2.translate(0, (1 - e) * 30 * SY);
+
+    const cb = SV.card(g2, ST, { x: x, y: cy, w: cw, h: ch },
+      { S: SF, accent: i === 0, seed: 30 + i });
+
+    const numSize = Math.min(104 * SF, cb.h * 0.40);
+    // 编号在 0.44、标题在 0.82：上下分两档，卡片才不「头重脚轻」
+    SV.text(g2, ST, it.n || String(i + 1).padStart(2, '0'), cb.x,
+      cb.y + cb.h * 0.44, numSize, { kind: 'mono', color: cb.ink });
+    const titleSize = Math.min(52 * SF, cb.h * 0.20);
+    SV.text(g2, ST, it.t || '', cb.x, cb.y + cb.h * 0.82, titleSize,
+      { kind: 'display', color: cb.ink });
+    g2.restore();
+
+    // 箭头：只在两个块之间，最后一个不画
+    if (i < n - 1) {
+      const ap = SV.clamp((p - 0.3) / 0.4);
+      const ax = x + cw + gap * 0.5;
+      const ay = cy + ch * 0.5;
+      const len = gap * 0.62 * ap;
+      if (len > 1) {
+        SV.bar(g2, ST, { x: ax - len / 2, y: ay, w: len, h: 4 * SY }, 1,
+          { S: SF, color: ST.theme.accent });
+        // 箭头尖：两条短斜线
+        g2.save();
+        g2.strokeStyle = ST.theme.accent;
+        g2.lineWidth = 5 * SF;
+        g2.lineCap = 'round';
+        g2.lineJoin = 'round';
+        g2.beginPath();
+        g2.moveTo(ax + len / 2 - 16 * SX, ay - 16 * SY);
+        g2.lineTo(ax + len / 2, ay);
+        g2.lineTo(ax + len / 2 - 16 * SX, ay + 16 * SY);
+        g2.stroke();
+        g2.restore();
+      }
+    }
+  });
+
+  // 说明文字：贴在流程下方一行
+  const np = SV.clamp((t - 0.9) / 0.7);
+  g2.save();
+  g2.globalAlpha = np;
+  SV.text(g2, ST, D.note || '', M, cy + ch + 100 * SY, 36 * SF, { kind: 'sub' });
+  g2.restore();
+}
+
+/* ── 镜头 7：前后对比 ──────────────────────────────────────────────
+   左 before / 右 after，中间一条分隔，下方一句结论。
+   对比的张力来自「两个面必须一样大」—— 谁大一点，观众就觉得那一方赢。 */
+function shotCompare(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const headP = SV.enter(ST, SV.clamp(t / ST.motion.enter));
+  g2.save();
+  g2.globalAlpha = headP.alpha;
+  SV.text(g2, ST, D.head || '', M, 250 * SY, 76 * SF, { kind: 'display' });
+  g2.restore();
+
+  const gap = 56 * SX;
+  const cw = (W - M * 2 - gap) / 2;
+  const cy = 350 * SY, ch = 360 * SY;
+
+  [0, 1].forEach((i) => {
+    const p = SV.clamp((t - 0.25 - i * 0.16) / 0.55);
+    if (p <= 0) return;
+    const e = SV.ease.outCubic(p);
+    const x = M + i * (cw + gap);
+    g2.save();
+    g2.globalAlpha = e;
+    g2.translate((1 - e) * (i === 0 ? -30 : 30) * SX, 0);
+
+    // 左栏不强调，右栏强调 —— 用 accent 区分"之后"
+    const cb = SV.card(g2, ST, { x: x, y: cy, w: cw, h: ch },
+      { S: SF, accent: i === 1, seed: 40 + i });
+
+    const tagSize = Math.min(30 * SF, cb.h * 0.11);
+    const labelSize = Math.min(56 * SF, cb.h * 0.20);
+    const bodySize = Math.min(34 * SF, cb.h * 0.13);
+
+    SV.text(g2, ST, (i === 0 ? D.before : D.after).label || '', cb.x,
+      cb.y + tagSize * 1.2, tagSize, { kind: 'mono', color: cb.ink });
+    SV.text(g2, ST, (i === 0 ? D.before : D.after).title || '', cb.x,
+      cb.y + cb.h * 0.54, labelSize, { kind: 'display', color: cb.ink });
+    // 说明和标题要留出一个行高的空，贴在一起会看成同一行
+    SV.text(g2, ST, (i === 0 ? D.before : D.after).note || '', cb.x,
+      cb.y + cb.h * 0.54 + bodySize * 2.0, bodySize, { kind: 'sub', color: cb.ink });
+    g2.restore();
+  });
+
+  // 中间的竖分隔线，从中心向上下展开
+  const lp = SV.ease.outQuint(SV.clamp((t - 0.5) / 0.7));
+  if (lp > 0) {
+    const lh = ch * lp;
+    SV.bar(g2, ST, { x: W / 2 - 1.5 * SX, y: cy + ch / 2 - lh / 2, w: 3 * SX, h: lh }, 1,
+      { S: SF, color: ST.theme.accent });
+  }
+
+  // 结论条：整行从左展开
+  const vp = SV.clamp((t - 0.95) / 0.8);
+  if (vp > 0) {
+    const vy = cy + ch + 70 * SY;
+    const vb = SV.card(g2, ST, { x: M, y: vy, w: (W - M * 2) * SV.ease.outQuint(vp), h: 110 * SY },
+      { S: SF, accent: true, seed: 47 });
+    g2.save();
+    g2.globalAlpha = SV.clamp((vp - 0.5) * 2);
+    SV.text(g2, ST, D.conclusion || '', vb.x, vb.y + vb.h * 0.66,
+      Math.min(56 * SF, vb.h * 0.50), { kind: 'display', color: vb.ink });
+    g2.restore();
+  }
+}
+
+/* ── 镜头 8：时间线 ────────────────────────────────────────────────
+   一条横轴 + 几个节点，从左往右依次点亮。适合「发展史 / 版本演进 / 路线图」。
+   轴的长度按节点数算，节点间距均分，最后一个节点永远贴着右边界。 */
+function shotTimeline(g2, lt, c) {
+  const t = lt;
+  const D = SHOTS[c.index] || {};
+  backdrop(g2, lt, c);
+  chrome(g2, 1);
+
+  const headP = SV.enter(ST, SV.clamp(t / ST.motion.enter));
+  g2.save();
+  g2.globalAlpha = headP.alpha;
+  SV.text(g2, ST, D.head || '', M, 250 * SY, 76 * SF, { kind: 'display' });
+  g2.restore();
+
+  const items = D.items || [];
+  const n = items.length;
+  if (!n) return;
+
+  const axisY = H * 0.56;
+  const x0 = M, x1 = W - M;
+  const grow = SV.ease.outQuint(SV.clamp((t - 0.2) / 0.9));
+  SV.bar(g2, ST, { x: x0, y: axisY, w: (x1 - x0) * grow, h: 4 * SY }, 1,
+    { S: SF, color: ST.theme.sub });
+
+  items.forEach((it, i) => {
+    const p = SV.clamp((t - 0.45 - i * 0.22) / 0.5);
+    if (p <= 0) return;
+    const e = SV.ease.outBack(p);
+    const x = n === 1 ? x0 : x0 + ((x1 - x0) * i) / (n - 1);
+
+    // 节点：一个实心圆（用 card 太笨重，直接画，风格色板已经够了）
+    g2.save();
+    g2.globalAlpha = SV.clamp(p * 1.8);
+    g2.fillStyle = i === n - 1 ? ST.theme.accent : ST.theme.ink;
+    g2.beginPath();
+    g2.arc(x, axisY, (i === n - 1 ? 16 : 11) * SF * e, 0, Math.PI * 2);
+    g2.fill();
+    // 强调节点加一圈外环
+    if (i === n - 1) {
+      g2.strokeStyle = ST.theme.accent;
+      g2.lineWidth = 3 * SF;
+      g2.beginPath();
+      g2.arc(x, axisY, 26 * SF * e, 0, Math.PI * 2);
+      g2.stroke();
+    }
+    g2.restore();
+
+    // 标签：奇偶上下交错，避免挤在一起
+    const up = i % 2 === 0;
+    const ty = up ? axisY - 78 * SY : axisY + 92 * SY;
+    const align = (i === 0) ? 'left' : (i === n - 1 ? 'right' : 'center');
+    g2.save();
+    g2.globalAlpha = SV.clamp(p * 1.5);
+    // 年份放在标题外侧（上面那排在更上方，下面那排在更下方），否则两行会挤成一坨
+    SV.text(g2, ST, it.n || '', x, up ? ty - 48 * SY : ty + 48 * SY, 26 * SF,
+      { kind: 'mono', color: ST.theme.accent, align });
+    SV.text(g2, ST, it.t || '', x, ty, Math.min(42 * SF, (x1 - x0) / n * 0.18),
+      { kind: 'body', align });
+    g2.restore();
+  });
+}
+
+/* ── 时间轴 ─────────────────────────────────────────────────────── */
+
+/* 镜头表：给了 --story 就整份替换，不再「只覆盖前 N 个」。
+   为什么：Agent 生成的镜头数经常和默认的 4 个不一样（3 个、6 个）；
+   原来的 Object.assign 只往前 4 个里塞，第 5 个镜头根本渲不出来。 */
+const SHOTS = (Array.isArray(window.__story) && window.__story.length ? window.__story : CFG.shots)
+  .filter((s) => s && typeof s === 'object')
+  .map((s, i) => ({ ...s, id: s.id || 'shot' + (i + 1), dur: Number(s.dur) > 0 ? Number(s.dur) : 3 }));
+
+const DRAW = {
+  hook: shotHook,
+  points: shotPoints,
+  metric: shotMetric,
+  outro: shotOutro,
+  quote: shotQuote,
+  steps: shotSteps,
+  compare: shotCompare,
+  timeline: shotTimeline,
+};
+
+let TL = null;
+function buildTimeline() {
+  TL = SC.build(SHOTS.map((s, i) => ({
+    id: s.id,
+    dur: s.dur,
+    /* 文字为主的片子一律用 dip（经底色过渡），不用 fade（交叉溶解）。
+       原因：fade 会让上一镜的标题和下一镜的标题在同一位置叠成一团，
+       中间那几帧看着像「画面坏了」，不像「镜头换了」。
+       scenes.js 的注释里写了这条规矩，这里是它的实际用例。 */
+    trans: i === 0 ? null : { in: 'dip', dur: 0.45 },
+    draw: (g2, lt, ctx) => {
+      const fn = DRAW[s.id];
+      if (!fn) return;
+      g2.save();
+      fn(g2, lt, ctx);
+      g2.restore();
+    },
+  })), { lead: 0.4, tail: 0.5 });
+}
+
+function frame(t) {
+  measure();
+  window.__probe = { W, H, bg: ST.theme.bg, dur: TL && TL.dur, t };
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.clearRect(0, 0, W, H);
+
+  /* 背景不在这里画 —— 每个镜头的 draw 自己负责（见 backdrop 的注释）。
+     这里整屏合成：paint 负责镜头与转场，overlay 负责扫描线/颗粒/暗角。
+     overlay 放在最外层，转场时纸纹才不会跟着镜头一起淡入淡出。 */
+  SC.paint(g, TL, SV.clamp(t, 0, TL.dur - 1e-4), { W, H, bg: ST.theme.bg, SF });
+  SV.overlay(g, ST, W, H, t, { S: SF });
+}
+
+/* 支持 window.__story：Agent 写 JSON 比写 canvas 可靠得多 */
+if (window.__h2vThemeResolved === undefined) window.__h2vThemeResolved = ST.id;
+
+buildTimeline();
+/* 把镜头表挂到 window.__sceneTable：分镜板（scripts/storyboard.js）靠它
+   知道每个镜头多长、从第几秒开始，不用猜「按总时长均分」。 */
+SC.expose(TL);
+window.__seek = frame;
+window.__ready = true;
+
+if (!window.__seekRender) {
+  const t0 = performance.now();
+  (function loop(now) {
+    frame(((now - t0) / 1000) % TL.dur);
+    requestAnimationFrame(loop);
+  })(performance.now());
+} else {
+  frame(0);
+}
+</script>
+</body>
+</html>

@@ -989,6 +989,22 @@ async function renderStills(context, url, times, onPage) {
     window.__seekRender = true;
   });
 
+  /* 风格库注入：把 assets/lib/styles.js 的**源码**塞进页面，在模板脚本之前执行。
+    为什么不靠模板里的 <script src>：
+       · 模板被拷到别的目录（含测试的临时目录）时 ../lib/styles.js 会 404，
+         而渲染器把页面报错判为失败 —— 一个和被测行为无关的错误会把整条流水线弄红；
+       · 用户 `cp assets/templates/x.html my.html` 之后，那条相对路径必然失效。
+     注入路径由渲染器自己算，模板保持零依赖；浏览器直接打开模板时没有 SV，
+     会自动退回原来的渐变背景（CFG.theme 只认 midnight/paper/neon）。 */
+  try {
+    const svPath = path.join(__dirname, '..', 'assets', 'lib', 'styles.js');
+    if (fs.existsSync(svPath)) {
+      await context.addInitScript({ content: fs.readFileSync(svPath, 'utf8') });
+    }
+  } catch (e) {
+    console.warn('⚠ 风格库注入失败，--theme 只会有配色：' + String((e && e.message) || e).split('\n')[0]);
+  }
+
   if (ALPHA) {
     /* 透明输出要两件事同时成立，少一件就白底：
        ① 页面自身背景透明（html/body 的 background 必须让开，模板也要跳过背景层绘制）

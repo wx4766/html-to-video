@@ -147,6 +147,13 @@ function wrapText(text, maxW, px, fontOf) {
 /* ── 背景层：每个镜头自己画一遍（转场时两张画要各自完整） ────────── */
 function bgLayer(g2, t) {
   if (TRANSPARENT) return;
+  /* 风格底优先：--theme=riso/chalk/ink… 时换成该风格的纸纹 / 网点 / 格网 / 透视地面。
+     传 0 让底子完全静态 —— 这个函数每个镜头都调一次，按时间分桶会不停重建
+     1920×1080 的位图，比不缓存还慢。没引 lib/styles.js 时走下面的旧画法。 */
+  if (TH.__style && window.SV) {
+    SV.bgCached(g2, TH.__style, W, H, 0, {}, 0);
+    return;
+  }
   const bg = g2.createLinearGradient(0, 0, W * 0.45, H);
   bg.addColorStop(0, TH.bg);
   bg.addColorStop(1, TH.bgAlt || TH.bg);

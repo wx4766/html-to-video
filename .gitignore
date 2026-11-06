@@ -4,6 +4,7 @@ node_modules/
 # 渲染中间产物与输出，不入库
 .seek-tmp-*/
 *.stills/
+*.storyboard/
 qa/
 out/
 *.mp4

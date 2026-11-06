@@ -203,28 +203,34 @@ function drawFrame(t) {
   g.clearRect(0, 0, W, H);
 
   if (!TRANSPARENT) {
-    const bg = g.createLinearGradient(0, 0, W * 0.5, H);
-    bg.addColorStop(0, TH.bg);
-    bg.addColorStop(1, TH.bgAlt || TH.bg);
-    g.fillStyle = bg;
-    g.fillRect(0, 0, W, H);
+    /* 风格底：--theme=riso/chalk/ink… 时换成该风格的纸纹/网点/格网/透视地面。
+       没装风格库（没引 lib/styles.js）时自动走下面的旧画法，老命令逐像素不变。 */
+    if (TH.__style && window.SV) {
+      SV.bgCached(g, TH.__style, W, H, 0, {}, 0);
+    } else {
+      const bg = g.createLinearGradient(0, 0, W * 0.5, H);
+      bg.addColorStop(0, TH.bg);
+      bg.addColorStop(1, TH.bgAlt || TH.bg);
+      g.fillStyle = bg;
+      g.fillRect(0, 0, W, H);
 
-    // 极淡网格：给画面一点「工程感」的纹理，不抢主体
-    g.save();
-    g.strokeStyle = TH.faint;
-    g.globalAlpha = 0.30;
-    g.lineWidth = 1 * SF;
-    const step = 160 * SF;
-    for (let x = 0; x < W; x += step) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
-    for (let y = 0; y < H; y += step) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
-    g.restore();
+      // 极淡网格：给画面一点「工程感」的纹理，不抢主体
+      g.save();
+      g.strokeStyle = TH.faint;
+      g.globalAlpha = 0.30;
+      g.lineWidth = 1 * SF;
+      const step = 160 * SF;
+      for (let x = 0; x < W; x += step) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+      for (let y = 0; y < H; y += step) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+      g.restore();
 
-    // 顶部一道柔光，避免大片平灰
-    const glow = g.createRadialGradient(W * 0.18, -H * 0.1, 0, W * 0.18, -H * 0.1, W * 0.75);
-    glow.addColorStop(0, TH.glow || 'rgba(255,184,107,0.12)');
-    glow.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = glow;
-    g.fillRect(0, 0, W, H);
+      // 顶部一道柔光，避免大片平灰
+      const glow = g.createRadialGradient(W * 0.18, -H * 0.1, 0, W * 0.18, -H * 0.1, W * 0.75);
+      glow.addColorStop(0, TH.glow || 'rgba(255,184,107,0.12)');
+      glow.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = glow;
+      g.fillRect(0, 0, W, H);
+    }
   }
 
   // kicker
