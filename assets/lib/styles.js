@@ -1226,12 +1226,17 @@
       const S = o.S || 1;
       const w = Math.max(0, box.w * clamp(p));
       if (w < 2) return;
+      /* o.color 可能是字符串，也可能是 CanvasGradient（条形图模板传的是渐变）。
+         渐变塞进 addColorStop 会直接抛异常，所以这里必须先判类型。 */
+      const base = (typeof o.color === 'string') ? o.color : this.theme.ink;
       g.save();
       // 一笔横画：起笔重、收笔飞白
       const grd = g.createLinearGradient(box.x, 0, box.x + box.w, 0);
-      grd.addColorStop(0, o.color || this.theme.ink);
-      grd.addColorStop(0.82, o.color || this.theme.ink);
-      grd.addColorStop(1, rgba(o.color || '#1A1614', 0.25));
+      grd.addColorStop(0, base);
+      grd.addColorStop(0.88, base);
+      /* 收笔淡出只留 12%、且不淡到 0.25 —— 数据条的末端一虚，
+         读数就会以为「值没到那儿」。0.25 时最后 18% 几乎看不见，实测被误读。 */
+      grd.addColorStop(1, rgba(base, 0.6));
       g.fillStyle = grd;
       g.beginPath();
       g.moveTo(box.x, box.y + box.h * 0.15);

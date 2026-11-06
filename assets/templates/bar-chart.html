@@ -163,7 +163,9 @@ function drawFrame(T) {
 
     /* 数值条 */
     if (w > 0) {
-      const grad = g.createLinearGradient(X0, 0, X0 + Math.max(w, 1), 0);
+      /* 渐变按「满长」建，不按当前长度 —— 否则条形越长颜色越被拉伸，
+         同一张图里第一名和第二名的色相会不一样。 */
+      const grad = g.createLinearGradient(X0, 0, X0 + Math.max(fullW, 1), 0);
       if (isTop) {
         grad.addColorStop(0, TH.accentDeep || '#FF8A3D');
         grad.addColorStop(1, TH.accent);
@@ -171,8 +173,14 @@ function drawFrame(T) {
         grad.addColorStop(0, RGBA(TH.accentSoft || '#5FE0C0', 0.55));
         grad.addColorStop(1, RGBA(TH.accentSoft || '#5FE0C0', 0.85));
       }
-      g.fillStyle = grad;
-      g.fillRect(X0, top, w, BAR);
+      /* 有风格时交给 SV.bar：孔版会打成网点、粉笔会画成一道笔触、水墨会带飞白。
+         颜色仍用上面那条渐变，所以冷暖关系不变，只是「材质」变了。 */
+      if (TH.__style && window.SV) {
+        SV.bar(g, TH.__style, { x: X0, y: top, w: fullW, h: BAR }, grow, { S: SF, color: grad });
+      } else {
+        g.fillStyle = grad;
+        g.fillRect(X0, top, w, BAR);
+      }
     }
 
     /* 左侧标签 */

@@ -175,6 +175,19 @@ test('波尔（手抖）不改变同帧结果', () => {
   }
 });
 
+test('bar() 能吃 CanvasGradient（条形图模板传的就是渐变）', () => {
+  // 真实事故：ink 的 bar 把 o.color 直接塞进 addColorStop，
+  // 模板传渐变时整条流水线在「水墨条形图」上崩掉，其它 7 种风格都没事。
+  const fakeGradient = { __gradient: true, addColorStop() {} };
+  for (const s of SV.list()) {
+    const st = SV.get(s.id);
+    assert.doesNotThrow(
+      () => SV.bar(fakeCtx(), st, { x: 10, y: 20, w: 400, h: 30 }, 0.6, { S: 1, color: fakeGradient }),
+      `${s.id}.bar 不接受渐变`
+    );
+  }
+});
+
 test('节拍网格换算：snap 落在拍点上，fitBeats 给整拍', () => {
   // 120bpm → 一拍 0.5s
   assert.equal(SV.BEAT.snap(0.62, 120, 1), 0.5);
