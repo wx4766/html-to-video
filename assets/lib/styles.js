@@ -907,10 +907,14 @@
 
       const hz = H * 0.68;   // 地平线
 
-      // 条纹太阳：霓虹的招牌。放右侧 —— 放正中会和左对齐的大标题抢视线
-      const sunR = Math.min(W, H) * 0.19;
-      const sunY = hz - sunR * 0.35;
-      const sunX = W * 0.72;
+      /* 条纹太阳：霓虹的招牌。位置有两个约束，都是为了「不挡内容」：
+         ① 水平放右侧 —— 放正中会和左对齐的大标题抢视线；
+         ② 圆心压到地平线**以下**，只露上半个圆 —— 原先圆心在地平线上方，
+            太阳会盖住条形图右侧的数值（实测 bar-chart 的 96.2 被整个吃掉）。
+         半沉的太阳也是 synthwave 的经典构图，不算妥协。 */
+      const sunR = Math.min(W, H) * 0.16;
+      const sunY = hz + sunR * 0.52;
+      const sunX = W * 0.66;
       g.save();
       g.beginPath(); g.arc(sunX, sunY, sunR, 0, Math.PI * 2); g.clip();
       const sg = g.createLinearGradient(0, sunY - sunR, 0, sunY + sunR);
