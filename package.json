@@ -1,7 +1,7 @@
 {
   "name": "html-to-video",
-  "version": "1.6.0",
-  "description": "Render HTML/Canvas animations to MP4 frame by frame — deterministic, frame-accurate, no GPU. 8 visual styles (riso / cut-paper / blueprint / chalk / isometric / synthwave / swiss / ink) + storyboard preview. · 用代码逐帧做视频：HTML / Canvas → MP4 / GIF / 透明层",
+  "version": "1.7.0",
+  "description": "Render HTML/Canvas animations to MP4 frame by frame — deterministic, frame-accurate, no GPU. 12 visual styles + 14 templates + beat-synced cuts + storyboard preview. · 用代码逐帧做视频：HTML / Canvas → MP4 / GIF / 透明层",
   "keywords": [
     "html-to-video",
     "html-to-mp4",
@@ -15,6 +15,8 @@
     "ffmpeg",
     "playwright",
     "deterministic",
+    "beat-sync",
+    "storyboard",
     "agent-skill"
   ],
   "license": "MIT",
@@ -36,9 +38,26 @@
     "render": "node scripts/render-video-seek.js",
     "storyboard": "node scripts/storyboard.js",
     "qa": "node scripts/qa.js",
-    "bench": "node scripts/bench.js"
+    "bench": "node scripts/bench.js",
+    "beats": "node scripts/beats.js",
+    "doctor": "node scripts/doctor.js",
+    "preview": "node scripts/preview.js"
   },
   "devDependencies": {
     "playwright": "^1.49.1"
-  }
+  },
+  "bin": {
+    "h2v": "bin/h2v.js",
+    "html-to-video": "bin/h2v.js"
+  },
+  "files": [
+    "bin/",
+    "assets/",
+    "scripts/",
+    "SKILL.md",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
 }

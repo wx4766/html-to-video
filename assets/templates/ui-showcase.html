@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 界面演示</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script>
+/* =====================================================================
+   模板 ⑭  ·  界面演示（产品功能展示）
+   ---------------------------------------------------------------------
+   用途：给产品录屏配一段"预告片"——窗口从下方推入、镜头缓推、
+   两块区域依次被聚光打亮并配一条标注。适合发布片、官网首屏、功能更新说明。
+
+   为什么不用真实截图：
+     · 截图要跟着版本变，模板却要长期可用；
+     · 截图里的字号在 1080p 上常常糊；
+     · 这张"抽象 UI"能跟着主题/风格换色，和整片统一。
+   要换成真截图：把 CFG.shot 指向一张图，模板会用图片替换中间画布区
+   （图片按 cover 裁切，不会拉伸变形）。
+
+   出片：
+     bash ../render.sh ui-showcase.html --duration=8 --fps=60
+     bash ../render.sh ui-showcase.html --duration=8 --theme=paper   # 浅色更适合 SaaS
+
+   时间轴（固定 8 秒，可用 --duration 拉长）：
+     0.0–1.0  窗口推入
+     1.0–2.2  界面元素依次浮现
+     2.2–4.4  聚光第 1 块 + 标注 1
+     4.4–6.6  聚光第 2 块 + 标注 2
+     6.6–8.0  拉远收尾
+   ===================================================================== */
+const CFG = {
+  theme: 'midnight',
+  brand:  'html-to-video',
+  url:    'app.example.com/studio',
+  badge:  'v1.8',
+  title:  '一条命令，出全套比例',
+  shot:   null,            // 可选：'./shot.png' 用真实截图替换抽象界面
+  spots: [
+    /* 坐标是相对窗口的比例：第一块对准三张卡片，第二块对准折线图。
+       写错的表现很隐蔽 —— 高亮框落在空白处，看着像"这个功能就是一片空"。 */
+    { x: 0.50, y: 0.12, w: 0.44, h: 0.24, label: '一键切 9:16', note: '同一份 HTML，多比例同时出' },
+    { x: 0.28, y: 0.52, w: 0.56, h: 0.34, label: '逐帧可控', note: '任意时刻可复现，改一帧不用重拍' },
+  ],
+  dur: 8.0,
+};
+/* ===================================================================== */
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const DUR = CFG.dur;
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+const g = cv.getContext('2d');
+
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', accent: '#FFB86B', panel: 'rgba(255,255,255,0.05)',
+};
+const RGBA = window.h2vRgba || ((hex, a) => hex);
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, "Courier New", monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * clamp(t));
+const inOutCubic = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const smooth = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+
+/* 圆角路径：自己拼，避免依赖 ctx.roundRect（旧 Chromium / 测试桩不一定有） */
+function rr(g2, x, y, w, h, rad) {
+  const k = Math.max(0, Math.min(rad, w / 2, h / 2));
+  g2.beginPath();
+  g2.moveTo(x + k, y);
+  g2.lineTo(x + w - k, y); g2.arc(x + w - k, y + k, k, -Math.PI / 2, 0);
+  g2.lineTo(x + w, y + h - k); g2.arc(x + w - k, y + h - k, k, 0, Math.PI / 2);
+  g2.lineTo(x + k, y + h); g2.arc(x + k, y + h - k, k, Math.PI / 2, Math.PI);
+  g2.lineTo(x, y + k); g2.arc(x + k, y + k, k, Math.PI, Math.PI * 1.5);
+  g2.closePath();
+}
+
+/* 窗口几何：横屏 16:9 窗口居中偏下；竖屏时窗口旋转感会乱，改成"整屏铺满" */
+const WIN = PORTRAIT
+  ? { x: W * 0.06, y: H * 0.20, w: W * 0.88, h: H * 0.50 }
+  : { x: W * 0.13, y: H * 0.22, w: W * 0.74, h: H * 0.58 };
+
+let SHOT_IMG = null, SHOT_TRIED = false;
+function getShot() {
+  if (SHOT_TRIED) return SHOT_IMG;
+  SHOT_TRIED = true;
+  if (!CFG.shot) return null;
+  try {
+    const im = new Image();
+    im.src = CFG.shot;
+    SHOT_IMG = im;                       // 没加载完时先返回 null，用抽象界面兜底
+  } catch (e) { SHOT_IMG = null; }
+  return SHOT_IMG;
+}
+
+/* 抽象界面：侧栏 + 顶部条 + 三张卡 + 一条折线。
+   所有坐标按窗口宽高的比例算，换尺寸不会错位。 */
+function drawMock(x, y, w, h, t, reveal) {
+  const S = Math.min(w / 1200, h / 700) * 1.0;
+  const pad = 22 * S;
+  const ink = TH.ink;
+  const accent = TH.accent;
+
+  g.save();
+  // 窗口本体
+  g.fillStyle = TH.bgAlt || TH.bg;
+  rr(g, x, y, w, h, 16 * S); g.fill();
+  g.strokeStyle = RGBA(ink, 0.14); g.lineWidth = 1.2 * S;
+  rr(g, x, y, w, h, 16 * S); g.stroke();
+
+  // 标题栏
+  const barH = 38 * S;
+  g.fillStyle = RGBA(ink, 0.05);
+  rr(g, x, y, w, barH, 16 * S); g.fill();
+  g.fillStyle = TH.bgAlt || TH.bg; g.fillRect(x, y + barH - 16 * S, w, 16 * S);
+  g.strokeStyle = RGBA(ink, 0.10); g.lineWidth = 1 * S;
+  g.beginPath(); g.moveTo(x, y + barH); g.lineTo(x + w, y + barH); g.stroke();
+
+  // 三个窗控点
+  ['#FF6B6B', '#FFC15E', '#5BD98A'].forEach((c, i) => {
+    g.fillStyle = RGBA(c, 0.85);
+    g.beginPath(); g.arc(x + 22 * S + i * 18 * S, y + barH / 2, 4.6 * S, 0, Math.PI * 2); g.fill();
+  });
+
+  // 地址栏
+  const urlW = Math.min(w * 0.46, 420 * S);
+  g.fillStyle = RGBA(ink, 0.07);
+  rr(g, x + w / 2 - urlW / 2, y + barH / 2 - 11 * S, urlW, 22 * S, 11 * S); g.fill();
+  g.fillStyle = RGBA(ink, 0.55);
+  g.font = `500 ${11.5 * S}px ${MONO}`;
+  g.textAlign = 'center';
+  g.fillText(CFG.url, x + w / 2, y + barH / 2 + 4 * S);
+  g.textAlign = 'left';
+
+  // 内容区
+  const cx = x + pad, cy = y + barH + pad;
+  const cw = w - pad * 2, ch = h - barH - pad * 2;
+
+  // 侧栏
+  const sbW = cw * 0.20;
+  g.fillStyle = RGBA(ink, 0.04);
+  rr(g, cx, cy, sbW, ch, 10 * S); g.fill();
+  for (let i = 0; i < 5; i++) {
+    const p = clamp(reveal * 5 - i, 0, 1);
+    if (p <= 0) continue;
+    g.globalAlpha = p * (i === 0 ? 0.95 : 0.55);
+    g.fillStyle = i === 0 ? accent : ink;
+    rr(g, cx + 12 * S, cy + 16 * S + i * 26 * S, (sbW - 24 * S) * (0.55 + (i % 3) * 0.14), 8 * S, 4 * S);
+    g.fill();
+  }
+  g.globalAlpha = 1;
+
+  // 卡片
+  const mainX = cx + sbW + pad * 0.7;
+  const mainW = cx + cw - mainX;
+  const cardW = (mainW - pad * 0.7 * 2) / 3;
+  for (let i = 0; i < 3; i++) {
+    const p = clamp(reveal * 6 - 2 - i * 0.6, 0, 1);
+    if (p <= 0) continue;
+    const bx = mainX + i * (cardW + pad * 0.7);
+    g.globalAlpha = p;
+    g.fillStyle = i === 0 ? RGBA(accent, 0.22) : RGBA(ink, 0.08);
+    rr(g, bx, cy, cardW, ch * 0.30, 10 * S); g.fill();
+    g.strokeStyle = RGBA(ink, 0.12); g.lineWidth = 1 * S;
+    rr(g, bx, cy, cardW, ch * 0.30, 10 * S); g.stroke();
+    // 卡内两行占位
+    g.fillStyle = i === 0 ? RGBA(accent, 0.75) : RGBA(ink, 0.30);
+    g.fillRect(bx + 12 * S, cy + 14 * S, cardW * 0.42, 7 * S);
+    g.fillStyle = RGBA(ink, 0.30);
+    g.fillRect(bx + 12 * S, cy + 30 * S, cardW * 0.62, 5 * S);
+    g.globalAlpha = 1;
+  }
+
+  // 折线图
+  const chY = cy + ch * 0.36;
+  const chH = ch * 0.56;
+  g.globalAlpha = clamp(reveal * 4 - 2.2, 0, 1);
+  g.fillStyle = RGBA(ink, 0.07);
+  rr(g, mainX, chY, mainW, chH, 10 * S); g.fill();
+
+  const pts = 26;
+  const prog = clamp(reveal * 1.6 - 0.6, 0, 1);
+  g.beginPath();
+  for (let i = 0; i < pts * prog; i++) {
+    const k = i / (pts - 1);
+    const v = 0.5 + Math.sin(k * 6.2 + 1.1) * 0.22 + Math.sin(k * 13.4) * 0.06;
+    const px = mainX + 16 * S + k * (mainW - 32 * S);
+    const py = chY + chH - 16 * S - v * (chH - 40 * S);
+    i === 0 ? g.moveTo(px, py) : g.lineTo(px, py);
+  }
+  g.strokeStyle = TH.accent2 || accent;
+  g.lineWidth = 2.6 * S;
+  g.stroke();
+  g.globalAlpha = 1;
+
+  g.restore();
+  return { S, barH };
+}
+
+function drawFrame(t) {
+  const T = clamp(t, 0, DUR - 0.001);
+  g.clearRect(0, 0, W, H);
+
+  // 底：渐变 + 一层网格，让"产品发布会"的味道出来
+  const lg = g.createLinearGradient(0, 0, W, H);
+  lg.addColorStop(0, TH.bg);
+  lg.addColorStop(1, TH.bgAlt || TH.bg);
+  g.fillStyle = lg; g.fillRect(0, 0, W, H);
+
+  g.save();
+  g.globalAlpha = 0.5;
+  g.strokeStyle = RGBA(TH.ink, 0.05);
+  g.lineWidth = 1;
+  const step = 64 * SF;
+  for (let x = (W % step) / 2; x < W; x += step) {
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+  }
+  for (let y = (H % step) / 2; y < H; y += step) {
+    g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+  }
+  g.restore();
+
+  /* 窗口入场：从下方推入 + 轻微放大。缓动用 outExpo（快进慢停），
+     这是"发布会"和"PPT 翻页"最大的手感差别。 */
+  const inP = outExpo(win(T, 0, 1.0));
+  const zoom = 1 + 0.045 * inOutCubic(win(T, 1.6, DUR));
+  const dy = (1 - inP) * H * 0.22;
+
+  g.save();
+  g.translate(W / 2, WIN.y + WIN.h / 2 + dy);
+  g.scale(zoom, zoom);
+  g.translate(-W / 2, -(WIN.y + WIN.h / 2));
+  g.globalAlpha = inP;
+
+  // 窗口阴影（有光的场合才需要影子）
+  g.save();
+  g.fillStyle = 'rgba(0,0,0,0.28)';
+  rr(g, WIN.x + 6 * SX, WIN.y + 18 * SY, WIN.w, WIN.h, 18 * SF);
+  g.filter = 'blur(18px)';
+  g.fill();
+  g.restore();
+
+  const reveal = smooth(win(T, 0.85, 2.1));
+  const shot = getShot();
+  if (shot && shot.complete && shot.naturalWidth) {
+    // 真截图：按 cover 裁进内容区
+    g.save();
+    rr(g, WIN.x, WIN.y, WIN.w, WIN.h, 16 * SF);
+    g.clip();
+    const ir = shot.naturalWidth / shot.naturalHeight;
+    const br = WIN.w / WIN.h;
+    let dw = WIN.w, dh = WIN.h;
+    if (ir > br) { dh = WIN.h; dw = dh * ir; } else { dw = WIN.w; dh = dw / ir; }
+    g.drawImage(shot, WIN.x + (WIN.w - dw) / 2, WIN.y + (WIN.h - dh) / 2, dw, dh);
+    g.restore();
+  } else {
+    drawMock(WIN.x, WIN.y, WIN.w, WIN.h, T, reveal);
+  }
+
+  /* 聚光 + 标注：两段依次出现，每段 2.2 秒左右。
+     聚光不是"把别处调暗"，而是"给目标加亮框 + 画面整体压暗"——
+     只压暗不描边，观众会找不到该看哪儿。 */
+  const spots = CFG.spots.slice(0, 2);
+  const seg = (DUR - 2.4) / Math.max(1, spots.length);
+  spots.forEach((sp, i) => {
+    const start = 2.0 + i * seg;
+    const p = smooth(win(T, start, start + 0.45));
+    const out = smooth(win(T, start + seg - 0.5, start + seg - 0.05));
+    const a = p * (1 - out);
+    if (a <= 0.01) return;
+
+    const bx = WIN.x + sp.x * WIN.w;
+    const by = WIN.y + sp.y * WIN.h;
+    const bw = sp.w * WIN.w;
+    const bh = sp.h * WIN.h;
+
+    // 整体压暗（在聚光窗口里挖洞）
+    g.save();
+    g.globalAlpha = a * 0.55;
+    g.fillStyle = TH.bg;
+    g.beginPath();
+    g.rect(WIN.x, WIN.y, WIN.w, WIN.h);
+    g.rect(bx, by, bw, bh);
+    g.fill('evenodd');
+    g.restore();
+
+    // 亮框
+    g.save();
+    g.globalAlpha = a;
+    g.strokeStyle = TH.accent;
+    g.lineWidth = 2.6 * SF;
+    g.shadowColor = TH.accent;
+    g.shadowBlur = 16 * SF * a;
+    rr(g, bx, by, bw, bh, 12 * SF);
+    g.stroke();
+    g.restore();
+
+    // 标注：贴在框上方（上方没空间就放下方）
+    const labelPx = 26 * SF;
+    g.save();
+    g.font = `600 ${labelPx}px ${SANS}`;
+    const tw = g.measureText(sp.label).width;
+    const notePx = 19 * SF;
+    g.font = `400 ${notePx}px ${SANS}`;
+    const nw = sp.note ? g.measureText(sp.note).width : 0;
+    const cardW = Math.max(tw, nw) + 40 * SF;
+    const cardH = (sp.note ? 74 : 46) * SF;
+    const above = by - cardH - 16 * SF > WIN.y + 40 * SF;
+    const cx = clamp(bx, WIN.x + 12 * SF, WIN.x + WIN.w - cardW - 12 * SF);
+    const cy = above ? by - cardH - 16 * SF : by + bh + 16 * SF;
+
+    g.globalAlpha = a * 0.95;
+    g.fillStyle = RGBA(TH.bg, 0.92);
+    rr(g, cx, cy, cardW, cardH, 10 * SF); g.fill();
+    g.strokeStyle = RGBA(TH.accent, 0.6); g.lineWidth = 1.4 * SF;
+    rr(g, cx, cy, cardW, cardH, 10 * SF); g.stroke();
+
+    g.fillStyle = TH.ink;
+    g.font = `600 ${labelPx}px ${SANS}`;
+    g.fillText(sp.label, cx + 20 * SF, cy + 34 * SF);
+    if (sp.note) {
+      g.globalAlpha = a * 0.6;
+      g.font = `400 ${notePx}px ${SANS}`;
+      g.fillText(sp.note, cx + 20 * SF, cy + 60 * SF);
+    }
+    g.restore();
+  });
+
+  g.restore();
+
+  /* 顶部标题 + 角标：整片的"封面字"，只在开场 2 秒里存在 */
+  const headP = smooth(win(T, 0.15, 0.75)) * (1 - smooth(win(T, 3.6, 4.3)));
+  if (headP > 0.01 && !PORTRAIT) {
+    g.save();
+    g.globalAlpha = headP;
+    g.fillStyle = TH.ink;
+    g.font = `700 ${54 * SF}px ${SANS}`;
+    g.fillText(CFG.title, W * 0.09, H * 0.16);
+
+    g.globalAlpha = headP * 0.5;
+    g.font = `500 ${22 * SF}px ${MONO}`;
+    g.fillText(CFG.brand, W * 0.09, H * 0.16 + 34 * SY);
+
+    g.globalAlpha = headP * 0.9;
+    g.fillStyle = TH.accent;
+    const bw = 62 * SF, bh = 30 * SF;
+    rr(g, W * 0.91 - bw, H * 0.12, bw, bh, bh / 2); g.fill();
+    g.fillStyle = TH.onAccent || '#0A0C12';
+    g.font = `700 ${16 * SF}px ${MONO}`;
+    g.textAlign = 'center';
+    g.fillText(CFG.badge, W * 0.91 - bw / 2, H * 0.12 + bh * 0.66);
+    g.restore();
+  }
+}
+
+/* ---------- 渲染契约：这段不要改 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

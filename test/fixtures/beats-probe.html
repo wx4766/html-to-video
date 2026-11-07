@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>fixture · 节拍注入探针</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+/* 探针：只做一件事 —— 证明 window.__beats 在页面脚本执行时就已经存在。
+   渲染器把「页面报错」判为失败，所以这里 throw 就等于渲染失败。
+   为什么不用「画出来再截图比对」：那要维护一张基准图，改字体就红；
+   而我们要验的是注入时机（addInitScript vs 加载后 evaluate），不是像素。 */
+{ // 这个 fixture 只在节拍用例里用：没有 __beats 就该失败
+  if (!window.__beats || !Array.isArray(window.__beats.beats) || !window.__beats.beats.length) {
+    throw new Error('window.__beats 没注入（模板在顶层就读不到拍点）');
+  }
+  if (typeof window.__beats.bpm !== 'number') throw new Error('window.__beats.bpm 不是数字');
+}
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+const g = cv.getContext('2d');
+
+/* 有拍点就按拍点闪一下，没有就画个静帧 —— 两种用法都不报错 */
+window.__seek = (t) => {
+  g.fillStyle = '#0A0C12';
+  g.fillRect(0, 0, W, H);
+  const b = window.__beats;
+  let k = 0;
+  if (b && b.beats && b.beats.length) k = b.beats.filter((x) => x <= t).length;
+  g.fillStyle = '#FFB86B';
+  g.fillRect(0, H * 0.5 - 6, Math.min(W, k * 40 + 10), 12);
+};
+window.__seek(0);
+window.__ready = true;
+</script>
+</body>
+</html>

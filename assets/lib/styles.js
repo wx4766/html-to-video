@@ -1288,6 +1288,673 @@
     boil(t, i, amp) { return Math.sin(i * 7.7 + Math.floor(t * 4) * 2.7) * amp * 0.4; },
   };
 
+
+  /* ────────────────────────────────────────────────────────────────
+     9. WATERCOLOR · 水彩晕染
+     配方：棉浆纸 + 三块湿画法色晕 + 颜料沿纸纹沉淀的深边 + 衬线标题
+     最适合：品牌故事、人文叙事、教育科普、需要"呼吸感"的产品片
+     参考：animate 的水彩风、sweety-handdraw 的手绘叙事
+     ──────────────────────────────────────────────────────────────── */
+  STYLES.watercolor = {
+    id: 'watercolor', cn: '水彩晕染', en: 'Watercolor', dark: false,
+    tags: ['柔和', '手绘', '人文', '叙事'],
+    theme: {
+      bg: '#FCF8F1', bgAlt: '#F2EADC', ink: '#2B2A35',
+      sub: 'rgba(43,42,53,0.62)', faint: 'rgba(43,42,53,0.12)',
+      panel: 'rgba(47,93,140,0.075)',
+      accent: '#2F5D8C', accent2: '#B5651D', good: '#4F7A4A', bad: '#A33B33',
+      glow: 'rgba(47,93,140,0.16)',
+      accentDeep: '#1E4162', accentSoft: '#7FA8C9', sweep: '40,60,90', onAccent: '#FDFBF6',
+      bgFar: '#F1E9DC',
+    },
+    type: { display: F.serif, body: F.serif, mono: F.mono, weight: 700, tracking: 0.005, lead: 1.42 },
+    motion: { enter: 0.85, overshoot: 1.0, ease: 'outCubic' },
+
+    bg(g, W, H, t, o) {
+      const S = Math.sqrt((W / 1920) * (H / 1080));
+      g.fillStyle = '#FCF8F1';
+      g.fillRect(0, 0, W, H);
+      /* 三块「湿画法」色晕：中心浓、边缘淡，色相从靛蓝到赭石。
+         用 3 个 stop 而不是 2 个 —— 两停的径向渐变边界是可见的圆环，
+         看起来像"贴了三个圆"，不是水彩。 */
+      const bloom = (cx, cy, r, col, a) => {
+        const rg = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+        rg.addColorStop(0, rgba(col, a));
+        rg.addColorStop(0.55, rgba(col, a * 0.42));
+        rg.addColorStop(1, rgba(col, 0));
+        g.fillStyle = rg;
+        g.fillRect(cx - r, cy - r, r * 2, r * 2);
+      };
+      const drift = Math.sin(t * 0.11) * 18 * S;
+      bloom(W * 0.16 + drift, H * 0.18, W * 0.46, '#2F5D8C', 0.30);
+      bloom(W * 0.92 - drift, H * 0.30, W * 0.38, '#B5651D', 0.20);
+      bloom(W * 0.62, H * 1.02, W * 0.52, '#4F7A4A', 0.16);
+      /* 第三层的"水痕边"：同一位置再叠一圈更窄、更深的色环。
+         真实水彩干透后颜料会在边界沉积，缺这一圈就只是"渐变"。 */
+      bloom(W * 0.16 + drift, H * 0.18, W * 0.24, '#1E4162', 0.10);
+
+      // 纸纹：棉浆纸的颗粒比印刷纸粗，颗粒密度低
+      const nz = noiseTile(200, 41, 0.075, '#8A7A62');
+      g.save();
+      g.globalAlpha = 0.55;
+      g.fillStyle = g.createPattern(nz, 'repeat');
+      g.fillRect(0, 0, W, H);
+      g.restore();
+
+      /* 纸张受潮后的轻微起伏：一条极淡的对角水痕。
+         没有它，纸就是"纯色块"；有了它，画面立刻像一张真纸。 */
+      const wg = g.createLinearGradient(0, H, W, 0);
+      wg.addColorStop(0, 'rgba(120,100,70,0.00)');
+      wg.addColorStop(0.52, 'rgba(120,100,70,0.05)');
+      wg.addColorStop(1, 'rgba(120,100,70,0.00)');
+      g.fillStyle = wg; g.fillRect(0, 0, W, H);
+    },
+
+    overlay(g, W, H) {
+      const v = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.42, W / 2, H / 2, Math.max(W, H) * 0.78);
+      v.addColorStop(0, 'rgba(0,0,0,0)');
+      v.addColorStop(1, 'rgba(60,48,32,0.10)');
+      g.fillStyle = v; g.fillRect(0, 0, W, H);
+    },
+
+    text(g, txt, x, y, size, o) {
+      o = o || {};
+      const kind = o.kind || 'body';
+      const fam = kind === 'mono' ? this.type.mono : (kind === 'display' ? this.type.display : this.type.body);
+      g.save();
+      g.font = `${kind === 'display' ? this.type.weight : 400} ${size}px ${fam}`;
+      g.textAlign = o.align || 'left';
+      g.textBaseline = o.baseline || 'alphabetic';
+      /* 颜料在纸纤维里会往外渗一点。用极轻的 blur 叠一层就够，
+         blur 给大了会变成"高斯模糊的标题"，那是滤镜不是水彩。 */
+      if (kind === 'display') {
+        g.globalAlpha = 0.22;
+        g.fillStyle = o.color || this.theme.accentDeep;
+        g.filter = `blur(${Math.max(1, size * 0.035)}px)`;
+        g.fillText(txt, x, y + size * 0.012);
+        g.filter = 'none';
+        g.globalAlpha = 1;
+      }
+      g.fillStyle = o.color || (kind === 'sub' ? this.theme.sub : this.theme.ink);
+      g.fillText(txt, x, y);
+      g.restore();
+    },
+
+    card(g, box, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const A = this.theme.accent;
+      const deep = o.accent ? this.theme.accentDeep : A;
+      const seed = o.seed || 7;
+      /* 直尺画的矩形一眼就不是水彩。每 42px 一个控制点，偏移由 box 坐标
+         与 seed 算出（不用 Math.random），保证同一 box 每次渲染都一样。 */
+      const wob = (i, amp) => Math.sin(i * 2.3 + seed * 1.7) * amp * S;
+      const edge = 26 * S;
+
+      g.save();
+
+      /* ① 薄水底色 */
+      g.fillStyle = rgba(A, o.accent ? 0.80 : 0.13);
+      g.fillRect(box.x, box.y, box.w, box.h);
+
+      /* ② 浓淡不匀：几团"积水"。平涂是数码味最重的地方 ——
+         真水彩不可能一整块颜色一样深。位置由 seed 决定，确定性。 */
+      const R = Math.min(box.w, box.h);
+      const blob = (bx, by, r, a) => {
+        const rg = g.createRadialGradient(bx, by, 0, bx, by, r);
+        rg.addColorStop(0, rgba(deep, a));
+        rg.addColorStop(0.55, rgba(deep, a * 0.34));
+        rg.addColorStop(1, rgba(deep, 0));
+        g.fillStyle = rg;
+        g.fillRect(bx - r, by - r, r * 2, r * 2);
+      };
+      blob(box.x + box.w * (0.20 + 0.05 * Math.sin(seed)), box.y + box.h * 0.24,
+        R * 0.62, o.accent ? 0.15 : 0.085);
+      blob(box.x + box.w * 0.76, box.y + box.h * (0.60 + 0.07 * Math.cos(seed)),
+        R * 0.52, o.accent ? 0.11 : 0.065);
+      blob(box.x + box.w * 0.44, box.y + box.h * 0.94,
+        R * 0.44, o.accent ? 0.09 : 0.055);
+
+      /* ③ 湿边：四边各自向内一小段渐深。水彩最容易被认出来的特征就是这一圈，
+         比中间是什么颜色重要得多 —— 旧版只有下沿 5px 一条，看着仍像平涂色块。 */
+      g.save();
+      g.beginPath(); g.rect(box.x, box.y, box.w, box.h); g.clip();
+      const edgeGrad = (x0, y0, x1, y1, a) => {
+        const lg = g.createLinearGradient(x0, y0, x1, y1);
+        lg.addColorStop(0, rgba(deep, a));
+        lg.addColorStop(1, rgba(deep, 0));
+        return lg;
+      };
+      g.fillStyle = edgeGrad(box.x, box.y, box.x, box.y + edge, 0.30);
+      g.fillRect(box.x, box.y, box.w, edge);
+      g.fillStyle = edgeGrad(box.x, box.y + box.h, box.x, box.y + box.h - edge, 0.40);
+      g.fillRect(box.x, box.y + box.h - edge, box.w, edge);
+      g.fillStyle = edgeGrad(box.x, box.y, box.x + edge, box.y, 0.24);
+      g.fillRect(box.x, box.y, edge, box.h);
+      g.fillStyle = edgeGrad(box.x + box.w, box.y, box.x + box.w - edge, box.y, 0.28);
+      g.fillRect(box.x + box.w - edge, box.y, edge, box.h);
+
+      /* ④ 角部堆积：四个角各自积一点色，这是颜料最后停下来的地方 */
+      const corner = (cx, cy, a) => {
+        const rg = g.createRadialGradient(cx, cy, 0, cx, cy, R * 0.30);
+        rg.addColorStop(0, rgba(deep, a));
+        rg.addColorStop(1, rgba(deep, 0));
+        g.fillStyle = rg;
+        g.fillRect(cx - R * 0.30, cy - R * 0.30, R * 0.60, R * 0.60);
+      };
+      corner(box.x, box.y, 0.20);
+      corner(box.x + box.w, box.y, 0.16);
+      corner(box.x, box.y + box.h, 0.24);
+      corner(box.x + box.w, box.y + box.h, 0.22);
+      g.restore();
+
+      /* ⑤ 不规则边线：抖动的闭合折线，代替 strokeRect */
+      const jit = 1.8 * S;
+      const N = Math.max(4, Math.round(box.w / (42 * S)));
+      g.strokeStyle = rgba(deep, o.accent ? 0.58 : 0.42);
+      g.lineWidth = 4 * S;
+      g.lineJoin = 'round';
+      g.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const x = box.x + (box.w / N) * i;
+        const y = box.y + wob(i, jit);
+        i ? g.lineTo(x, y) : g.moveTo(x, y);
+      }
+      for (let i = 1; i <= 4; i++) g.lineTo(box.x + box.w + wob(i + 3, jit), box.y + (box.h / 4) * i);
+      for (let i = 1; i <= N; i++) g.lineTo(box.x + box.w - (box.w / N) * i, box.y + box.h + wob(i + 7, jit));
+      for (let i = 1; i <= 3; i++) g.lineTo(box.x + wob(i + 12, jit), box.y + box.h - (box.h / 4) * i);
+      g.closePath();
+      g.stroke();
+
+      g.restore();
+      /* 内边距不能是死数：110px 高的结论条按 42px 缩进，内容框只剩 26px，
+         字号被压到 13px 并贴左下角 —— 长条结论会糊成一团。
+         只按**高度**收：330px 的徽章方块宽度本来就够，按 w*0.05 收到 16.5
+         反而把「120 / BPM」压到卡片下沿外。 */
+      const pad = Math.min(42 * S, box.h * 0.20);
+      return {
+        x: box.x + pad, y: box.y + pad, w: box.w - pad * 2, h: box.h - pad * 2,
+        ink: o.accent ? (this.theme.onAccent || '#FFFDF8') : this.theme.ink,
+      };
+    },
+
+    bar(g, box, p, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const w = Math.max(2 * S, box.w * clamp(p));
+      /* o.color 可能是 CanvasGradient（条形图模板传渐变）。渐变不能进 rgba()/mix()，
+         所以这种"要叠材质"的风格遇到渐变就退化成一条纯色条 —— 材质没了，但不崩。 */
+      if (o.color && typeof o.color !== 'string') {
+        g.fillStyle = o.color; g.fillRect(box.x, box.y, w, box.h); return;
+      }
+      const col = o.color || this.theme.accent;
+      const lg = g.createLinearGradient(box.x, box.y, box.x, box.y + box.h);
+      lg.addColorStop(0, rgba(col, 0.92));
+      lg.addColorStop(1, rgba(col, 0.62));
+      g.fillStyle = lg;
+      g.fillRect(box.x, box.y, w, box.h);
+      // 上沿积色：一条更深的细线，模拟水在边缘停住
+      g.fillStyle = rgba(col, 0.55);
+      g.fillRect(box.x, box.y, w, Math.max(1, box.h * 0.10));
+      // 收笔处虚化（颜料没铺满的地方）
+      const tail = Math.min(w, box.w * 0.10);
+      const tg = g.createLinearGradient(box.x + w - tail, 0, box.x + w, 0);
+      tg.addColorStop(0, rgba(col, 0.0));
+      tg.addColorStop(1, 'rgba(0,0,0,0)');
+      void tg;
+    },
+
+    boil(t, i, amp) { return Math.sin(i * 5.3 + Math.floor(t * 6) * 1.9) * amp * 0.28; },
+  };
+
+  /* ────────────────────────────────────────────────────────────────
+     10. PENCIL · 铅笔素描
+     配方：素描纸 + 45° 排线 + 双线手绘边框 + 石墨灰阶（几乎不用彩色）
+     最适合：教程、拆解、草稿感的产品思路、需要"人在画"的场合
+     参考：anidoodle 的铅笔风、lemo 的白板/速写类风格
+     ──────────────────────────────────────────────────────────────── */
+  STYLES.pencil = {
+    id: 'pencil', cn: '铅笔素描', en: 'Pencil Sketch', dark: false,
+    tags: ['手绘', '草稿', '教学', '低饱和'],
+    theme: {
+      bg: '#F3F1EA', bgAlt: '#E9E6DC', ink: '#33312E',
+      sub: 'rgba(51,49,46,0.60)', faint: 'rgba(51,49,46,0.16)',
+      panel: 'rgba(51,49,46,0.05)',
+      accent: '#5A5751', accent2: '#8A6A4F', good: '#4C6B4F', bad: '#8C4A42',
+      glow: 'rgba(80,76,70,0.12)',
+      accentDeep: '#26241F', accentSoft: '#9A968C', sweep: '70,66,60', onAccent: '#F6F4EE',
+      bgFar: '#E6E2D8',
+    },
+    type: { display: F.hei, body: F.sans, mono: F.mono, weight: 700, tracking: 0.01, lead: 1.36 },
+    motion: { enter: 0.6, overshoot: 1.0, ease: 'outCubic' },
+
+    bg(g, W, H, t, o) {
+      const S = Math.sqrt((W / 1920) * (H / 1080));
+      g.fillStyle = '#F3F1EA';
+      g.fillRect(0, 0, W, H);
+
+      /* 排线（hatching）：45° 细线，间距随机但种子固定。
+         用 pattern 而不是逐线画：一帧几百条 lineTo 在 1080p 下要 8~12ms。 */
+      const tile = cached('pcl-hatch', function () {
+        const s = Math.round(18 * 1);
+        const c = document.createElement('canvas');
+        c.width = c.height = s;
+        const x = c.getContext('2d');
+        x.strokeStyle = 'rgba(60,56,50,0.17)';
+        x.lineWidth = 1;
+        for (let i = -s; i < s * 2; i += 6) {
+          x.beginPath(); x.moveTo(i, 0); x.lineTo(i + s, s); x.stroke();
+        }
+        return c;
+      });
+      g.save();
+      g.globalAlpha = 0.85;
+      g.fillStyle = g.createPattern(tile, 'repeat');
+      g.fillRect(0, 0, W, H);
+      g.restore();
+
+      // 纸面不均匀：左上偏亮、右下有一层石墨灰（压住视线）
+      const sg = g.createLinearGradient(0, 0, W, H);
+      sg.addColorStop(0, 'rgba(255,255,255,0.35)');
+      sg.addColorStop(0.6, 'rgba(255,255,255,0)');
+      sg.addColorStop(1, rgba('#5A5751', 0.10));
+      g.fillStyle = sg; g.fillRect(0, 0, W, H);
+
+      const nz = noiseTile(180, 67, 0.09, '#4A4741');
+      g.save();
+      g.globalAlpha = 0.4;
+      g.fillStyle = g.createPattern(nz, 'repeat');
+      g.fillRect(0, 0, W, H);
+      g.restore();
+      void S;
+    },
+
+    overlay(g, W, H) {
+      // 橡皮擦过的痕迹：两三道极淡的斜向亮带
+      g.save();
+      g.globalAlpha = 0.30;
+      g.fillStyle = 'rgba(255,255,255,0.55)';
+      for (let i = 0; i < 3; i++) {
+        g.save();
+        g.translate(W * (0.18 + i * 0.3), H * (0.7 - i * 0.12));
+        g.rotate(-0.32);
+        g.fillRect(0, 0, W * 0.16, H * 0.045);
+        g.restore();
+      }
+      g.restore();
+    },
+
+    text(g, txt, x, y, size, o) {
+      o = o || {};
+      const kind = o.kind || 'body';
+      const fam = kind === 'mono' ? this.type.mono : (kind === 'display' ? this.type.display : this.type.body);
+      g.save();
+      g.font = `${kind === 'display' ? this.type.weight : 500} ${size}px ${fam}`;
+      g.textAlign = o.align || 'left';
+      g.textBaseline = o.baseline || 'alphabetic';
+      /* 手写的字不会一次到位：先描一遍淡的、偏 0.5px 的，再压一遍实的。
+         两层叠起来像"描过的铅笔字"，一层就是普通无衬线。 */
+      if (kind === 'display') {
+        g.globalAlpha = 0.32;
+        g.fillStyle = o.color || this.theme.accent2;
+        g.fillText(txt, x + size * 0.006, y - size * 0.004);
+        g.globalAlpha = 1;
+      }
+      g.fillStyle = o.color || (kind === 'sub' ? this.theme.sub : this.theme.ink);
+      g.fillText(txt, x, y);
+      g.restore();
+    },
+
+    card(g, box, o) {
+      o = o || {};
+      const S = o.S || 1;
+      g.save();
+      g.fillStyle = o.accent ? rgba(this.theme.ink, 0.90) : 'rgba(255,255,255,0.42)';
+      g.fillRect(box.x, box.y, box.w, box.h);
+
+      // 排线阴影：右下两片斜线，像用铅笔快速涂的
+      g.save();
+      g.beginPath();
+      g.rect(box.x, box.y, box.w, box.h);
+      g.clip();
+      /* 均匀排线：整块卡片铺满 45° 斜线。
+         早期版本只画右下角一小片，结果是一条"斜着的脏三角"横在文字后面，
+         看着像渲染出错而不是铅笔阴影。 */
+      g.strokeStyle = rgba(this.theme.ink, 0.20);
+      g.lineWidth = 1.4 * S;
+      const step = 7 * S;
+      for (let x = box.x - box.h; x < box.x + box.w; x += step) {
+        g.beginPath();
+        g.moveTo(x, box.y + box.h);
+        g.lineTo(x + box.h, box.y);
+        g.stroke();
+      }
+      g.restore();
+
+      // 手绘边框：两条略有偏移的线，比一条"精确"的矩形更像人画的
+      g.strokeStyle = rgba(o.accent ? this.theme.onAccent : this.theme.ink, 0.85);
+      g.lineWidth = 2 * S;
+      g.strokeRect(box.x, box.y, box.w, box.h);
+      g.globalAlpha = 0.45;
+      g.lineWidth = 1.2 * S;
+      g.strokeRect(box.x + 2.5 * S, box.y + 2 * S, box.w - 4 * S, box.h - 3 * S);
+      g.restore();
+
+      const pad = 38 * S;
+      return {
+        x: box.x + pad, y: box.y + pad, w: box.w - pad * 2, h: box.h - pad * 2,
+        ink: o.accent ? (this.theme.onAccent || '#F6F4EE') : this.theme.ink,
+      };
+    },
+
+    bar(g, box, p, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const w = Math.max(2 * S, box.w * clamp(p));
+      if (o.color && typeof o.color !== 'string') {
+        g.fillStyle = o.color; g.fillRect(box.x, box.y, w, box.h); return;
+      }
+      const col = o.color || this.theme.accent;
+      // 先用排线填，再压一条实线边 —— 铅笔画的条不是纯色块
+      g.save();
+      g.beginPath();
+      g.rect(box.x, box.y, w, box.h);
+      g.clip();
+      g.fillStyle = rgba(col, 0.26);
+      g.fillRect(box.x, box.y, w, box.h);
+      g.strokeStyle = rgba(col, 0.62);
+      g.lineWidth = 1.6 * S;
+      for (let y = box.y; y < box.y + box.h + w; y += 4.5 * S) {
+        g.beginPath(); g.moveTo(box.x, y); g.lineTo(box.x + w, y + w); g.stroke();
+      }
+      g.restore();
+      g.strokeStyle = rgba(col, 0.9);
+      g.lineWidth = 2 * S;
+      g.strokeRect(box.x, box.y, w, box.h);
+    },
+
+    boil(t, i, amp) { return Math.sin(i * 11.3 + Math.floor(t * 8) * 1.7) * amp * 0.35; },
+  };
+
+  /* ────────────────────────────────────────────────────────────────
+     11. VOX · 半调拼贴解说
+     配方：奶油底 + 一个高饱和色块 + 大号无衬线 + 半调网点 + 硬投影
+     最适合：知识解释、新闻拆解、数据解读、"为什么/怎么回事"类短视频
+     参考：Vox 的 explainer 视觉语言；半调处理来自 riso 的印刷底子
+     ──────────────────────────────────────────────────────────────── */
+  STYLES.vox = {
+    id: 'vox', cn: '半调解说', en: 'Vox Explainer', dark: false,
+    tags: ['解说', '高饱和', '平面', '信息密度'],
+    theme: {
+      bg: '#FFFCF4', bgAlt: '#FFEFD8', ink: '#141414',
+      sub: 'rgba(20,20,20,0.62)', faint: 'rgba(20,20,20,0.14)',
+      panel: 'rgba(20,20,20,0.06)',
+      accent: '#FF4D00', accent2: '#1B4DFF', good: '#0F8A5F', bad: '#D7263D',
+      glow: 'rgba(255,77,0,0.18)',
+      accentDeep: '#C13A00', accentSoft: '#7FA8FF', sweep: '255,77,0', onAccent: '#FFFCF4',
+      bgFar: '#FFEFD8',
+    },
+    type: { display: F.hei, body: F.sans, mono: F.mono, weight: 900, tracking: -0.025, lead: 1.12 },
+    motion: { enter: 0.38, overshoot: 1.06, ease: 'outExpo' },
+
+    bg(g, W, H, t, o) {
+      const S = Math.sqrt((W / 1920) * (H / 1080));
+      g.fillStyle = '#FFFCF4';
+      g.fillRect(0, 0, W, H);
+
+      /* 版面骨架：左下角一块饱和色 + 右上角一片大网点。
+         Vox 的识别度就来自「一大块纯色 + 一层印刷纹理」的对撞。 */
+      g.fillStyle = 'rgba(255,77,0,0.10)';
+      g.beginPath();
+      g.moveTo(0, H);
+      g.lineTo(0, H * 0.62);
+      g.lineTo(W * 0.42, H);
+      g.closePath();
+      g.fill();
+
+      g.save();
+      g.beginPath();
+      g.arc(W * 0.94, H * 0.10, Math.max(W, H) * 0.30, 0, Math.PI * 2);
+      g.clip();
+      halftone(g, W, H, '#1B4DFF', Math.PI / 6, 13 * S, 0.30, 0.16);
+      g.restore();
+
+      // 一点点极淡的底纹，避免大面积平色显得"数码"
+      const nz = noiseTile(150, 5, 0.05, '#6B5333');
+      g.save();
+      g.globalAlpha = 0.35;
+      g.fillStyle = g.createPattern(nz, 'repeat');
+      g.fillRect(0, 0, W, H);
+      g.restore();
+      void t;
+    },
+
+    overlay(g, W, H) {
+      // 印刷套色偏移：整屏一层极淡的品红，压住"纯数字色"
+      g.fillStyle = 'rgba(255,0,80,0.020)';
+      g.fillRect(0, 0, W, H);
+    },
+
+    text(g, txt, x, y, size, o) {
+      o = o || {};
+      const kind = o.kind || 'body';
+      const fam = kind === 'mono' ? this.type.mono : (kind === 'display' ? this.type.display : this.type.body);
+      g.save();
+      g.font = `${kind === 'display' ? this.type.weight : 600} ${size}px ${fam}`;
+      g.textAlign = o.align || 'left';
+      g.textBaseline = o.baseline || 'alphabetic';
+      if ('letterSpacing' in g) g.letterSpacing = trackFor(txt, this.type.tracking, size);
+      if (kind === 'display') {
+        // 硬投影（零模糊）—— 这是"印刷/编辑"气质，模糊投影会变成"网页卡片"
+        g.fillStyle = rgba(this.theme.accent2, 0.22);
+        g.fillText(txt, x + size * 0.022, y + size * 0.024);
+      }
+      g.fillStyle = o.color || (kind === 'sub' ? this.theme.sub : this.theme.ink);
+      g.fillText(txt, x, y);
+      g.restore();
+    },
+
+    card(g, box, o) {
+      o = o || {};
+      const S = o.S || 1;
+      // 硬投影：先画一块偏位的深色（零模糊）
+      g.save();
+      g.fillStyle = rgba(this.theme.ink, 0.9);
+      g.fillRect(box.x + 10 * S, box.y + 10 * S, box.w, box.h);
+      g.fillStyle = o.accent ? this.theme.accent : '#FFFFFF';
+      g.fillRect(box.x, box.y, box.w, box.h);
+      g.strokeStyle = this.theme.ink;
+      g.lineWidth = 3 * S;
+      g.strokeRect(box.x, box.y, box.w, box.h);
+      g.restore();
+      const pad = 38 * S;
+      return {
+        x: box.x + pad, y: box.y + pad, w: box.w - pad * 2, h: box.h - pad * 2,
+        ink: o.accent ? (this.theme.onAccent || '#FFFCF4') : this.theme.ink,
+      };
+    },
+
+    bar(g, box, p, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const w = Math.max(2 * S, box.w * clamp(p));
+      if (o.color && typeof o.color !== 'string') {
+        g.fillStyle = o.color; g.fillRect(box.x, box.y, w, box.h); return;
+      }
+      const col = o.color || this.theme.accent;
+      g.fillStyle = col;
+      g.fillRect(box.x, box.y, w, box.h);
+      // 末尾压一片网点，让条形的"印刷感"和背景呼应
+      g.save();
+      g.beginPath();
+      g.rect(box.x + w * 0.72, box.y, w * 0.28, box.h);
+      g.clip();
+      g.translate(box.x, box.y);
+      halftone(g, Math.max(1, w), box.h, '#FFFFFF', Math.PI / 4, 8 * S, 0.30, 0.42);
+      g.restore();
+      g.strokeStyle = rgba(this.theme.ink, 0.85);
+      g.lineWidth = 2 * S;
+      g.strokeRect(box.x, box.y, w, box.h);
+    },
+
+    boil(t, i, amp) { return Math.sin(i * 13.1 + Math.floor(t * 10) * 3.1) * amp * 0.18; },
+  };
+
+  /* ────────────────────────────────────────────────────────────────
+     12. CLAY · 黏土 3D
+     配方：淡紫灰底 + 圆角厚块 + 双向渐变（顶亮底暗）+ 柔和落地投影
+     最适合：产品发布、SaaS 功能讲解、面向大众的科普、年轻品牌
+     参考：2024–2026 年主流的 claymorphism；和等距风格的区别是"没有透视，只有材质"
+     ──────────────────────────────────────────────────────────────── */
+  STYLES.clay = {
+    id: 'clay', cn: '黏土立体', en: 'Clay 3D', dark: false,
+    tags: ['立体', '柔和', '产品', '年轻'],
+    theme: {
+      bg: '#E9E6F2', bgAlt: '#DEDAF0', ink: '#2C2740',
+      sub: 'rgba(44,39,64,0.60)', faint: 'rgba(44,39,64,0.12)',
+      panel: 'rgba(255,255,255,0.55)',
+      accent: '#7C5CFF', accent2: '#FF8FA3', good: '#3FB984', bad: '#E05A6B',
+      glow: 'rgba(124,92,255,0.20)',
+      accentDeep: '#5B3FE0', accentSoft: '#B7A6FF', sweep: '124,92,255', onAccent: '#FFFFFF',
+      bgFar: '#D9D4EC',
+    },
+    type: { display: F.hei, body: F.sans, mono: F.mono, weight: 800, tracking: -0.015, lead: 1.28 },
+    motion: { enter: 0.55, overshoot: 1.08, ease: 'outBack' },
+
+    bg(g, W, H, t, o) {
+      const S = Math.sqrt((W / 1920) * (H / 1080));
+      const lg = g.createLinearGradient(0, 0, 0, H);
+      lg.addColorStop(0, '#EFEDF8');
+      lg.addColorStop(1, '#DCD7EE');
+      g.fillStyle = lg;
+      g.fillRect(0, 0, W, H);
+
+      /* 背景里两个超大柔光块：黏土风格的"体积感"几乎全靠这个，
+         没有它，圆角块贴在纯色底上会像贴纸。 */
+      const blob = (cx, cy, r, col, a) => {
+        const rg = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+        rg.addColorStop(0, rgba(col, a));
+        rg.addColorStop(1, rgba(col, 0));
+        g.fillStyle = rg;
+        g.fillRect(cx - r, cy - r, r * 2, r * 2);
+      };
+      const drift = Math.sin(t * 0.15) * 14 * S;
+      blob(W * 0.18 + drift, H * 0.22, W * 0.42, '#FFFFFF', 0.55);
+      blob(W * 0.86, H * 0.78 - drift, W * 0.40, '#7C5CFF', 0.16);
+
+      // 地面：一条极淡的水平分界，让物体"站得住"
+      g.fillStyle = 'rgba(90,80,130,0.06)';
+      g.fillRect(0, H * 0.86, W, H * 0.14);
+    },
+
+    overlay(g, W, H) {
+      const v = g.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.8);
+      v.addColorStop(0, 'rgba(255,255,255,0)');
+      v.addColorStop(1, 'rgba(60,50,90,0.10)');
+      g.fillStyle = v; g.fillRect(0, 0, W, H);
+    },
+
+    text(g, txt, x, y, size, o) {
+      o = o || {};
+      const kind = o.kind || 'body';
+      const fam = kind === 'mono' ? this.type.mono : (kind === 'display' ? this.type.display : this.type.body);
+      g.save();
+      g.font = `${kind === 'display' ? this.type.weight : 600} ${size}px ${fam}`;
+      g.textAlign = o.align || 'left';
+      g.textBaseline = o.baseline || 'alphabetic';
+      if (kind === 'display') {
+        // 顶面高光：字的上缘压一道浅色，看起来像被灯从上方照到
+        g.globalAlpha = 0.5;
+        g.fillStyle = 'rgba(255,255,255,0.75)';
+        g.fillText(txt, x, y - size * 0.018);
+        g.globalAlpha = 1;
+      }
+      g.fillStyle = o.color || (kind === 'sub' ? this.theme.sub : this.theme.ink);
+      g.fillText(txt, x, y);
+      g.restore();
+    },
+
+    card(g, box, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const r = Math.min(28 * S, box.h * 0.28);
+      /* 圆角路径自己拼：roundRect 在旧 Chromium / 测试桩里不一定有，
+         这个项目曾经因为一个 API 不在就整条流水线红过。 */
+      const rr = (x, y, w, h, rad) => {
+        const k = Math.min(rad, w / 2, h / 2);
+        g.beginPath();
+        g.moveTo(x + k, y);
+        g.lineTo(x + w - k, y); g.arc(x + w - k, y + k, k, -Math.PI / 2, 0);
+        g.lineTo(x + w, y + h - k); g.arc(x + w - k, y + h - k, k, 0, Math.PI / 2);
+        g.lineTo(x + k, y + h); g.arc(x + k, y + h - k, k, Math.PI / 2, Math.PI);
+        g.lineTo(x, y + k); g.arc(x + k, y + k, k, Math.PI, Math.PI * 1.5);
+        g.closePath();
+      };
+
+      // 落地投影：偏移 + 大模糊，颜色是底色的深一档（不是黑色）
+      g.save();
+      g.fillStyle = 'rgba(90,70,140,0.16)';
+      rr(box.x, box.y + 14 * S, box.w, box.h, r);
+      g.fill();
+
+      // 主体：从顶到底的渐变（上亮下暗），这是"被上方主光打到"的最简表达
+      const c1 = o.accent ? mix(this.theme.accent, '#FFFFFF', 0.22) : '#FFFFFF';
+      const c2 = o.accent ? this.theme.accentDeep : '#E3DDF5';
+      const lg = g.createLinearGradient(box.x, box.y, box.x, box.y + box.h);
+      lg.addColorStop(0, c1);
+      lg.addColorStop(1, c2);
+      g.fillStyle = lg;
+      rr(box.x, box.y, box.w, box.h, r);
+      g.fill();
+
+      // 上缘内高光：一条 2px 的白线，决定"是黏土还是卡片"
+      g.strokeStyle = 'rgba(255,255,255,0.65)';
+      g.lineWidth = 2 * S;
+      rr(box.x + 2 * S, box.y + 2 * S, box.w - 4 * S, box.h - 4 * S, r * 0.92);
+      g.stroke();
+      g.restore();
+
+      const pad = 40 * S;
+      return {
+        x: box.x + pad, y: box.y + pad, w: box.w - pad * 2, h: box.h - pad * 2,
+        ink: o.accent ? (this.theme.onAccent || '#FFFFFF') : this.theme.ink,
+      };
+    },
+
+    bar(g, box, p, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const w = Math.max(box.h, box.w * clamp(p));
+      const r = box.h / 2;
+      if (o.color && typeof o.color !== 'string') {
+        g.fillStyle = o.color; g.fillRect(box.x, box.y, w, box.h); return;
+      }
+      const col = o.color || this.theme.accent;
+      g.save();
+      // 胶囊条：两端半圆，纵向渐变 + 顶部高光
+      g.fillStyle = rgba(col, 0.18);
+      g.beginPath();
+      g.moveTo(box.x + r, box.y);
+      g.lineTo(box.x + w - r, box.y);
+      g.arc(box.x + w - r, box.y + r, r, -Math.PI / 2, Math.PI / 2);
+      g.lineTo(box.x + r, box.y + box.h);
+      g.arc(box.x + r, box.y + r, r, Math.PI / 2, Math.PI * 1.5);
+      g.closePath();
+      g.fill();
+
+      const lg = g.createLinearGradient(0, box.y, 0, box.y + box.h);
+      lg.addColorStop(0, mix(col, '#FFFFFF', 0.25));
+      lg.addColorStop(1, mix(col, '#000000', 0.12));
+      g.fillStyle = lg;
+      g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.45)';
+      g.fillRect(box.x + r, box.y + box.h * 0.18, Math.max(0, w - r * 2), box.h * 0.12);
+      g.restore();
+    },
+
+    boil(t, i, amp) { return Math.sin(i * 8.3 + Math.floor(t * 5) * 2.1) * amp * 0.18; },
+  };
+
   /* ── 注册表与对外 API ───────────────────────────────────────────── */
 
   /* 别名：让用户能说「手绘」「蓝图」「印刷」「国风」也能命中 */
@@ -1300,6 +1967,10 @@
     霓虹: 'synthwave', 复古: 'synthwave', 赛博: 'synthwave', cyberpunk: 'synthwave', retro: 'synthwave', vhs: 'synthwave',
     瑞士: 'swiss', 极简: 'swiss', 网格: 'swiss', minimal: 'swiss', grid: 'swiss', typographic: 'swiss',
     水墨: 'ink', 国风: 'ink', 宣纸: 'ink', 中国风: 'ink', inkwash: 'ink', chinese: 'ink',
+    水彩: 'watercolor', 水彩风: 'watercolor', watercolour: 'watercolor', wash: 'watercolor', aquarelle: 'watercolor',
+    铅笔: 'pencil', 素描: 'pencil', 线描: 'pencil', sketch: 'pencil', graphite: 'pencil', draft: 'pencil',
+    半调: 'vox', 解说: 'vox', 解释: 'vox', 资讯: 'vox', explainer: 'vox', editorial: 'vox', news: 'vox',
+    黏土: 'clay', 粘土: 'clay', 立体: 'clay', '3d': 'clay', claymorphism: 'clay', soft3d: 'clay',
   };
 
   function norm(id) {
@@ -1447,10 +2118,46 @@
     },
   };
 
+  /* ── 节拍脉冲 ─────────────────────────────────────────────────────
+     模板里最贵的细节是「重音」：标题在拍点上轻轻一顶、光晕跟着跳一下。
+     没有 window.__beats 时返回 0，所以同一份模板加不加 --beats 都能跑。
+
+       SV.pulse(t, { decay: 0.12 })   → 0..1，拍点处为 1，之后指数衰减
+       SV.beatPhase(t)                → 0..1，当前这一拍走了多少（做呼吸/循环用）
+     ──────────────────────────────────────────────────────────────── */
+  function beatIndex(t) {
+    const b = root.__beats;
+    if (!b || !b.beats || !b.beats.length) return null;
+    const arr = b.beats;
+    if (t < arr[0]) return -1;
+    let lo = 0, hi = arr.length - 1, ans = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (arr[mid] <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return ans;
+  }
+
+  function pulse(t, o) {
+    const i = beatIndex(t);
+    if (i === null || i < 0) return 0;
+    const decay = (o && o.decay) || 0.12;
+    const dt = t - root.__beats.beats[i];
+    return Math.exp(-dt / decay);
+  }
+
+  function beatPhase(t) {
+    const b = root.__beats;
+    if (!b || !b.bpm || b.offset == null) return 0;
+    const period = 60 / b.bpm;
+    const p = ((t - (b.offset || 0)) % period + period) % period;
+    return p / period;
+  }
+
   const SV = {
     STYLES, get, list, require, norm, DEFAULT, ALIAS,
     bg, overlay, text, card, bar, boil, enter, easeOf, ease, bgCached, clearBgCache,
-    BEAT,
+    BEAT, pulse, beatPhase,
     /* 给模板用的便捷换算 */
     rgba, mix, clamp, lerp, rng, hash, halftone, tornRectPath, noiseTile, fonts: F,
   };

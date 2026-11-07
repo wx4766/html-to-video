@@ -1,6 +1,6 @@
 ---
 name: html-to-video
-description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」「换个风格」时使用。自带渲染器、11 个版式模板（多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡）、8 种视觉风格（孔版印刷 / 剪纸 / 蓝图 / 粉笔 / 等距 / 霓虹 / 瑞士 / 水墨，一条命令切换）、分镜预演脚本（渲全片前先出一页分镜板）、图标/人物/运镜素材库，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
+description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可卡点、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」「换个风格」「卡点」「音乐配画面」时使用。自带渲染器、14 个版式模板（多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡、引言卡、章节卡、界面演示）、12 种视觉风格（孔版印刷 / 剪纸 / 蓝图 / 粉笔 / 等距 / 霓虹 / 瑞士 / 水墨 / 水彩 / 铅笔 / 半调解说 / 黏土立体，一条命令切换）、节拍分析与卡点（--beats / --snap）、分镜预演、浏览器预览、环境自检、图标/人物/运镜素材库，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
 agent_created: true
 ---
 
@@ -21,7 +21,7 @@ agent_created: true
 最适合做：讲解动画、动态图解、产品演示、数据可视化动画、宣传片片头。
 不适合：实拍感/氛围镜头（那种走 VideoGen）。
 
-**能拿它做什么**（`assets/templates/` 里 11 个模板直接改字就能出片）：
+**能拿它做什么**（`assets/templates/` 里 14 个模板直接改字就能出片）：
 
 | 模板 | 用途 | 出片 |
 |---|---|---|
@@ -36,19 +36,23 @@ agent_created: true
 | `flow-steps.html` | **流程图动画**：步骤依次点亮，当前步高亮 | `--duration=7` |
 | `subtitle-card.html` | **逐句解说卡**：一句话一句地出，底部带进度条 | `--duration=8` + `--srt` |
 | `vertical-subtitle.html` | **竖屏字幕卡**：关键词高亮，9:16 原生版式 | `--duration=8 --width=1080 --height=1920` + `--srt` |
+| `quote-card.html` | **引言卡**：大引号 + 引文逐行推进 + 出处短线 | `--duration=7` |
+| `chapter-card.html` | **章节卡**：序号水印 + 标题 + 章节进度点，切分长片 | `--duration=4` |
+| `ui-showcase.html` | **界面演示**：窗口推入 + 缓推 + 两处聚光标注，可换真实截图（`CFG.shot`） | `--duration=8` |
 
 每个模板**单文件自包含**，顶部有一个显眼的 `CFG` 配置块，改文案/数据即可 ——
-不用懂 canvas 也能出片。**11 个模板全部支持换主题**（见「换配色」一节）。
+不用懂 canvas 也能出片。**14 个模板全部支持换主题与 12 种视觉风格**（见「换配色」一节）。
 想做别的，再看 `assets/animation-skeleton.html` 从零写。
 
-**上面 11 个是「版式」。想要不同的「观感」，加一个 `--theme` 就有 8 种视觉语言**：
+**上面 14 个是「版式」。想要不同的「观感」，加一个 `--theme` 就有 12 种视觉语言**：
 
 ```bash
-bash assets/render.sh assets/style-film.html --duration=13 --theme=ink      # 水墨
-bash assets/render.sh assets/style-film.html --duration=13 --theme=swiss    # 瑞士网格
+bash assets/render.sh assets/style-film.html --duration=13 --theme=ink         # 水墨
+bash assets/render.sh assets/style-film.html --duration=13 --theme=clay        # 黏土立体
+bash assets/render.sh assets/style-film.html --duration=13 --theme=watercolor  # 水彩
 ```
 
-版式 × 风格 = 12 × 8 种组合。想先挑风格，跑一次八宫格即可（见「风格」一节）。
+版式 × 风格 = 14 × 12 种组合。想先挑风格，跑一次八宫格即可（见「风格」一节）。
 
 **做「一支片子」而不是「一段动画」**：用 `assets/lib/scenes.js` 写多镜头 + 转场，
 镜头表还能用 `--story=shots.json` 外置 —— LLM 写 JSON 比写几百行 canvas 代码可靠得多。
@@ -56,7 +60,7 @@ bash assets/render.sh assets/style-film.html --duration=13 --theme=swiss    # �
 
 ### 尺寸：模板跟视口走，不用手改
 
-11 个模板都按 `window.innerWidth/innerHeight` 设画布，所以**换任何尺寸都不裁切**：
+14 个模板都按 `window.innerWidth/innerHeight` 设画布，所以**换任何尺寸都不裁切**：
 
 ```bash
 # 横屏 1080p（默认）
@@ -134,6 +138,27 @@ WB_NODE_WORKSPACE="<你的 node 工作区绝对路径>"
 
 4. **PATH 不可靠。** 尤其在 Git Bash / Windows 上，塞进 PATH 的 Windows 风格路径会被转换搞坏。
    → **别靠 PATH 传 ffmpeg，用 `FFMPEG` 环境变量**（渲染器已支持）。
+
+## 三种入口：CLI / 预览 / 自检
+
+**统一命令**（`bin/h2v.js`，只是子命令到脚本的映射，不改任何默认行为）：
+
+```bash
+npx html-to-video doctor                 # 环境自检：缺什么、怎么修（只读）
+npx html-to-video templates              # 14 个模板
+npx html-to-video styles                 # 12 种风格
+npx html-to-video new my-video --template=chapter-card
+npx html-to-video preview my-video.html --duration=6 --open
+npx html-to-video render my-video.html --duration=6 --fps=60
+```
+
+**预览**：`scripts/preview.js` 起本地 http（ESM/fetch 都能跑），把页面放进 iframe，
+注入 `__seekRender` 冻结它自己的时钟，然后用滑块/空格/←→ 直接推 `__seek(t)`。
+竖屏项目记得 `--size=1080x1920`，否则预览框是横的、模板按 16:9 排版，会误判成版式崩了。
+
+**自检**：`scripts/doctor.js` 检查 Node / Playwright（含版本与浏览器缓存是否匹配）/
+ffmpeg（是否含 libx264 与 ProRes）/ 中文字体 / 临时盘余量 / 工作区配置，
+阻塞项给可执行修法；`--json` 给 CI 与 Agent 用。
 
 ## 出片流程
 
@@ -217,6 +242,10 @@ bash assets/render.sh animation.html --duration=12 --fps=60 --width=1920 --heigh
 | `--concurrency` | 并行 worker 数（每个 worker 一个 Chromium 页面，注意内存）。给 `auto` 按 CPU 与内存自己挑 |
 | `--audio=<file>` | 编码后自动混音（视频流直接 copy，不重编码）。**没给 `--duration` 时自动按音频长度出片**（向上取整到整帧，尾音不被削） |
 | `--audio-fit=trim\|pad` | 音画长度不一致时怎么办：`trim` 按音轨收尾（默认）／`pad` 给音频补静音、保住视频长度 |
+| `--beats` / `--beats=<json>` | 分析 `--audio` 的拍点（或用预计算的网格），注入 `window.__beats` |
+| `--snap=beats` | 总时长吸到下一个拍点 |
+| `--snap-shots` | 镜头表里每个镜头的时长量化到整拍 |
+| `--bpm=<数>` / `--offset=<秒>` | 跳过估计，手工给 BPM / 首拍（纯配音硬卡点时用） |
 | `--gop=<秒>` | 关键帧间隔，如 `--gop=1` 每秒一个关键帧，方便后期按秒 seek |
 | `--keep-frames` | 成功也保留逐帧 PNG（换 CRF 重编码时不必重截） |
 | `--tmpdir=<目录>` | 逐帧 PNG 放哪块盘（默认挨着 HTML）。1080p 一分钟约 2.4 GB，系统盘没余量时指到别的盘 |
@@ -332,6 +361,42 @@ bash assets/render.sh title-card.html --audio=voice.m4a --story=shots.json
 ffmpeg 只能按帧包边界收尾，实测会多留 0.3–0.5s。想要毫秒级对齐得重编码，
 那是拿画质换精度，不值得 —— 片尾多留几帧通常看不出来。
 
+### 卡点：让切点落在拍上
+
+「切点落在拍上」是片子显得专业的最短路径。手工对齐是数秒表挪关键帧，
+换一首 BGM 全部重来；这里把拍点量出来，镜头时长直接量化到整拍：
+
+```bash
+bash assets/render.sh style-film.html --audio=bgm.mp3 --beats --snap=beats
+# ▸ 节拍: 120.14 BPM · 20 个拍点 · 首拍 0.49s · 置信度 0.85
+# ▸ 时长对齐拍点: 25.2s → 25.5s（+0.3s）
+
+bash assets/render.sh style-film.html --story=shots.json --beats=beats.json --snap-shots
+# ▸ 镜头对齐拍点（1 拍 = 0.499s）：8 个镜头改了时长
+#     · hook       2.80s → 3.00s
+#     → 片长按镜头表定为 25.472s
+```
+
+规则（都是踩过才知道的）：
+
+- **改镜头，不改 BGM。** 配乐是骨架；除非你明确要裁音乐，否则画面去迁就拍子。
+- **--snap-shots 会明说改了多少**，单镜变化 >25% 会警告 —— 节奏真的变了，导演得知道。
+- **没给 `--duration` 时，片长跟着镜头表走**；给了就以你为准，只告警不偷偷改。
+- **测不出稳定 BPM 就报警**，不硬卡。纯配音/环境音在物理上没有周期性重音，
+  这时候正确做法是按句子切（`--srt`），不是按拍切。
+- 模板侧：`window.__beats` = `{ bpm, offset, beats[], downbeats[], confidence }`；
+  风格库给 `SV.pulse(t)`（拍点处 1、按 `decay` 衰减）与 `SV.beatPhase(t)`。
+  没有 `--beats` 时 `pulse()` 恒为 0，所以同一份模板加不加卡点都能跑。
+
+单独跑分析器（零依赖，纯 ffmpeg + 算术）：
+
+```bash
+node scripts/beats.js bgm.mp3 --json            # {bpm, confidence, offset, beats:[...]}
+node scripts/beats.js bgm.mp3 --out=beats.json  # 存下来复用（同一 BGM 出多条片子）
+```
+
+精度：120BPM 鼓点实测 BPM 误差 <2、相位误差 ~9ms；分析 10 秒音频约 25ms。
+
 ### 一稿多发：一条命令出全套平台比例
 
 同一条片子要发抖音、小红书、B 站，剪辑软件里得一个比例一个序列、导一次盯一次。
@@ -409,7 +474,7 @@ const cur = cues.find(c => t >= c.start && t < c.end) || cues[cues.length - 1];
 
 ### 换配色：改一个字段，不用碰画布代码
 
-`assets/templates/themes.js` 里有三套调色板，**11 个模板全部接入**。两种换法：
+`assets/templates/themes.js` 里有三套调色板，**14 个模板全部接入**；另有 12 套风格色板走 `lib/styles.js`。两种换法：
 
 ```bash
 # ① 命令行换（推荐）：不改任何文件，一次渲染一个主题
@@ -829,7 +894,7 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 | `assets/lib/camera.js` | 运镜（推拉 / 呼吸 / 手持微抖 / 撞击震动），确定性伪噪声，不用随机数 |
 | `assets/lib/shapes.js` | 图形元件：40+ 线性图标 / 卡片 / 箭头 / 正交连接线 / 背景纹理 |
 | `assets/lib/figures.js` | 参数化人物（发型 / 表情 / 姿势 / 配色）+ 对话气泡 |
-| `assets/lib/styles.js` | **风格库**：8 种视觉语言（孔版印刷/剪纸/蓝图/粉笔/等距/霓虹/瑞士/水墨），`SV.bg` / `SV.text` / `SV.card` / `SV.bar` / `SV.overlay` / `SV.boil` / `SV.BEAT` |
+| `assets/lib/styles.js` | **风格库**：12 种视觉语言（孔版印刷/剪纸/蓝图/粉笔/等距/霓虹/瑞士/水墨/水彩/铅笔/半调/黏土），`SV.bg` / `SV.text` / `SV.card` / `SV.bar` / `SV.overlay` / `SV.boil` / `SV.BEAT` / `SV.pulse` |
 | `assets/STYLES.md` | 风格选择指南：每种风格的签名元素、适用场景、禁忌、加新风格的字段清单 |
 | `assets/style-film.html` | **风格短片**：片头/要点/数据/片尾 4 镜，8 风格通用，支持 `--story` 与横竖屏 |
 | `assets/style-gallery.html` | 八宫格风格样张，第 k 秒一个风格，配 `--stills` 一次出 8 张静帧 |

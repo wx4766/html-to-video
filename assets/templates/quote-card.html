@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 引言卡</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: absolute; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script>
+/* =====================================================================
+   模板 ⑬  ·  引言卡 / 金句卡
+   ---------------------------------------------------------------------
+   用途：把一句话单独放大。访谈、书摘、用户证言、播客切片都靠它——
+   一段 30 秒的讲解里插一张引言卡，节奏立刻有起伏。
+
+   设计上只做三件事：
+     1. 引号当图形（不是文本），压得很淡，做背景层次；
+     2. 引文按行推进，行内不再逐字弹 —— 金句要"读得出来"，不是"跳出来"；
+     3. 出处用一条短线引出，字号小两档，明确它是配角。
+
+   出片：
+     bash ../render.sh quote-card.html --duration=7 --fps=60
+     bash ../render.sh quote-card.html --duration=7 --theme=ink      # 水墨引文，很搭
+   竖屏（访谈切片常用）：
+     bash ../render.sh quote-card.html --duration=7 --width=1080 --height=1920
+
+   注意：引文太长会挤压画面。CFG.quote 建议每行 ≤ 14 个汉字、最多 3 行，
+   超了模板会自动缩字号，但缩到看不清楚就没有意义了。
+   ===================================================================== */
+const CFG = {
+  theme: 'midnight',
+  quote: [
+    '写作是把一个人',
+    '从人群里叫出来，',
+    '让他单独说话。',
+  ],
+  author: '费孝通',
+  role:   '社会学家',
+  source: '',          // 出处 / 书名（可留空）
+  dur:    7.0,
+};
+/* ===================================================================== */
+
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+const DUR = CFG.dur;
+const SX = W / 1920, SY = H / 1080, SF = Math.sqrt(SX * SY);
+const PORTRAIT = H > W;
+const g = cv.getContext('2d');
+const TRANSPARENT = !!window.__transparent;
+
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', accent: '#FFB86B',
+};
+const ST = TH.__style || null;
+const SERIF = '"Songti SC", "SimSun", "Noto Serif CJK SC", Georgia, serif';
+const SANS = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const MONO = 'ui-monospace, Consolas, monospace';
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const win = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const outExpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * clamp(t));
+const smooth = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+
+const LX = PORTRAIT ? W * 0.10 : W * 0.13;
+const MAXW = W - LX * 2;
+
+/* 引号：直接用衬线体的 “ 。
+   早先自己用圆 + 三角拼"逗号"，在 170px 下像两只气球，比没有还难看。
+   字体引号在不同系统上形状略有差异，但都认得出来 —— 这个赌注比自绘划算。 */
+function quoteMark(x, y, size, alpha) {
+  if (alpha <= 0) return;
+  g.save();
+  g.globalAlpha = alpha;
+  g.fillStyle = TH.accent;
+  g.font = `700 ${size}px ${SERIF}`;
+  g.textBaseline = 'alphabetic';
+  g.fillText('“', x, y);
+  g.restore();
+}
+
+function fit(text, basePx, maxW, font) {
+  g.save(); g.font = font(basePx);
+  const w = g.measureText(text).width;
+  g.restore();
+  return w > maxW && w > 0 ? Math.max(basePx * 0.45, basePx * maxW / w) : basePx;
+}
+
+/* 每行文字的总高：用来把整块引文在垂直方向居中 */
+function layout() {
+  const base = (PORTRAIT ? 62 : 66) * SF;
+  const lines = CFG.quote.map((line) => {
+    const px = fit(line, base, MAXW, p => `500 ${p}px ${SERIF}`);
+    return { text: line, px };
+  });
+  const lead = 1.62;
+  const total = lines.reduce((a, l) => a + l.px * lead, 0);
+  return { lines, lead, total };
+}
+
+function drawFrame(t) {
+  const T = clamp(t, 0, DUR - 0.001);
+  g.clearRect(0, 0, W, H);
+
+  if (!TRANSPARENT) {
+    if (ST && SV.bgCached) SV.bgCached(g, ST, W, H, T, {}, 1);
+    else {
+      const lg = g.createLinearGradient(0, 0, W, H);
+      lg.addColorStop(0, TH.bg);
+      lg.addColorStop(1, TH.bgAlt || TH.bg);
+      g.fillStyle = lg; g.fillRect(0, 0, W, H);
+    }
+  }
+
+  const { lines, lead, total } = layout();
+  const blockTop = H * 0.5 - total * 0.5 - (CFG.author ? 34 * SY : 0);
+
+  /* 背景引号 */
+  const qP = smooth(win(T, 0.05, 0.7));
+  quoteMark(LX - 10 * SX, blockTop + lines[0].px * 0.30, (PORTRAIT ? 180 : 210) * SF, qP * 0.16);
+
+  /* 引文逐行 */
+  let y = blockTop + lines[0].px * 0.86;
+  lines.forEach((l, li) => {
+    const start = 0.25 + li * 0.34;
+    const p = outExpo(win(T, start, start + 0.7));
+    if (p > 0) {
+      g.save();
+      g.font = `500 ${l.px}px ${SERIF}`;
+      g.textBaseline = 'alphabetic';
+      g.fillStyle = TH.ink;
+      g.globalAlpha = p;
+      g.fillText(l.text, LX + (1 - p) * 26 * SX, y);
+      g.restore();
+    }
+    y += l.px * lead;
+  });
+
+  /* 出处：一条短线 + 名字 + 身份 */
+  const aP = smooth(win(T, 0.45 + lines.length * 0.34, 0.9 + lines.length * 0.34));
+  if (CFG.author && aP > 0) {
+    const ay = blockTop + total + 62 * SY;
+    g.save();
+    g.globalAlpha = aP * 0.9;
+    g.strokeStyle = TH.accent;
+    g.lineWidth = 2 * SF;
+    const lw = 46 * SX;
+    g.beginPath();
+    g.moveTo(LX, ay - 12 * SY);
+    g.lineTo(LX + lw * aP, ay - 12 * SY);
+    g.stroke();
+
+    g.fillStyle = TH.ink;
+    g.font = `500 ${28 * SF}px ${SANS}`;
+    g.fillText(CFG.author, LX, ay + 18 * SY);
+    const nameW = g.measureText(CFG.author).width;
+
+    const tail = [CFG.role, CFG.source].filter(Boolean).join(' · ');
+    if (tail) {
+      g.globalAlpha = aP * 0.55;
+      g.font = `400 ${24 * SF}px ${PORTRAIT ? SANS : MONO}`;
+      g.fillText(tail, LX + nameW + 20 * SX, ay + 17 * SY);
+    }
+    g.restore();
+  }
+
+  if (ST && SV.overlay) SV.overlay(g, ST, W, H, T, {});
+}
+
+/* ---------- 渲染契约：这段不要改 ---------- */
+function renderAt(t) { drawFrame(clamp(t, 0, DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

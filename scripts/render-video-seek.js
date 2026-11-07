@@ -107,6 +107,7 @@ const RESULT = {
   ok: false, exitCode: null, input: null, output: null,
   width: null, height: null, fps: null, duration: null, frames: null,
   bytes: null, elapsedMs: null, gif: null, poster: null, warnings: WARNINGS,
+  beats: null,
 };
 if (JSON_MODE) {
   // 人读日志全部改道 stderr，stdout 保持干净
@@ -189,10 +190,10 @@ function runBatch(file) {
     console.error('✗ 批量任务文件里要是一组对象：[{ "html": "...", "duration": 6 }, ...]');
     process.exit(1);
   }
-  const FLAG_KEYS = new Set(['alpha', 'resume', 'keep-frames', 'allow-errors', 'keep-chrome', 'no-serve']);
+  const FLAG_KEYS = new Set(['alpha', 'resume', 'keep-frames', 'allow-errors', 'keep-chrome', 'no-serve', 'snap-shots']);
   const VAL_KEYS = ['duration', 'from', 'to', 'fps', 'width', 'height', 'concurrency', 'settle',
     'audio', 'audio-fit', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills',
-    'tmpdir', 'theme', 'out', 'preset'];
+    'tmpdir', 'theme', 'out', 'preset', 'beats', 'snap', 'bpm', 'offset'];
 
   console.log(`▸ Batch: ${jobs.length} 个任务（${file}）`);
   const rows = [];
@@ -339,6 +340,12 @@ const POSTER_AT    = arg('poster', null);       // 从成片里抽一帧当封�
 const TMPDIR_RAW   = arg('tmpdir', null);       // 逐帧 PNG 放哪块盘（默认挨着 HTML）
 const THEME        = arg('theme', null);        // 主题名，覆盖模板里的 CFG.theme
 const OUT_RAW      = arg('out', null);          // 成片路径（默认同目录同名）
+const BEATS_ARG    = arg('beats', null);        // --beats（分析 --audio）/ --beats=pre.json
+const BEATS_ON     = hasFlag('beats') || BEATS_ARG !== null;
+const SNAP         = String(arg('snap', '')).trim().toLowerCase();  // '' | beats
+const SNAP_SHOTS   = hasFlag('snap-shots');     // 镜头时长量化到整拍
+const FORCE_BPM    = arg('bpm', null) !== null ? Number(arg('bpm', null)) : null;
+const FORCE_OFFSET = arg('offset', null) !== null ? Number(arg('offset', null)) : null;
 
 /* 为什么只有 ProRes 4444，没有 VP9 alpha：
    实测把 PNG 序列（rgba）编成 --pix_fmt yuva420p + -auto-alt-ref 0，文件体积从 7.8KB
@@ -366,9 +373,135 @@ const DIR      = path.dirname(HTML_ABS);
 
 // 渲染范围 → 全局帧号 [F0, F1)。帧号是全局的（f/flimFPS = 绝对秒），
 // 这样 --from=3 --to=5 截出来的帧和整片渲到同一时刻的帧逐像素一致。
-const END = TO_RAW !== null ? parseFloat(TO_RAW) : FROM + DURATION;
+/* 镜头表：整份注入 window.__story，模板（如 explainer.html）拿它换掉自己的 CFG.story。
+   这样 LLM / 脚本只要产出 JSON 就能改片子内容，不用去改 HTML 里的代码。 */
+let STORY = null;
+if (STORY_FILE) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.resolve(STORY_FILE), 'utf8'));
+    STORY = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.shots) ? parsed.shots : null);
+  } catch (e) {
+    console.error(`✗ 镜头表读不了：${STORY_FILE}`);
+    console.error('  ' + String((e && e.message) || e).split('\n')[0]);
+    process.exit(1);
+  }
+  if (!STORY || !STORY.length) {
+    console.error(`✗ 镜头表里没有镜头：${STORY_FILE}`);
+    console.error('  要是一组对象：[{ "kind":"title", "dur":3, "title":"..." }, ...]');
+    process.exit(1);
+  }
+  for (const s of STORY) {
+    if (!s || !(Number(s.dur) > 0)) {
+      console.error(`✗ 镜头表里有个镜头没写 dur（或不是正数）：${JSON.stringify(s).slice(0, 120)}`);
+      process.exit(1);
+    }
+  }
+}
+
+/* ── 节拍卡点（--beats / --snap） ──────────────────────────────────────
+   为什么要把「音频分析」放进渲染器：卡点的真实工作流是「配乐先定，画面按拍子排」。
+   如果拍点要人手算、手抄进 JSON，那这条流水线就只能做 demo —— 换一首 BGM 全部重来。
+   现在：给一段 BGM，渲染器自己量出 BPM 与首拍，镜头时长自动量化到整拍。
+
+   两种用法，对应两种工作方式：
+     --beats              直接分析 --audio 给的那条音轨（最省事，也最常用）
+     --beats=beats.json   用预先算好的网格（同一个 BGM 要出多条片子时，别每次都分析）
+   --snap=beats          把总时长吸到下一个拍点（成片不会"差 0.2 秒收在半个拍上"）
+   --snap-shots          把镜头表里每个镜头的时长量化到整拍（真正让"切点落在拍上"） */
+let BEATS = null;
+if (BEATS_ON) {
+  const src = BEATS_ARG && BEATS_ARG !== 'true' ? path.resolve(BEATS_ARG) : (AUDIO ? path.resolve(AUDIO) : null);
+  if (!src) {
+    console.error('✗ --beats 需要一条音轨：加 --audio=<文件>，或用 --beats=<已算好的 beats.json>');
+    process.exit(1);
+  }
+  try {
+    if (BEATS_ARG && BEATS_ARG !== 'true') {
+      BEATS = JSON.parse(fs.readFileSync(src, 'utf8'));
+      if (!Array.isArray(BEATS.beats)) throw new Error('JSON 里没有 beats 数组');
+    } else {
+      /* 直接 require 而不是起子进程：命令行与渲染器共用同一份实现，
+         不会出现"命令行说 120BPM、渲染器按 118 卡"这种两边打架的情况。 */
+      const { analyze } = require('../scripts/beats.js');
+      BEATS = analyze(src, { bpm: FORCE_BPM, offset: FORCE_OFFSET });
+    }
+  } catch (e) {
+    console.error(`✗ 节拍分析失败：${src}`);
+    console.error('  ' + String((e && e.message) || e).split('\n')[0]);
+    process.exit(1);
+  }
+  if (!BEATS.beats || !BEATS.beats.length) {
+    console.warn('⚠ 这段音频没测出稳定节拍（可能是纯配音），--snap 会保持原时长不变。');
+  } else {
+    console.log(`  节拍: ${BEATS.bpm} BPM · ${BEATS.beats.length} 个拍点 · 首拍 ${BEATS.offset}s · 置信度 ${BEATS.confidence}`);
+    if (BEATS.confidence < 0.3) {
+      console.warn('⚠ 节拍置信度偏低：可能是自由速度或纯人声，卡点结果未必符合听感。');
+    }
+  }
+}
+
+/* --stills 模式也要带节拍信息（Agent 常先用静帧试版式，再出全片）——
+   所以结果字段在这里就落定，不等到编码那一步。 */
+RESULT.beats = BEATS ? {
+  bpm: BEATS.bpm, count: (BEATS.beats || []).length,
+  offset: BEATS.offset, confidence: BEATS.confidence,
+} : null;
+
+/* --snap-shots：把每个镜头的时长吸到整拍。
+   宁可改镜头时长也不改 BGM —— 配乐是整条片子的骨架，画面是长在骨架上的。
+   但改动幅度要明说：一个 2.3s 的镜头被拉成 3s，节奏会变，导演得知道。 */
+if (SNAP_SHOTS && STORY && BEATS && BEATS.bpm) {
+  const period = 60 / BEATS.bpm;
+  const changes = [];
+  for (const shot of STORY) {
+    const before = Number(shot.dur);
+    const units = Math.max(1, Math.round(before / period));
+    const after = Math.round(units * period * 1000) / 1000;
+    if (Math.abs(after - before) > 1e-6) changes.push({ id: shot.id || shot.kind || '?', before, after });
+    shot.dur = after;
+  }
+  if (changes.length) {
+    console.log(`  镜头对齐拍点（1 拍 = ${period.toFixed(3)}s）：${changes.length} 个镜头改了时长`);
+    for (const c of changes.slice(0, 8)) {
+      console.log(`    · ${String(c.id).padEnd(10)} ${c.before.toFixed(2)}s → ${c.after.toFixed(2)}s`);
+    }
+    if (changes.length > 8) console.log(`    · …其余 ${changes.length - 8} 个`);
+    const big = changes.find(c => Math.abs(c.after - c.before) / c.before > 0.25);
+    if (big) {
+      console.warn(`⚠ 镜头 ${big.id} 时长变了 ${Math.round(Math.abs(big.after - big.before) / big.before * 100)}%，节奏会明显不同`);
+    }
+  }
+  /* 用户没给 --duration 时，以镜头表的总长为片长（否则成片尾部会多一截黑屏）。
+     给了 --duration 就尊重它，只告警 —— 那是导演的决定。 */
+  const total = STORY.reduce((a, x) => a + x.dur, 0);
+  if (!DURATION_GIVEN) {
+    DURATION = Math.round(total * 1000) / 1000;
+    console.log(`  片长按镜头表定为 ${DURATION}s`);
+  } else if (Math.abs(DURATION - total) > 0.05) {
+    console.warn(`⚠ 镜头表合计 ${total.toFixed(2)}s，与 --duration=${DURATION}s 不一致（按 --duration 出片）`);
+  }
+}
+
+/* --snap=beats：总时长吸到下一个拍点。开片/收尾落在拍上，剪辑时接下一段不用微调。 */
+if (SNAP === 'beats' && BEATS && BEATS.bpm) {
+  const { snap } = require('../scripts/beats.js');
+  const before = DURATION;
+  const after = Math.round(snap(DURATION, BEATS, 'up') * 1000) / 1000;
+  if (Math.abs(after - before) > 1e-6) {
+    DURATION = after;
+    console.log(`  时长对齐拍点: ${before}s → ${after}s（+${(after - before).toFixed(3)}s）`);
+  }
+} else if (SNAP && SNAP !== 'beats') {
+  console.error(`✗ --snap 只认 beats（收到 "${SNAP}"）。也可以不加这个参数。`);
+  process.exit(1);
+} else if (SNAP_SHOTS && (!BEATS || !BEATS.bpm)) {
+  console.warn('⚠ --snap-shots 需要可用的节拍网格，本次跳过（镜头时长保持原样）。');
+}
+
+let END = TO_RAW !== null ? parseFloat(TO_RAW) : FROM + DURATION;
 const F0 = Math.round(FROM * FPS);
-const F1 = Math.round(END * FPS);
+/* F1 必须可重算：story 的镜头表总和与页面真实时间轴不是一回事（见 probeTimeline） */
+let F1 = Math.round(END * FPS);
 const RANGE_GIVEN = FROM > 0 || TO_RAW !== null;
 
 const STILLS = STILLS_RAW
@@ -435,31 +568,6 @@ if (CUES_FILE) {
     console.error(`✗ 字幕文件里没解析出任何一句：${CUES_FILE}`);
     console.error('  SRT 需要形如「00:00:00,500 --> 00:00:02,300」的时间行，且下面跟着正文。');
     process.exit(1);
-  }
-}
-
-/* 镜头表：整份注入 window.__story，模板（如 explainer.html）拿它换掉自己的 CFG.story。
-   这样 LLM / 脚本只要产出 JSON 就能改片子内容，不用去改 HTML 里的代码。 */
-let STORY = null;
-if (STORY_FILE) {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.resolve(STORY_FILE), 'utf8'));
-    STORY = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.shots) ? parsed.shots : null);
-  } catch (e) {
-    console.error(`✗ 镜头表读不了：${STORY_FILE}`);
-    console.error('  ' + String((e && e.message) || e).split('\n')[0]);
-    process.exit(1);
-  }
-  if (!STORY || !STORY.length) {
-    console.error(`✗ 镜头表里没有镜头：${STORY_FILE}`);
-    console.error('  要是一组对象：[{ "kind":"title", "dur":3, "title":"..." }, ...]');
-    process.exit(1);
-  }
-  for (const s of STORY) {
-    if (!s || !(Number(s.dur) > 0)) {
-      console.error(`✗ 镜头表里有个镜头没写 dur（或不是正数）：${JSON.stringify(s).slice(0, 120)}`);
-      process.exit(1);
-    }
   }
 }
 
@@ -594,7 +702,7 @@ function cleanupTmp(dir) {
   }
 }
 
-const TOTAL_FRAMES = STILLS ? STILLS.length : Math.max(0, F1 - F0);
+let TOTAL_FRAMES = STILLS ? STILLS.length : Math.max(0, F1 - F0);
 if (!STILLS && TOTAL_FRAMES === 0) {
   console.error(`✗ 渲染范围为空（from=${FROM} to=${END} fps=${FPS}）。检查 --from/--to/--duration。`);
   process.exit(1);
@@ -673,6 +781,7 @@ if (STILLS) {
   }
   if (ALPHA) console.log(`  alpha: ProRes 4444 (.mov) —— 背景透明，供叠加合成`);
   if (THEME) console.log(`  theme: ${THEME} → window.__h2vTheme`);
+  if (BEATS) console.log(`  beats: ${BEATS.bpm} BPM · ${BEATS.beats.length} 拍 → window.__beats`);
   if (CUES) {
     const last = CUES[CUES.length - 1];
     console.log(`  字幕: ${CUES.length} 句 · ${CUES[0].start.toFixed(2)}–${last.end.toFixed(2)}s → window.__cues`);
@@ -736,6 +845,21 @@ async function injectStoryInit(context) {
    渲染器**不抄一份主题表**（抄了必然和 themes.js 漂移），改成注入后回读：
    页面调过 h2vTheme 会记下 window.__h2vThemeResolved，对不上就明确告警，
    免得名字打错一个字母就静默退回 midnight，成片出来才发现配色不对。 */
+/* 节拍网格：和 __story 一样必须走 addInitScript ——
+   style-film / explainer 在顶层就把镜头表编译成时间轴了，加载后再注入已经晚了。
+   模板侧读 window.__beats.beats 就能把出场、切点、强调落地到拍上。 */
+async function injectBeatsInit(context) {
+  if (!BEATS) return;
+  try {
+    await context.addInitScript(b => { window.__beats = b; }, {
+      bpm: BEATS.bpm, offset: BEATS.offset, confidence: BEATS.confidence,
+      beats: BEATS.beats, downbeats: BEATS.downbeats, duration: BEATS.duration,
+    });
+  } catch (e) {
+    console.warn('⚠ 节拍网格注入失败，模板会按自己的节奏走：' + String((e && e.message) || e));
+  }
+}
+
 async function injectThemeInit(context) {
   if (!THEME) return;
   try {
@@ -753,10 +877,13 @@ async function checkTheme(page) {
     probe = await page.evaluate(() => ({
       resolved: window.__h2vThemeResolved || null,
       hasFn: typeof window.h2vTheme === 'function',
+      /* style-film 这类页面走的是风格库（SV），不吃 themes.js。
+         只看 hasFn 会对着已经生效的 --theme=水彩 报"不生效"，比不报还糟。 */
+      hasSV: !!(window.SV && typeof window.SV.get === 'function'),
     }));
   } catch (e) { return; }
-  if (!probe.hasFn) {
-    THEME_WARN.add('该页面没有引入 themes.js，--theme 不生效（模板还没接主题，或这是自己写的动画）');
+  if (!probe.hasFn && !probe.hasSV) {
+    THEME_WARN.add('该页面既没引入 themes.js 也没接风格库，--theme 不生效（模板还没接主题，或这是自己写的动画）');
   } else if (probe.resolved !== THEME) {
     THEME_WARN.add(`--theme=${THEME} 未被识别，已回退到 ${probe.resolved || 'midnight'}` +
       '（可用主题名见 assets/templates/themes.js 的 H2V_THEMES）');
@@ -829,6 +956,33 @@ function printSizeWarnings() {
   console.warn('    cv.width = window.innerWidth; cv.height = window.innerHeight;');
   console.warn('  （assets/templates/*.html 都已这样写，可直接照抄）');
   console.warn('');
+}
+
+/* 页面自报时间轴长度（模板调 SC.expose 才有 window.__sceneTable）。
+   为什么需要：story 的镜头表总和 ≠ 成片时长 —— dip 转场每次吃掉 0.45s，lead/tail 再吃掉 0.9s。
+   实测一份 6 镜 / 合计 20.47s 的镜头表，页面时间轴只有 18.25s：
+   按 20.47s 出片，最后两秒音乐还在放、画面已经空了。 */
+async function probeTimeline(context, url) {
+  const page = await context.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+    await page.waitForFunction(
+      () => window.__ready === true || !!window.__bootFailed,
+      null,
+      { timeout: READY_TIMEOUT * 1000 },
+    );
+    return await page.evaluate(() => {
+      const tb = window.__sceneTable;
+      if (!Array.isArray(tb) || !tb.length) return null;
+      const last = tb[tb.length - 1];
+      const end = Number(last.end != null ? last.end : (last.start + last.dur));
+      return Number.isFinite(end) && end > 0 ? end : null;
+    });
+  } catch (e) {
+    return null;
+  } finally {
+    await page.close().catch(() => {});
+  }
 }
 
 // 一个 worker：开一个 page，goto，等 __seek 就绪，渲染分配给它的帧
@@ -1020,6 +1174,21 @@ async function renderStills(context, url, times, onPage) {
 
   await injectStoryInit(context);
   await injectThemeInit(context);
+  await injectBeatsInit(context);
+
+  /* 时间轴校准：只在「时长是猜出来的」情况下动手。
+     用户显式给了 --duration / --to 就尊重他的决定（那是导演的选择）。 */
+  if (!STILLS && !DURATION_GIVEN && !RANGE_GIVEN) {
+    const real = await probeTimeline(context, url);
+    const plan = (F1 - F0) / FPS;
+    if (real && Math.abs(real - plan) > 0.08) {
+      F1 = F0 + Math.round(real * FPS);
+      TOTAL_FRAMES = Math.max(0, F1 - F0);
+      for (let i = PENDING.length - 1; i >= 0; i--) if (PENDING[i] >= F1) PENDING.splice(i, 1);
+      console.log(`  时间轴自报 ${real.toFixed(2)}s，计划 ${plan.toFixed(2)}s（镜头表未扣转场重叠）`);
+      console.log(`  → 按页面时间轴出片：${TOTAL_FRAMES} 帧 / ${real.toFixed(2)}s`);
+    }
+  }
 
   let captured = 0;
   try {

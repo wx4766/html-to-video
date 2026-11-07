@@ -29,13 +29,16 @@ import { TEMPLATES } from '../scripts/lib/testing.mjs';
    ===================================================================== */
 const CAPS = {
   'bar-chart.html':         { theme: true,  cues: false, alpha: false },
+  'chapter-card.html':      { theme: true,  cues: false, alpha: true  },
   'compare.html':           { theme: true,  cues: false, alpha: true  },
   'explainer.html':         { theme: true,  cues: true,  alpha: true  },
   'flow-steps.html':        { theme: true,  cues: false, alpha: true  },
   'line-chart.html':        { theme: true,  cues: false, alpha: false },
+  'quote-card.html':        { theme: true,  cues: false, alpha: true  },
   'number-counter.html':    { theme: true,  cues: false, alpha: false },
   'subtitle-card.html':     { theme: true,  cues: true,  alpha: true  },
   'timeline.html':          { theme: true,  cues: false, alpha: false },
+  'ui-showcase.html':       { theme: true,  cues: false, alpha: false },
   'title-card.html':        { theme: true,  cues: false, alpha: true  },
   'vertical-card.html':     { theme: true,  cues: false, alpha: false },
   'vertical-subtitle.html': { theme: true,  cues: true,  alpha: true  },
@@ -45,7 +48,9 @@ const CAPS = {
 const SHARED = new Set(['themes.js']);
 
 const allFiles = fs.readdirSync(TEMPLATES).sort();
-const templates = allFiles.filter((f) => f.endsWith('.html'));
+/* 跳过隐藏文件：`h2v preview` 会在模板同目录写一份注入过 __seekRender 的临时副本
+   （必须同目录，否则 ./themes.js 这类相对路径解析不到）。它不是模板，不该进契约表。 */
+const templates = allFiles.filter((f) => f.endsWith('.html') && !f.startsWith('.'));
 
 const read = (f) => fs.readFileSync(path.join(TEMPLATES, f), 'utf8');
 

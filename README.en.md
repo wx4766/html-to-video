@@ -83,7 +83,7 @@ node scripts/render-video-seek.js my-video.html --duration=6 --fps=30 --width=10
 
 ---
 
-## 11 templates you can ship today
+## 14 templates you can ship today
 
 Copy one, edit `CFG`, render. Each template is a single self-contained HTML file.
 
@@ -100,17 +100,20 @@ Copy one, edit `CFG`, render. Each template is a single self-contained HTML file
 | `subtitle-card.html` | Sentence-by-sentence explainer card with a segmented progress bar |
 | `vertical-card.html` | 9:16 portrait card for Shorts / Reels / TikTok |
 | `vertical-subtitle.html` | 9:16 caption card with `**keyword**` highlighting |
+| `quote-card.html` | Quote / pull-quote card — oversized quotation mark, line-by-line quote, attribution rule |
+| `chapter-card.html` | Chapter divider — ghosted number, title, progress dots. Slices a long film into acts |
+| `ui-showcase.html` | Product UI demo — window pushes in, slow push-in, two spotlight callouts. Swap in a real screenshot with `CFG.shot` |
 
 Every template ships in both landscape and portrait layout — the layout picks itself from
 the viewport, so `--width/--height` is the only switch.
 
 ---
 
-## 8 visual styles: same content, different film
+## 12 visual styles: same content, different film
 
 Templates decide **what goes on screen**; styles decide **what it looks like** —
 the paper, the ink, the line weight, the type, the entrance, the signature detail.
-Separate the two and 11 layouts × 8 styles = 88 looks, without writing 88 templates.
+Separate the two and 14 layouts × 12 styles = 168 looks, without writing 168 templates.
 
 ```bash
 bash assets/render.sh assets/style-film.html --duration=13 --theme=chalk
@@ -127,17 +130,60 @@ bash assets/render.sh assets/style-film.html --duration=13 --theme=ink --width=1
 | `synthwave` | Striped sun, perspective floor grid, CRT scanlines | Music, games, retro tech |
 | `swiss` | Huge type, one signal colour, zero radius | Brand, opinion, launch |
 | `ink` | Rice paper, three-layer ink bleed, vermilion seal colour | Chinese/ink-wash aesthetics |
+| `watercolour` | Cotton paper, wet-on-wet blooms, pigment pooling at the edges, serif type | Human stories, brand films |
+| `pencil` | Sketch paper, 45° hatching, double hand-drawn borders, graphite greys | Tutorials, breakdowns, drafts |
+| `vox` | Cream ground, one saturated block, heavy grotesque, halftone dots, hard shadow | Explainer / news-style videos |
+| `clay` | Soft lavender ground, rounded slabs, top-lit gradient, inner highlight, soft shadow | Product launches, SaaS, youth brands |
 
 Chinese names work too (`--theme=水墨`). Signature elements, taboos and the code API for each
 style are in **[assets/STYLES.md](assets/STYLES.md)** (Chinese).
 
 ```bash
-# Contact sheet: one style per second, 8 full-frame stills
-node scripts/render-video-seek.js assets/style-gallery.html --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5
+# Contact sheet: one style per second, 12 full-frame stills
+node scripts/render-video-seek.js assets/style-gallery.html \
+  --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5
 
 # A 13s style film: hook / points / metric / outro
 bash assets/render.sh assets/style-film.html --duration=13 --fps=60
 ```
+
+## Cut on the beat
+
+Every edit that feels professional shares one rule: **cuts land on the beat**.
+Instead of nudging keyframes with a stopwatch, measure the beat grid once and let the
+renderer quantise to it:
+
+```bash
+bash assets/render.sh style-film.html --audio=bgm.mp3 --beats --snap=beats
+# ▸ beats: 120.14 BPM · 20 beats · first 0.49s · confidence 0.85
+# ▸ duration snapped: 25.2s → 25.5s (+0.3s)
+```
+
+- `--beats` analyses `--audio`; `--beats=beats.json` reuses a precomputed grid.
+- `--snap=beats` snaps the total duration up to the next beat.
+- `--snap-shots` quantises **every shot** in the story JSON to whole beats (this is the one
+  that actually puts cuts on the beat), printing each change and warning above 25%.
+- Templates get `window.__beats`; the style library exposes `SV.pulse(t)` / `SV.beatPhase(t)`.
+
+The analyser (`scripts/beats.js`) has zero dependencies: ffmpeg → 22.05 kHz mono →
+log-energy flux → autocorrelation for tempo → phase scan. Measured on a 120 BPM drum loop:
+BPM within 2, phase within ~9 ms. Speech-only audio reports low confidence instead of
+inventing a grid.
+
+## One command for everything
+
+```bash
+npx html-to-video doctor                 # environment check: what's missing, how to fix
+npx html-to-video templates              # list 14 templates
+npx html-to-video styles                 # list 12 styles
+npx html-to-video new my-video --template=quote-card
+npx html-to-video preview my-video.html --duration=6 --open
+npx html-to-video render my-video.html --duration=6 --fps=60
+```
+
+`preview` serves the page (so ESM/fetch work), freezes its clock via `__seekRender`,
+and gives you a scrubbable timeline — every frame you see is the frame the renderer
+would capture. Space to play, ←/→ to step one frame.
 
 ## Storyboard first, render after
 

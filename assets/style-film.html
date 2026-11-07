@@ -179,8 +179,11 @@ function shotHook(g2, lt, c) {
     const cb = SV.card(g2, ST, { x: bx, y: by, w: bw, h: bh }, { S: SF, accent: true, seed: 9 });
     // 字号跟着「内容安全框」算，不是跟着方块算 —— 等距只给顶面、水墨只给内圈，
     // 按方块高度给字号，字会顶出边界被裁掉（第一版 8 就只剩上半截）。
-    const numSize = Math.min(200 * SF, cb.h * 0.58);
-    SV.text(g2, ST, D.badgeNum || '8', cb.x, cb.y + cb.h * 0.60 + numSize * 0.36, numSize,
+    /* 三个约束一起卡：高、宽、以及「三位数按 0.62 字宽估算」。
+       只按高度算是 142px，三位数字实际宽 256px > 内容框 246px，数字右缘会顶出去。 */
+    const numTxt = String(D.badgeNum || '8');
+    const numSize = Math.min(200 * SF, cb.h * 0.58, cb.w / (numTxt.length * 0.62));
+    SV.text(g2, ST, numTxt, cb.x, cb.y + cb.h * 0.60 + numSize * 0.36, numSize,
       { kind: 'display', color: cb.ink });
     /* 等距/水墨这类「面」是斜的或糊的，标签放不进内容框 —— 挪到方块外面当标注。
        硬塞进去的结果是白字压在立体块的侧面上，一眼假。 */
@@ -257,7 +260,9 @@ function shotMetric(g2, lt, c) {
   const cp = SV.ease.outQuint(SV.clamp((t - 0.15) / 1.1));
   const val = Math.round(target * cp);
 
-  const bigY = 520 * SY;
+  /* 数字块与条形块要撑满画面中段。旧版数字停在 520、条到 674，
+     1080 的画面下半截空着 400px，像"内容忘了往下放"。 */
+  const bigY = 604 * SY;
   const unitSize = 64 * SF;
   g2.save();
   // 先量数字宽度，单位才能紧跟在右边（不能拍脑袋写死 +180）
@@ -276,9 +281,9 @@ function shotMetric(g2, lt, c) {
   const barX = W * 0.52, barW = W - M - barX;
   bars.forEach((b, i) => {
     const p = SV.clamp((t - 0.5 - i * 0.18) / 0.8);
-    const y = 392 * SY + i * 128 * SY;
-    SV.text(g2, ST, b.label || '', barX, y - 22 * SY, 30 * SF, { kind: 'body', color: ST.theme.ink });
-    SV.bar(g2, ST, { x: barX, y: y, w: barW, h: 26 * SY }, b.p * SV.ease.outCubic(p),
+    const y = 446 * SY + i * 172 * SY;
+    SV.text(g2, ST, b.label || '', barX, y - 26 * SY, 32 * SF, { kind: 'body', color: ST.theme.ink });
+    SV.bar(g2, ST, { x: barX, y: y, w: barW, h: 30 * SY }, b.p * SV.ease.outCubic(p),
       { S: SF, accent: i === 0, color: i === 0 ? ST.theme.accent : ST.theme.accent2 });
   });
 }

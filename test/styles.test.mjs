@@ -197,3 +197,21 @@ test('节拍网格换算：snap 落在拍点上，fitBeats 给整拍', () => {
   assert.equal(f.beats, 7);                            // 3.3/0.5 ≈ 6.6 → 7 拍
   assert.ok(Math.abs(f.dur - 3.5) < 1e-9);
 });
+
+/* ── 节拍脉冲（v1.7 新增） ──────────────────────────────────────────
+   这两个函数是"卡点"落到模板里的接口：没有 __beats 时必须安静返回 0，
+   否则所有老模板在没给 --beats 的情况下画面都会变。 */
+test('pulse()：没有 __beats 时返回 0（不能影响默认渲染）', () => {
+  delete globalThis.__beats;
+  assert.equal(SV.pulse(0.3), 0);
+  assert.equal(SV.beatPhase(0.3), 0);
+});
+
+test('pulse()：拍点处最亮，之后衰减；beatPhase 线性推进', () => {
+  globalThis.__beats = { bpm: 120, offset: 0, beats: [0, 0.5, 1, 1.5] };
+  assert.ok(SV.pulse(0.001) > 0.99, '拍点瞬间应接近 1');
+  assert.ok(SV.pulse(0.25) < 0.15, '半拍后应基本衰减完');
+  assert.ok(SV.pulse(0.51) > 0.9, '下一拍重新点亮');
+  assert.ok(Math.abs(SV.beatPhase(0.25) - 0.5) < 1e-6);
+  delete globalThis.__beats;
+});

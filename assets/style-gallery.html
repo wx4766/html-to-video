@@ -15,15 +15,15 @@
 /* =========================================================================
    风格画廊 · 一屏一个风格，逐秒切换
    -------------------------------------------------------------------------
-   同一段内容（标题 / 副标题 / 条 / 卡片 / 页脚）用 8 种视觉语言各画一遍。
+   同一段内容（标题 / 副标题 / 条 / 卡片 / 页脚）用 12 种视觉语言各画一遍。
    内容不变、只换风格 —— 这样眼睛才能看出「风格」到底改了什么。
 
-   出 8 张全屏静帧（第 k 秒 = 第 k 个风格）：
+   出 12 张全屏静帧（第 k 秒 = 第 k 个风格）：
      node scripts/render-video-seek.js assets/style-gallery.html \
-       --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5
+       --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5
 
-   出整片（8 秒，每个风格 1 秒）：
-     bash assets/render.sh assets/style-gallery.html --duration=8 --fps=30
+   出整片（12 秒，每个风格 1 秒）：
+     bash assets/render.sh assets/style-gallery.html --duration=12 --fps=30
    ========================================================================= */
 
 const cv = document.getElementById('stage');
@@ -31,7 +31,7 @@ const g = cv.getContext('2d');
 
 const CFG = {
   /* 想看某一个风格的全屏样张：把这里改成 'riso' / 'chalk' / 'ink' …
-     留 null 则按时间轮播 8 种。 */
+     留 null 则按时间轮播全部风格（顺序见 ORDER）。 */
   only: null,
   title: '用代码做视频',
   sub: '逐帧可控 · 中文完美 · 零费用',
@@ -39,7 +39,9 @@ const CFG = {
   footer: 'HTML → MP4  ·  deterministic  ·  frame-accurate',
 };
 
-const ORDER = ['riso', 'cutpaper', 'blueprint', 'chalk', 'isometric', 'synthwave', 'swiss', 'ink'];
+/* 顺序有讲究：冷/暖、深/浅交替，相邻两张的观感差得越远，越容易分辨 */
+const ORDER = ['riso', 'cutpaper', 'blueprint', 'chalk', 'isometric', 'synthwave', 'swiss', 'ink',
+  'watercolor', 'pencil', 'vox', 'clay'];
 const TOTAL = ORDER.length;
 
 let W = 0, H = 0, SX = 1, SY = 1, SF = 1;
@@ -50,7 +52,7 @@ function resize() {
   SX = W / 1920; SY = H / 1080; SF = Math.sqrt(SX * SY);
 }
 
-/* 一段内容，八种画法 ------------------------------------------------ */
+/* 一段内容，十二种画法 ---------------------------------------------- */
 function drawStyle(g, st, tIn) {
   const M = 150 * SX;                    // 左右边距
   const topY = 230 * SY;
