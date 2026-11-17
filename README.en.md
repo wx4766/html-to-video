@@ -109,11 +109,11 @@ the viewport, so `--width/--height` is the only switch.
 
 ---
 
-## 12 visual styles: same content, different film
+## 14 visual styles: same content, different film
 
 Templates decide **what goes on screen**; styles decide **what it looks like** —
 the paper, the ink, the line weight, the type, the entrance, the signature detail.
-Separate the two and 14 layouts × 12 styles = 168 looks, without writing 168 templates.
+Separate the two and 14 layouts × 14 styles = 196 looks, without writing 196 templates.
 
 ```bash
 bash assets/render.sh assets/style-film.html --duration=13 --theme=chalk
@@ -134,14 +134,21 @@ bash assets/render.sh assets/style-film.html --duration=13 --theme=ink --width=1
 | `pencil` | Sketch paper, 45° hatching, double hand-drawn borders, graphite greys | Tutorials, breakdowns, drafts |
 | `vox` | Cream ground, one saturated block, heavy grotesque, halftone dots, hard shadow | Explainer / news-style videos |
 | `clay` | Soft lavender ground, rounded slabs, top-lit gradient, inner highlight, soft shadow | Product launches, SaaS, youth brands |
+| `woodcut` | Warm paper, wood grain, solid ink blocks, broken white knife lines (tone = line density), vermilion misregistration | Opinion, culture, heavy poster films |
+| `glass` | Dark gradient, drifting light orbs, frosted panels (1px rim light, inner highlight, translucency, rounded glowing bars) | Tech launches, SaaS, hardware specs |
+
+Five families, so you pick a category before a name: **print** (riso / woodcut),
+**craft** (cutpaper / chalk / pencil / clay), **paint** (ink / watercolor),
+**infographic** (blueprint / isometric / swiss / vox), **UI** (synthwave / glass).
+`npx html-to-video styles --cat=print` lists one family.
 
 Chinese names work too (`--theme=水墨`). Signature elements, taboos and the code API for each
 style are in **[assets/STYLES.md](assets/STYLES.md)** (Chinese).
 
 ```bash
-# Contact sheet: one style per second, 12 full-frame stills
+# Contact sheet: one style per second, 14 full-frame stills
 node scripts/render-video-seek.js assets/style-gallery.html \
-  --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5
+  --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5,12.5,13.5
 
 # A 13s style film: hook / points / metric / outro
 bash assets/render.sh assets/style-film.html --duration=13 --fps=60
@@ -282,7 +289,7 @@ check (read it aloud; cut 30%) live in `references/writing.md`.
 ```bash
 npx html-to-video doctor                 # environment check: what's missing, how to fix
 npx html-to-video templates              # list 14 templates
-npx html-to-video styles                 # list 12 styles
+npx html-to-video styles                 # list 14 styles
 npx html-to-video camera                 # list 12 camera moves
 npx html-to-video new my-video --template=quote-card
 npx html-to-video preview my-video.html --duration=6 --open

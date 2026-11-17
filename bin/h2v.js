@@ -16,7 +16,7 @@
  *   npx html-to-video preview demo.html --duration=6 --open
  *   npx html-to-video storyboard demo.html --duration=24
  *   npx html-to-video doctor
- *   npx html-to-video styles            # 列出 12 种视觉风格
+ *   npx html-to-video styles            # 列出视觉风格（按家族分组）
  *   npx html-to-video templates         # 列出 14 个版式模板
  *   npx html-to-video new my-video      # 拷一个模板出来改
  */
@@ -134,10 +134,30 @@ switch (cmd) {
   case 'styles': {
     // 只读注册表，不画图 —— 所以 node 里也能列（不需要 document）
     const SV = require(path.join(ROOT, 'assets', 'lib', 'styles.js'));
-    console.log('\n视觉风格（--theme=<id> 或中文名都行）：\n');
-    for (const s of SV.list()) {
+    /* 按家族分组打印：14 个名字平铺着看太费劲，先想「要哪一类」再挑，
+       比背 id 实际。--cat= 能过滤一类（中英文都行）。 */
+    const ci = argv.findIndex((a) => a === '--cat' || a.indexOf('--cat=') === 0);
+    const only = ci < 0 ? '' : (argv[ci].indexOf('=') > 0 ? argv[ci].split('=')[1] : (argv[ci + 1] || '')).trim();
+    let rows = SV.list(only ? { cat: only } : undefined);
+    if (only && !rows.length) {
+      console.log(`\n没有「${only}」这一类。可用：${[...new Set(SV.list().map((s) => s.cat))].join(' / ')}\n`);
+      break;
+    }
+    /* SV.list() 给的是定义顺序，不按类排。分组打印必须先排序，
+       否则同一个类名会重复出现好几次（riso/first, 然后 blueprint 又开一个【信息图】）。 */
+    const CATS = ['印刷', '手作', '绘画', '信息图', '数字界面'];
+    rows = rows.slice().sort((a, b) => {
+      const ai = CATS.indexOf(a.cat), bi = CATS.indexOf(b.cat);
+      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+    });
+
+    console.log('\n视觉风格（--theme=<id> 或中文名都行）：');
+    let last = '';
+    for (const s of rows) {
+      if (s.cat !== last) { console.log(`\n  【${s.cat}】`); last = s.cat; }
       console.log(`  ${s.id.padEnd(12)} ${s.cn.padEnd(8)} ${s.en.padEnd(16)} ${s.tags.join(' / ')}`);
     }
+    console.log(`\n共 ${rows.length} 种。--cat=印刷 / 手作 / 绘画 / 信息图 / 数字界面 只列一类`);
     console.log('\n挑风格：node scripts/render-video-seek.js assets/style-gallery.html --stills=0.5,1.5,...');
     console.log('细节：assets/STYLES.md\n');
     break;

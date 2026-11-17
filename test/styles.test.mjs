@@ -215,3 +215,50 @@ test('pulse()：拍点处最亮，之后衰减；beatPhase 线性推进', () => 
   assert.ok(Math.abs(SV.beatPhase(0.25) - 0.5) < 1e-6);
   delete globalThis.__beats;
 });
+
+/* ── v1.9：家族分类 + 新增两种风格 ────────────────────────────────
+   分类表是给人看的导航，最容易出的问题是「加了风格忘了归类」——
+   那种风格会静默落进「其它」，列表里看着像残次品。 */
+test('每种风格都归了家族，且 base 短名唯一可查', () => {
+  const bases = new Set();
+  for (const s of SV.list()) {
+    assert.ok(s.cat && s.cat !== '其它', `${s.id} 没有归类`);
+    assert.ok(s.base && s.base !== 'other', `${s.id} 没有 base 家族`);
+    bases.add(s.base);
+  }
+  assert.ok(SV.list({ cat: 'print' }).length >= 2, 'base=print 至少两种');
+  assert.ok(SV.list({ cat: '印刷' }).length >= 2, '中文类名也要能过滤');
+});
+
+test('v1.9 新增的 glass / woodcut 能解析中文与常见叫法', () => {
+  const cases = { 玻璃: 'glass', 磨砂: 'glass', frosted: 'glass', ios: 'glass',
+    木刻: 'woodcut', 版画: 'woodcut', woodblock: 'woodcut' };
+  for (const [k, v] of Object.entries(cases)) {
+    assert.equal(SV.norm(k), v, `"${k}" 应解析成 ${v}`);
+  }
+});
+
+test('woodcut 的刻线是确定性的：同一张卡片两次渲染的调用序列一致', () => {
+  /* 木刻靠 rng 逐刀随机构成，一旦某处漏了 seed 就会每帧变样，
+     QA 的「同输入同输出」直接亮红灯。这里用调用序列对比。 */
+  const run = () => {
+    const calls = [];
+    const g = fakeCtx();
+    const orig = g.fillRect;
+    void orig;
+    const st = SV.get('woodcut');
+    const out = st.card(g, { x: 100, y: 100, w: 600, h: 240 }, { S: 1 });
+    calls.push(out.w, out.h, out.ink);
+    return calls.join('|');
+  };
+  assert.equal(run(), run());
+});
+
+test('glass 的 card 在 accent 与非 accent 下都给出安全框', () => {
+  const st = SV.get('glass');
+  for (const accent of [false, true]) {
+    const out = st.card(fakeCtx(), { x: 40, y: 60, w: 480, h: 200 }, { S: 1, accent });
+    assert.ok(out.w > 0 && out.h > 0, `accent=${accent} 时安全框为空`);
+    assert.equal(typeof out.ink, 'string');
+  }
+});

@@ -157,7 +157,23 @@ function checkBlack() {
   const s = (r.stderr || '') + (r.stdout || '');
   const hits = [...s.matchAll(/black_start:\s*([\d.]+)\s*black_end:\s*([\d.]+)/g)]
     .map((m) => ({ start: +m[1], end: +m[2], dur: +(+m[2] - +m[1]).toFixed(2) }));
-  return { count: hits.length, spans: hits.slice(0, 12) };
+
+  /* 二道确认。blackdetect 用的是绝对阈值（pix_th=0.10 约等于 Y<25.5），
+     而深色风格的 dip 过场色就贴在这条线附近 —— glass 的底色 #0A0E1A 实测
+     YAVG≈30，转场那几帧掉下去，就被判成"黑场"。
+     真黑场（片头片尾、忘了铺底）YAVG 是 16（limited range 的纯黑）。
+     所以量一下段内最暗帧：明显高于纯黑就只是"暗过场"，不算失败。 */
+  const real = [];
+  const dips = [];
+  for (const h of hits) {
+    const q = run(['-i', file, '-ss', String(Math.max(0, h.start - 0.02)), '-t', String(h.dur + 0.04),
+      '-vf', 'fps=25,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-',
+      '-an', '-f', 'null', '-']);
+    const vals = [...((q.stdout || '') + (q.stderr || '')).matchAll(/YAVG=([0-9.]+)/g)].map((m) => parseFloat(m[1]));
+    const y = vals.length ? Math.min(...vals) : 0;
+    (y >= 22 ? dips : real).push({ ...h, yavg: +y.toFixed(1) });
+  }
+  return { count: real.length, spans: real.slice(0, 12), dips: dips.slice(0, 12) };
 }
 
 /* ---------- 5. bright：亮度分布（L* 近似） ----------
@@ -267,8 +283,12 @@ for (const k of want) {
       const r = checkBlack();
       out.checks.black = r;
       say(`== black（≥0.1s 黑场）`);
-      say(`   ${r.count === 0 ? 'none' : r.spans.map((s) => `${s.start}–${s.end}s`).join(' , ')}`);
+      say(`   ${r.count === 0 ? 'none' : r.spans.map((s) => `${s.start}–${s.end}s（YAVG ${s.yavg}）`).join(' , ')}`);
       if (r.count) say('   注意：首尾刻意的黑场也要确认——观众看到的是"卡了"');
+      if (r.dips && r.dips.length) {
+        say(`   ${r.dips.length} 段「暗过场」不算黑场（dip 转到风格底色）：`);
+        say(`     ${r.dips.map((s) => `${s.start}–${s.end}s YAVG ${s.yavg}`).join(' , ')}`);
+      }
     } else if (k === 'bright') {
       const r = checkBright();
       out.checks.bright = r;

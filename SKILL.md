@@ -1,6 +1,6 @@
 ---
 name: html-to-video
-description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可卡点、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」「换个风格」「卡点」「音乐配画面」「加运镜」「成片检查」「响度归一」时使用。自带渲染器、14 个版式模板（多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡、引言卡、章节卡、界面演示）、12 种视觉风格（孔版印刷 / 剪纸 / 蓝图 / 粉笔 / 等距 / 霓虹 / 瑞士 / 水墨 / 水彩 / 铅笔 / 半调解说 / 黏土立体，一条命令切换）、节拍分析与卡点（--beats / --snap）、**镜头语言（12 个命名运动 + 5 种缓动，一行自然语言一条镜头，自带防露边）**、分镜预演、浏览器预览、环境自检、图标/人物/运镜素材库、**文案自检（字数 / 条数 / 陈词滥调 / 转折）**、**成片质检（hook / 黑场 / 冻结 / 重复帧 / 响度 / 联系表）**、**EBU R128 响度母版（−14 LUFS / −2 dBTP）**，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
+description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可卡点、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」「换个风格」「卡点」「音乐配画面」「加运镜」「成片检查」「响度归一」时使用。自带渲染器、14 个版式模板（多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡、引言卡、章节卡、界面演示）、14 种视觉风格（孔版印刷 / 木刻 / 剪纸 / 粉笔 / 铅笔 / 黏土 / 水墨 / 水彩 / 蓝图 / 等距 / 瑞士 / 半调 / 霓虹 / 玻璃拟态，分五个家族，一条命令切换）、节拍分析与卡点（--beats / --snap）、**镜头语言（12 个命名运动 + 5 种缓动，一行自然语言一条镜头，自带防露边）**、分镜预演、浏览器预览、环境自检、图标/人物/运镜素材库、**文案自检（字数 / 条数 / 陈词滥调 / 转折）**、**成片质检（hook / 黑场 / 冻结 / 重复帧 / 响度 / 联系表）**、**EBU R128 响度母版（−14 LUFS / −2 dBTP）**，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
 agent_created: true
 ---
 
@@ -50,10 +50,10 @@ agent_created: true
 | `ui-showcase.html` | **界面演示**：窗口推入 + 缓推 + 两处聚光标注，可换真实截图（`CFG.shot`） | `--duration=8` |
 
 每个模板**单文件自包含**，顶部有一个显眼的 `CFG` 配置块，改文案/数据即可 ——
-不用懂 canvas 也能出片。**14 个模板全部支持换主题与 12 种视觉风格**（见「换配色」一节）。
+不用懂 canvas 也能出片。**14 个模板全部支持换主题与 14 种视觉风格**（见「换配色」一节）。
 想做别的，再看 `assets/animation-skeleton.html` 从零写。
 
-**上面 14 个是「版式」。想要不同的「观感」，加一个 `--theme` 就有 12 种视觉语言**：
+**上面 14 个是「版式」。想要不同的「观感」，加一个 `--theme` 就有 14 种视觉语言**：
 
 ```bash
 bash assets/render.sh assets/style-film.html --duration=13 --theme=ink         # 水墨
@@ -61,7 +61,7 @@ bash assets/render.sh assets/style-film.html --duration=13 --theme=clay        #
 bash assets/render.sh assets/style-film.html --duration=13 --theme=watercolor  # 水彩
 ```
 
-版式 × 风格 = 14 × 12 种组合。想先挑风格，跑一次八宫格即可（见「风格」一节）。
+版式 × 风格 = 14 × 14 种组合。想先挑风格，跑一次十四宫格即可（见「风格」一节）。
 
 **做「一支片子」而不是「一段动画」**：用 `assets/lib/scenes.js` 写多镜头 + 转场，
 镜头表还能用 `--story=shots.json` 外置 —— LLM 写 JSON 比写几百行 canvas 代码可靠得多。
@@ -155,7 +155,7 @@ WB_NODE_WORKSPACE="<你的 node 工作区绝对路径>"
 ```bash
 npx html-to-video doctor                 # 环境自检：缺什么、怎么修（只读）
 npx html-to-video templates              # 14 个模板
-npx html-to-video styles                 # 12 种风格
+npx html-to-video styles                 # 14 种风格（按家族分组）
 npx html-to-video camera                 # 12 个镜头运动 + 一行字怎么写
 npx html-to-video new my-video --template=chapter-card
 npx html-to-video preview my-video.html --duration=6 --open
@@ -1120,6 +1120,7 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 | `scripts/audio-master.js` | **响度母版**：两遍 `loudnorm` 线性归一 → −14 LUFS / −2 dBTP，可选限幅 |
 | `scripts/script-check.js` | **文案自检**：单行字数 / 每镜条数 / 阅读速度 / 陈词滥调 / 有没有转折 |
 | `references/writing.md` | 文案规则全文：分叉收敛、六种转折、字数预算、陈词滥调清单、首次观看者检查 |
+| `references/style-recipe.md` | **加新风格前必读**：十一章骨架（本质/材料/色彩/字体/运动/运镜/声音/招牌动作/介质陷阱/实现映射/可变空间）、每章写到什么颗粒度、查旧风格的五问、本项目固定陷阱清单、我们做不了的清单 |
 | `scripts/lib/hide-chrome.cjs` | 「隐藏播放控件」的共享规则，渲染器与验收器用同一份，规则不会漂移 |
 | `scripts/lib/local-server.cjs` | 本地 http 静态服务器（只绑 127.0.0.1），解锁 ESM / fetch；零新依赖 |
 | `scripts/detect-env.js` | 探测本机浏览器缓存，输出该装哪个 playwright 版本 |
@@ -1138,7 +1139,7 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 | `assets/lib/camera.js` | **两层**：运镜（推拉 / 呼吸 / 手持微抖 / 撞击震动，确定性伪噪声）+ **镜头语言**（12 个命名运动 / 5 种缓动 / 一行字解析 / 防露边），确定性 |
 | `assets/lib/shapes.js` | 图形元件：40+ 线性图标 / 卡片 / 箭头 / 正交连接线 / 背景纹理 |
 | `assets/lib/figures.js` | 参数化人物（发型 / 表情 / 姿势 / 配色）+ 对话气泡 |
-| `assets/lib/styles.js` | **风格库**：12 种视觉语言（孔版印刷/剪纸/蓝图/粉笔/等距/霓虹/瑞士/水墨/水彩/铅笔/半调/黏土），`SV.bg` / `SV.text` / `SV.card` / `SV.bar` / `SV.overlay` / `SV.boil` / `SV.BEAT` / `SV.pulse` |
+| `assets/lib/styles.js` | **风格库**：14 种视觉语言，分五个家族（印刷 / 手作 / 绘画 / 信息图 / 数字界面），`SV.bg` / `SV.text` / `SV.card` / `SV.bar` / `SV.overlay` / `SV.boil` / `SV.BEAT` / `SV.pulse` / `SV.FAMILY` |
 | `assets/STYLES.md` | 风格选择指南：每种风格的签名元素、适用场景、禁忌、加新风格的字段清单 |
 | `assets/style-film.html` | **风格短片**：片头/要点/数据/片尾 4 镜，8 风格通用，支持 `--story` 与横竖屏 |
 | `assets/style-gallery.html` | 八宫格风格样张，第 k 秒一个风格，配 `--stills` 一次出 8 张静帧 |

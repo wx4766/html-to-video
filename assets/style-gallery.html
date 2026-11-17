@@ -15,14 +15,14 @@
 /* =========================================================================
    风格画廊 · 一屏一个风格，逐秒切换
    -------------------------------------------------------------------------
-   同一段内容（标题 / 副标题 / 条 / 卡片 / 页脚）用 12 种视觉语言各画一遍。
+   同一段内容（标题 / 副标题 / 条 / 卡片 / 页脚）用全部视觉语言各画一遍。
    内容不变、只换风格 —— 这样眼睛才能看出「风格」到底改了什么。
 
-   出 12 张全屏静帧（第 k 秒 = 第 k 个风格）：
+   出 N 张全屏静帧（第 k 秒 = 第 k 个风格）：
      node scripts/render-video-seek.js assets/style-gallery.html \
        --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5
 
-   出整片（12 秒，每个风格 1 秒）：
+   出整片（每种风格 1 秒）：
      bash assets/render.sh assets/style-gallery.html --duration=12 --fps=30
    ========================================================================= */
 
@@ -40,8 +40,14 @@ const CFG = {
 };
 
 /* 顺序有讲究：冷/暖、深/浅交替，相邻两张的观感差得越远，越容易分辨 */
-const ORDER = ['riso', 'cutpaper', 'blueprint', 'chalk', 'isometric', 'synthwave', 'swiss', 'ink',
-  'watercolor', 'pencil', 'vox', 'clay'];
+/* 顺序不硬编码：新增风格自动进画廊。以前这里写死 12 个 id，
+   加第 13 种时忘了改，画廊就永远只演老的那批。排序按家族走，
+   同类挨着 —— 一眼能看出「这一族长什么样」。 */
+const CAT_ORDER = ['印刷', '手作', '绘画', '信息图', '数字界面'];
+const ORDER = SV.list().sort((a, b) => {
+  const d = CAT_ORDER.indexOf(a.cat) - CAT_ORDER.indexOf(b.cat);
+  return d !== 0 ? d : a.id.localeCompare(b.id);
+}).map((s) => s.id);
 const TOTAL = ORDER.length;
 
 let W = 0, H = 0, SX = 1, SY = 1, SF = 1;
@@ -52,7 +58,7 @@ function resize() {
   SX = W / 1920; SY = H / 1080; SF = Math.sqrt(SX * SY);
 }
 
-/* 一段内容，十二种画法 ---------------------------------------------- */
+/* 一段内容，十四种画法（顺序由 SV.list() 派生）---------------------- */
 function drawStyle(g, st, tIn) {
   const M = 150 * SX;                    // 左右边距
   const topY = 230 * SY;

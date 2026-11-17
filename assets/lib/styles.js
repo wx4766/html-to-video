@@ -1482,10 +1482,34 @@
       o = o || {};
       const S = o.S || 1;
       const w = Math.max(2 * S, box.w * clamp(p));
+      const paper = this.theme.bg;
+
+      /* 飞白（dry brush）：笔刷抬起时刷毛分开，纸从笔缝里透出来。
+         水彩之所以像水彩，一半在积色边、一半在飞白 —— 少了它，颜色再准
+         也是「渐变填充的矩形」。seed 由坐标算出，同一条永远同一个样子。 */
+      const dryBrush = () => {
+        if (w < 56 * S) return;               // 太窄的条挖了飞白会碎成筛子
+        const rr = rng((Math.round(box.x) * 7 + Math.round(box.y) * 13) | 0);
+        const tracks = 3 + Math.floor(rr() * 4);
+        g.save();
+        g.beginPath(); g.rect(box.x, box.y, w, box.h); g.clip();
+        for (let i = 0; i < tracks; i++) {
+          const ty = box.y + box.h * (0.08 + 0.84 * rr());
+          const th = Math.max(1, box.h * (0.014 + 0.046 * rr()));
+          /* 从条的 42%~80% 处才开始断：起笔是实的，收笔才散开 */
+          const from = 0.42 + 0.38 * rr();
+          const len = Math.max(2 * S, w * (1 - from) * (0.30 + 0.70 * rr()));
+          g.fillStyle = rgba(paper, 0.38 + 0.30 * rr());
+          g.fillRect(box.x + w * from, ty, len, th);
+        }
+        g.restore();
+      };
+
       /* o.color 可能是 CanvasGradient（条形图模板传渐变）。渐变不能进 rgba()/mix()，
          所以这种"要叠材质"的风格遇到渐变就退化成一条纯色条 —— 材质没了，但不崩。 */
       if (o.color && typeof o.color !== 'string') {
-        g.fillStyle = o.color; g.fillRect(box.x, box.y, w, box.h); return;
+        g.fillStyle = o.color; g.fillRect(box.x, box.y, w, box.h);
+        dryBrush(); return;
       }
       const col = o.color || this.theme.accent;
       const lg = g.createLinearGradient(box.x, box.y, box.x, box.y + box.h);
@@ -1496,12 +1520,14 @@
       // 上沿积色：一条更深的细线，模拟水在边缘停住
       g.fillStyle = rgba(col, 0.55);
       g.fillRect(box.x, box.y, w, Math.max(1, box.h * 0.10));
-      // 收笔处虚化（颜料没铺满的地方）
-      const tail = Math.min(w, box.w * 0.10);
+      // 收笔：颜料在末端变薄，露回纸色（不是硬边切断）
+      const tail = Math.min(w * 0.16, 26 * S);
       const tg = g.createLinearGradient(box.x + w - tail, 0, box.x + w, 0);
-      tg.addColorStop(0, rgba(col, 0.0));
-      tg.addColorStop(1, 'rgba(0,0,0,0)');
-      void tg;
+      tg.addColorStop(0, rgba(paper, 0));
+      tg.addColorStop(1, rgba(paper, 0.55));
+      g.fillStyle = tg;
+      g.fillRect(box.x + w - tail, box.y, tail, box.h);
+      dryBrush();
     },
 
     boil(t, i, amp) { return Math.sin(i * 5.3 + Math.floor(t * 6) * 1.9) * amp * 0.28; },
@@ -1955,6 +1981,381 @@
     boil(t, i, amp) { return Math.sin(i * 8.3 + Math.floor(t * 5) * 2.1) * amp * 0.18; },
   };
 
+  /* ────────────────────────────────────────────────────────────────
+     13. GLASS · 玻璃拟态 / 现代产品片
+     配方：深色渐变背景 + 两个大光斑；内容全部「隔着一块磨砂玻璃」。
+          玻璃靠三样东西成立：1px 亮边（左上亮、右下透）、顶部内高光、
+          以及**背后透出来的光**。不是靠 blur 糊一层 —— 那是滤镜，不是玻璃。
+     最适合：产品发布、SaaS 界面、硬件参数、需要「贵」的商业片
+     不适合：叙事、人文、纸张感 —— 玻璃是冷的
+     参考：iOS 控制中心、visionOS、2016 年后的产品发布会 KV
+     ──────────────────────────────────────────────────────────────── */
+  STYLES.glass = {
+    id: 'glass', cn: '玻璃拟态', en: 'Glass', dark: true,
+    tags: ['现代', '产品', '高级', '界面'],
+    theme: {
+      bg: '#0A0E1A', bgAlt: '#131A2C', ink: '#F2F6FF',
+      sub: 'rgba(226,234,255,0.64)', faint: 'rgba(226,234,255,0.13)',
+      panel: 'rgba(255,255,255,0.06)',
+      accent: '#5BE7D0', accent2: '#8B7BFF', good: '#5BE7D0', bad: '#FF6B8A',
+      glow: 'rgba(91,231,208,0.22)',
+      accentDeep: '#2FB8A6', accentSoft: '#A6F4E6', sweep: '91,231,208', onAccent: '#06231F',
+      bgFar: '#070A14',
+    },
+    type: { display: F.hei, body: F.hei, mono: F.mono, weight: 600, tracking: 0.012, lead: 1.46 },
+    motion: { enter: 0.9, overshoot: 1.0, ease: 'outCubic' },
+
+    bg(g, W, H, t) {
+      const lg = g.createLinearGradient(0, 0, W * 0.4, H);
+      lg.addColorStop(0, '#0C1120');
+      lg.addColorStop(0.55, '#0A0E1A');
+      lg.addColorStop(1, '#070A14');
+      g.fillStyle = lg;
+      g.fillRect(0, 0, W, H);
+
+      /* 两个大光斑，极慢漂移。玻璃后面必须有东西可透 ——
+         没有光斑，玻璃面板就是一块半透明灰板，什么都透不出来。 */
+      const d = t * 0.06;
+      const orb = (cx, cy, r, col, a) => {
+        const rg = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+        rg.addColorStop(0, rgba(col, a));
+        rg.addColorStop(0.48, rgba(col, a * 0.30));
+        rg.addColorStop(1, rgba(col, 0));
+        g.fillStyle = rg;
+        g.fillRect(cx - r, cy - r, r * 2, r * 2);
+      };
+      orb(W * (0.18 + 0.030 * Math.sin(d)), H * (0.24 + 0.020 * Math.cos(d * 0.8)), W * 0.54, '#1E63FF', 0.30);
+      orb(W * (0.86 - 0.030 * Math.cos(d * 0.9)), H * (0.84 + 0.020 * Math.sin(d)), W * 0.48, '#7B3BFF', 0.26);
+      orb(W * 0.52, H * (-0.08), W * 0.40, '#5BE7D0', 0.10);
+
+      /* 极细网格：现代产品片的「界面感」。alpha 0.02 几乎看不见，
+         但拿掉之后背景会变成一块纯渐变，立刻廉价。 */
+      const step = Math.round(64 * Math.sqrt((W / 1920) * (H / 1080)));
+      g.strokeStyle = 'rgba(180,200,255,0.022)';
+      g.lineWidth = 1;
+      g.beginPath();
+      for (let x = 0; x < W; x += step) { g.moveTo(x, 0); g.lineTo(x, H); }
+      for (let y = 0; y < H; y += step) { g.moveTo(0, y); g.lineTo(W, y); }
+      g.stroke();
+    },
+
+    overlay(g, W, H) {
+      const v = g.createRadialGradient(W / 2, H * 0.42, Math.min(W, H) * 0.30, W / 2, H / 2, Math.max(W, H) * 0.80);
+      v.addColorStop(0, 'rgba(0,0,0,0)');
+      v.addColorStop(1, 'rgba(2,4,10,0.52)');
+      g.fillStyle = v;
+      g.fillRect(0, 0, W, H);
+    },
+
+    /* 圆角矩形路径：不用 arcTo（老内核与测试桩都可能没有），只用 arc 画四角 */
+    _rr(g, x, y, w, h, r) {
+      const k = Math.min(r, w / 2, h / 2);
+      const HP = Math.PI / 2;
+      g.beginPath();
+      g.moveTo(x + k, y);
+      g.lineTo(x + w - k, y);
+      g.arc(x + w - k, y + k, k, -HP, 0);
+      g.lineTo(x + w, y + h - k);
+      g.arc(x + w - k, y + h - k, k, 0, HP);
+      g.lineTo(x + k, y + h);
+      g.arc(x + k, y + h - k, k, HP, Math.PI);
+      g.lineTo(x, y + k);
+      g.arc(x + k, y + k, k, Math.PI, Math.PI * 1.5);
+      g.closePath();
+    },
+
+    text(g, txt, x, y, size, o) {
+      o = o || {};
+      const kind = o.kind || 'body';
+      const fam = kind === 'mono' ? this.type.mono : (kind === 'display' ? this.type.display : this.type.body);
+      g.save();
+      g.font = `${kind === 'display' ? this.type.weight : 400} ${size}px ${fam}`;
+      g.textAlign = o.align || 'left';
+      g.textBaseline = o.baseline || 'alphabetic';
+      /* 文字在玻璃上是「发光的」，不是印上去的。极轻的光晕就够，
+         给大了会变成霓虹灯 —— 那是 synthwave，不是 glass。 */
+      if (kind === 'display') {
+        g.shadowColor = rgba(this.theme.accent, 0.28);
+        g.shadowBlur = size * 0.42;
+      }
+      g.fillStyle = o.color || (kind === 'sub' ? this.theme.sub : this.theme.ink);
+      g.fillText(txt, x, y);
+      g.shadowBlur = 0;
+      g.restore();
+    },
+
+    card(g, box, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const r = Math.min(box.h * 0.16, 22 * S);
+      const A = o.accent ? this.theme.accent : null;
+
+      g.save();
+      /* ① 投影和面板一次画完：先给一个带 shadow 的实心圆角块，
+            shadow 落在外面，块本身被下一步的渐变盖住。省一次路径。 */
+      g.shadowColor = 'rgba(0,0,0,0.55)';
+      g.shadowBlur = 46 * S;
+      g.shadowOffsetY = 20 * S;
+      g.fillStyle = '#151B2B';
+      this._rr(g, box.x, box.y, box.w, box.h, r);
+      g.fill();
+
+      /* ② 面板本体：左上偏白、右下偏透明 —— 光从左上来 */
+      g.shadowColor = 'transparent';
+      g.shadowBlur = 0;
+      g.shadowOffsetY = 0;
+      const pg = g.createLinearGradient(box.x, box.y, box.x + box.w * 0.6, box.y + box.h);
+      if (A) {
+        pg.addColorStop(0, rgba(A, 0.20));
+        pg.addColorStop(1, rgba(A, 0.06));
+      } else {
+        pg.addColorStop(0, 'rgba(255,255,255,0.10)');
+        pg.addColorStop(1, 'rgba(255,255,255,0.035)');
+      }
+      g.fillStyle = pg;
+      this._rr(g, box.x, box.y, box.w, box.h, r);
+      g.fill();
+
+      /* ③ 背后透出的光：在面板内部画一个错位的柔光斑。
+            这是「玻璃」和「半透明色块」的分界线 —— 没有它，只是一块灰。 */
+      g.save();
+      this._rr(g, box.x, box.y, box.w, box.h, r);
+      g.clip();
+      const rg = g.createRadialGradient(
+        box.x + box.w * 0.80, box.y + box.h * 0.12, 0,
+        box.x + box.w * 0.80, box.y + box.h * 0.12, Math.max(box.w, box.h) * 0.85
+      );
+      rg.addColorStop(0, rgba(A || '#7FB4FF', 0.24));
+      rg.addColorStop(1, rgba(A || '#7FB4FF', 0));
+      g.fillStyle = rg;
+      g.fillRect(box.x, box.y, box.w, box.h);
+      g.restore();
+
+      /* ④ 1px 亮边：左上亮、右下几乎消失。玻璃能不能被认出来，全靠这一圈。 */
+      const eg = g.createLinearGradient(box.x, box.y, box.x + box.w * 0.85, box.y + box.h);
+      eg.addColorStop(0, 'rgba(255,255,255,0.58)');
+      eg.addColorStop(0.42, 'rgba(255,255,255,0.16)');
+      eg.addColorStop(1, 'rgba(255,255,255,0.05)');
+      g.strokeStyle = eg;
+      g.lineWidth = Math.max(1, 1.4 * S);
+      this._rr(g, box.x + 0.7, box.y + 0.7, box.w - 1.4, box.h - 1.4, r);
+      g.stroke();
+
+      /* ⑤ 顶部内高光：一条短亮线，模拟玻璃上沿的倒角反光 */
+      const hl = g.createLinearGradient(box.x + box.w * 0.15, 0, box.x + box.w * 0.85, 0);
+      hl.addColorStop(0, 'rgba(255,255,255,0)');
+      hl.addColorStop(0.5, 'rgba(255,255,255,0.56)');
+      hl.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = hl;
+      g.fillRect(box.x + box.w * 0.15, box.y + 1.5 * S, box.w * 0.7, Math.max(1, 2 * S));
+      g.restore();
+
+      const pad = Math.min(46 * S, box.h * 0.20);
+      return {
+        x: box.x + pad, y: box.y + pad, w: box.w - pad * 2, h: box.h - pad * 2,
+        ink: this.theme.ink,
+      };
+    },
+
+    bar(g, box, p, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const w = Math.max(3 * S, box.w * clamp(p));
+      const r = box.h / 2;
+      const col = (typeof o.color === 'string' && o.color) || (o.accent ? this.theme.accent : this.theme.accent2);
+
+      g.save();
+      /* 轨道：极暗的一条，让条的长度有参照 */
+      g.fillStyle = 'rgba(255,255,255,0.045)';
+      this._rr(g, box.x, box.y, box.w, box.h, r);
+      g.fill();
+
+      // 发光条：shadow 只开在条身上，注意要跟着 clip 一起收
+      g.shadowColor = rgba(col, 0.45);
+      g.shadowBlur = 18 * S;
+      const lg = g.createLinearGradient(box.x, 0, box.x + w, 0);
+      lg.addColorStop(0, rgba(col, 0.55));
+      lg.addColorStop(1, rgba(col, 0.98));
+      g.fillStyle = lg;
+      this._rr(g, box.x, box.y, w, box.h, r);
+      g.fill();
+      g.shadowBlur = 0;
+      g.restore();
+    },
+
+    boil() { return 0; },
+  };
+
+  /* ────────────────────────────────────────────────────────────────
+     14. WOODCUT · 木刻版画
+     配方：米黄纸 + 大面积实墨块；形状靠「刻掉的白线」交代，不靠描边。
+          明暗 = 白线密度，一刀就是一刀，没有渐变。
+     最适合：观点输出、有力量的标题、历史/文化题材、需要「重」的海报片
+     不适合：柔和叙事、数据密集（细线在缩放后会消失）
+     参考：德国表现主义木刻、鲁迅提倡的新兴木刻、日本栋方志功
+     ──────────────────────────────────────────────────────────────── */
+  STYLES.woodcut = {
+    id: 'woodcut', cn: '木刻版画', en: 'Woodcut', dark: false,
+    tags: ['印刷', '强对比', '传统', '有力'],
+    theme: {
+      bg: '#F0E5CE', bgAlt: '#E6D8BC', ink: '#141110',
+      sub: 'rgba(20,17,16,0.66)', faint: 'rgba(20,17,16,0.14)',
+      panel: 'rgba(20,17,16,0.055)',
+      accent: '#B3321F', accent2: '#2E4A6B', good: '#3F5B3A', bad: '#B3321F',
+      glow: 'rgba(179,50,31,0.16)',
+      accentDeep: '#7E2113', accentSoft: '#D98A78', sweep: '179,50,31', onAccent: '#F6EFE0',
+      bgFar: '#DFD1B2',
+    },
+    type: { display: F.impact, body: F.hei, mono: F.mono, weight: 800, tracking: -0.012, lead: 1.34 },
+    motion: { enter: 0.72, overshoot: 0.999, ease: 'outCubic' },
+
+    bg(g, W, H, t) {
+      const S = Math.sqrt((W / 1920) * (H / 1080));
+      g.fillStyle = this.theme.bg;
+      g.fillRect(0, 0, W, H);
+
+      /* 木纹：一组极长、极淡的水平线，间距不均匀。
+         均匀的横线是「横线」，不均匀的才是「木」。 */
+      const rr = rng(9137);
+      g.save();
+      g.strokeStyle = 'rgba(120,96,64,0.055)';
+      let y = 0;
+      while (y < H) {
+        y += (6 + rr() * 22) * S;
+        g.lineWidth = (0.5 + rr() * 1.4) * S;
+        g.beginPath();
+        /* 每条线有极缓慢的起伏，像刨过的板面 */
+        const amp = (1 + rr() * 3) * S;
+        const ph = rr() * 6.28;
+        for (let x = 0; x <= W; x += W / 12) {
+          const yy = y + Math.sin(x / W * 3.1 + ph) * amp;
+          x ? g.lineTo(x, yy) : g.moveTo(x, yy);
+        }
+        g.stroke();
+      }
+      g.restore();
+
+      /* 四边墨色压角：版画印出来边缘总是吃墨最重 */
+      const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.38, W / 2, H / 2, Math.max(W, H) * 0.76);
+      vg.addColorStop(0, 'rgba(20,17,16,0)');
+      vg.addColorStop(1, 'rgba(20,17,16,0.13)');
+      g.fillStyle = vg;
+      g.fillRect(0, 0, W, H);
+    },
+
+    overlay(g, W, H) {
+      /* 油墨颗粒：木刻是凸版，墨只落在刀没碰到的地方 */
+      const nz = noiseTile(180, 77, 0.055, '#4A3B28');
+      g.save();
+      g.globalAlpha = 0.6;
+      g.fillStyle = g.createPattern(nz, 'repeat');
+      g.fillRect(0, 0, W, H);
+      g.restore();
+    },
+
+    text(g, txt, x, y, size, o) {
+      o = o || {};
+      const kind = o.kind || 'body';
+      const fam = kind === 'mono' ? this.type.mono : (kind === 'display' ? this.type.display : this.type.body);
+      g.save();
+      g.font = `${kind === 'display' ? this.type.weight : 500} ${size}px ${fam}`;
+      g.textAlign = o.align || 'left';
+      g.textBaseline = o.baseline || 'alphabetic';
+      /* 套色错位：木刻分版印，第二版永远对不准。
+         不同于 riso（0.4% 字号的细错位），这里要**粗**，4~6px 的硬错位。 */
+      if (kind === 'display') {
+        g.fillStyle = rgba(this.theme.accent, 0.92);
+        g.fillText(txt, x + size * 0.022, y + size * 0.030);
+      }
+      g.fillStyle = o.color || (kind === 'sub' ? this.theme.sub : this.theme.ink);
+      g.fillText(txt, x, y);
+      g.restore();
+    },
+
+    card(g, box, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const rr = rng((Math.round(box.x) * 31 + Math.round(box.y) * 17) | 0);
+
+      g.save();
+      /* ① 硬投影：无 blur。版画压在纸上，影子是实的、有位移的。 */
+      g.fillStyle = 'rgba(20,17,16,0.16)';
+      g.fillRect(box.x + 7 * S, box.y + 9 * S, box.w, box.h);
+
+      /* ② 墨块 */
+      const solid = o.accent;
+      g.fillStyle = solid ? this.theme.accent : this.theme.ink;
+      g.fillRect(box.x, box.y, box.w, box.h);
+
+      /* ③ 白刻线：沿水平方向刻，线宽随长度变，起止有随机断点。
+            这是「木刻」唯一的明暗手段 —— 白线越多越亮。 */
+      const paper = this.theme.bg;
+      g.save();
+      g.beginPath(); g.rect(box.x, box.y, box.w, box.h); g.clip();
+      const gap = (solid ? 20 : 15) * S;      // 强调块刻得稀一点 → 更实、更重
+      let y = box.y + gap * 0.8;
+      while (y < box.y + box.h) {
+        /* 三成的刀索性没刻到 —— 均匀的横线是「百叶窗」，
+           疏密不均的才是「版」。这是木刻最容易被做丢的一点。 */
+        if (rr() > 0.70) { y += gap * (0.75 + rr() * 0.4); continue; }
+        const lw = (1.5 + rr() * 2.6) * S;
+        const x0 = box.x + box.w * rr() * 0.16;
+        const x1 = box.x + box.w * (0.80 + rr() * 0.20);
+        g.fillStyle = rgba(paper, 0.28 + rr() * 0.46);
+        /* 一刀不是一条直线：分成 2~4 段，段与段之间有错位 */
+        const segs = 2 + Math.floor(rr() * 3);
+        for (let s = 0; s < segs; s++) {
+          if (rr() > 0.86) continue;            // 段内还会断
+          const sx = x0 + (x1 - x0) * (s / segs) + rr() * 5 * S;
+          const ex = x0 + (x1 - x0) * ((s + 1) / segs) - rr() * 4 * S;
+          if (ex > sx) g.fillRect(sx, y + rr() * 2.0 * S, ex - sx, lw);
+        }
+        y += gap * (0.80 + rr() * 0.42);
+      }
+      g.restore();
+
+      /* ④ 白边：凸版的「反白轮廓」，1.5px 纸色 */
+      g.strokeStyle = rgba(paper, 0.9);
+      g.lineWidth = Math.max(1, 1.6 * S);
+      g.strokeRect(box.x, box.y, box.w, box.h);
+      g.restore();
+
+      const pad = Math.min(40 * S, box.h * 0.19);
+      return {
+        x: box.x + pad, y: box.y + pad, w: box.w - pad * 2, h: box.h - pad * 2,
+        ink: solid ? this.theme.onAccent : this.theme.ink,
+      };
+    },
+
+    bar(g, box, p, o) {
+      o = o || {};
+      const S = o.S || 1;
+      const w = Math.max(3 * S, box.w * clamp(p));
+      const rr = rng((Math.round(box.x) * 13 + Math.round(box.y) * 29) | 0);
+      const col = (typeof o.color === 'string' && o.color) || this.theme.accent;
+
+      // 轨道：一条浅浅的刻线，表示满值的边界
+      g.fillStyle = 'rgba(20,17,16,0.10)';
+      g.fillRect(box.x, box.y, box.w, box.h);
+
+      g.save();
+      g.beginPath(); g.rect(box.x, box.y, w, box.h); g.clip();
+      g.fillStyle = col;
+      g.fillRect(box.x, box.y, w, box.h);
+      // 刻线：间距固定，只负责材质，不编码数值（长度已经编码了）
+      const gap = Math.max(5, 10 * S);
+      for (let y = box.y + gap * 0.8; y < box.y + box.h; y += gap * (0.8 + rr() * 0.5)) {
+        if (rr() > 0.78) continue;
+        g.fillStyle = rgba(this.theme.bg, 0.20 + rr() * 0.16);
+        const sx = box.x + rr() * 3 * S;
+        g.fillRect(sx, y, Math.max(2, w - rr() * 8 * S), Math.max(1, 1.4 * S));
+      }
+      g.restore();
+    },
+
+    boil(t, i, amp) { return Math.sin(i * 6.7 + Math.floor(t * 5) * 2.3) * amp * 0.32; },
+  };
+
   /* ── 注册表与对外 API ───────────────────────────────────────────── */
 
   /* 别名：让用户能说「手绘」「蓝图」「印刷」「国风」也能命中 */
@@ -1971,6 +2372,34 @@
     铅笔: 'pencil', 素描: 'pencil', 线描: 'pencil', sketch: 'pencil', graphite: 'pencil', draft: 'pencil',
     半调: 'vox', 解说: 'vox', 解释: 'vox', 资讯: 'vox', explainer: 'vox', editorial: 'vox', news: 'vox',
     黏土: 'clay', 粘土: 'clay', 立体: 'clay', '3d': 'clay', claymorphism: 'clay', soft3d: 'clay',
+    玻璃: 'glass', 磨砂: 'glass', 毛玻璃: 'glass', glassmorphism: 'glass', frosted: 'glass',
+    ios: 'glass', visionos: 'glass', 产品: 'glass', 发布会: 'glass', keynote: 'glass',
+    木刻: 'woodcut', 版画: 'woodcut', 木版: 'woodcut', woodblock: 'woodcut', engraving: 'woodcut',
+    刻版: 'woodcut', 凸版: 'woodcut', woodcutprint: 'woodcut',
+    /* 知名作品/厂牌名 —— 用户常说「要 Vox 那种」「要吉卜力那种」。
+       这些名字在 58 份配方里有官方映射（styles/aliases.json），
+       我们只收能真正落到某个代码风格上的那几个。 */
+    vox: 'vox', voxmedia: 'vox', 吉卜力: 'watercolor', ghibli: 'watercolor',
+    wesanderson: 'swiss', 韦斯安德森: 'swiss',
+  };
+
+  /* 家族归类：用户选风格时先想「要哪一类」，比背 14 个名字实际。
+     分类法借自 lemo 配方的 category 字段，收敛成本项目能用的 5 类。 */
+  const FAMILY = {
+    riso: { cat: '印刷', base: 'print' },
+    woodcut: { cat: '印刷', base: 'print' },
+    cutpaper: { cat: '手作', base: 'craft' },
+    clay: { cat: '手作', base: 'craft' },
+    chalk: { cat: '手作', base: 'craft' },
+    pencil: { cat: '手作', base: 'craft' },
+    watercolor: { cat: '绘画', base: 'paint' },
+    ink: { cat: '绘画', base: 'paint' },
+    blueprint: { cat: '信息图', base: 'info' },
+    isometric: { cat: '信息图', base: 'info' },
+    swiss: { cat: '信息图', base: 'info' },
+    vox: { cat: '信息图', base: 'info' },
+    glass: { cat: '数字界面', base: 'ui' },
+    synthwave: { cat: '数字界面', base: 'ui' },
   };
 
   function norm(id) {
@@ -1997,11 +2426,16 @@
     return st;
   }
 
-  function list() {
-    return Object.keys(STYLES).map((k) => ({
+  function list(opt) {
+    const out = Object.keys(STYLES).map((k) => ({
       id: k, cn: STYLES[k].cn, en: STYLES[k].en,
       dark: STYLES[k].dark, tags: STYLES[k].tags.slice(),
+      cat: (FAMILY[k] || {}).cat || '其它',
+      base: (FAMILY[k] || {}).base || 'other',
     }));
+    /* opt.cat 既能写中文类名（「印刷」），也能写 base 短名（print） */
+    if (opt && opt.cat) return out.filter((s) => s.cat === opt.cat || s.base === opt.cat);
+    return out;
   }
 
   /* 名字拼错时不能静默回退 —— 用户会以为「换了风格没反应」。
@@ -2155,7 +2589,7 @@
   }
 
   const SV = {
-    STYLES, get, list, require, norm, DEFAULT, ALIAS,
+    STYLES, get, list, require, norm, DEFAULT, ALIAS, FAMILY,
     bg, overlay, text, card, bar, boil, enter, easeOf, ease, bgCached, clearBgCache,
     BEAT, pulse, beatPhase,
     /* 给模板用的便捷换算 */

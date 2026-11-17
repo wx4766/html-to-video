@@ -454,10 +454,10 @@ node scripts/render-video-seek.js subtitle-card.html --duration=8 --srt=voice.sr
 
 > 底部 15% 是各平台进度条 / 按钮区，字幕踩进去等于白写；`qa.js` 会提示「进字幕带」。
 
-## 12 种风格：同样的内容，换个样子
+## 14 种风格：同样的内容，换个样子
 
 模板解决「这段内容怎么排」，风格解决「这支片长什么样」。两者分开之后，
-14 个版式 × 12 种视觉语言 = 168 种观感，而不用写 168 个模板。
+14 个版式 × 14 种视觉语言 = 196 种观感，而不用写 196 个模板。
 
 ```bash
 bash assets/render.sh assets/style-film.html --duration=13 --theme=chalk     # 黑板粉笔
@@ -478,8 +478,14 @@ bash assets/render.sh assets/style-film.html --duration=13 --theme=水墨 --widt
 | `pencil` 铅笔素描 | 素描纸 + 45° 排线 + 双线手绘边框 + 石墨灰阶（几乎不用彩色） | 教程、拆解、草稿感 |
 | `vox` 半调解说 | 奶油底 + 大块饱和色 + 大号无衬线 + 半调网点 + 硬投影 | 知识解释、新闻拆解 |
 | `clay` 黏土立体 | 淡紫灰底 + 圆角厚块 + 上亮下暗渐变 + 内高光 + 落地投影 | 产品发布、SaaS、年轻品牌 |
+| `woodcut` 木刻版画 | 米黄纸 + 木纹 + 实墨块 + 断续白刻线（明暗＝线密度）+ 朱红套色错位 | 观点、文化、有力量的海报片 |
+| `glass` 玻璃拟态 | 深色渐变 + 漂移光斑 + 磨砂玻璃面板（1px 亮边 / 内高光 / 透光 / 圆角发光条） | 科技发布、SaaS、硬件参数 |
 
-`--theme` 也吃中文名（`--theme=水墨` / `--theme=水彩`）。**14 个模板已经全部接上** ——
+14 种分五个家族，选的时候先定类：**印刷**（riso / woodcut）、**手作**（cutpaper / chalk /
+pencil / clay）、**绘画**（ink / watercolor）、**信息图**（blueprint / isometric / swiss / vox）、
+**数字界面**（synthwave / glass）。`npx html-to-video styles --cat=印刷` 只列一类。
+
+`--theme` 也吃中文名（`--theme=水墨` / `--theme=玻璃`）。**14 个模板已经全部接上** ——
 换的不只是配色，背景整层会换成该风格的纸纹 / 网点 / 格网 / 透视地面：
 
 ```bash
@@ -493,9 +499,9 @@ bash assets/render.sh assets/templates/explainer.html --theme=riso --duration=18
 **先看效果，再决定**：
 
 ```bash
-# 十二宫格：第 k 秒一个风格，出 12 张全屏静帧
+# 十四宫格：第 k 秒一个风格，出 14 张全屏静帧
 node scripts/render-video-seek.js assets/style-gallery.html \
-  --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5
+  --stills=0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5,10.5,11.5,12.5,13.5
 
 # 一支 13 秒的风格短片：片头 / 要点 / 数据 / 片尾
 bash assets/render.sh assets/style-film.html --duration=13 --fps=60
@@ -675,7 +681,7 @@ node scripts/render-video-seek.js animation.html --fps=60 --duration=30 --resume
 ```bash
 npx html-to-video doctor                     # 环境自检：缺什么、怎么修（只读不改）
 npx html-to-video templates                  # 列出 14 个模板
-npx html-to-video styles                     # 列出 12 种风格
+npx html-to-video styles                     # 列出 14 种风格
 npx html-to-video new my-video --template=quote-card
 npx html-to-video preview my-video.html --duration=6 --open
 npx html-to-video render my-video.html --duration=6 --fps=60
