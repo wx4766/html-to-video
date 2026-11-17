@@ -7,12 +7,15 @@ node_modules/
 *.storyboard/
 qa/
 out/
+review/
 *.mp4
 *.mov
 palette.png
 
 # 例外：docs/ 里的示例成片要进仓库（README 内联动图 + 1080p 原片）
 !docs/demo-*.mp4
+# 出片用的 BGM 素材（体积大，发布时单独传）
+docs/promo/*.wav
 
 # 发布用凭证与本地配置，绝不入库
 _gh_token.txt

@@ -11,6 +11,7 @@
 <body>
 <canvas id="stage"></canvas>
 <script src="./themes.js"></script>
+<script src="../lib/camera.js"></script>
 <script>
 /* =====================================================================
    模板 ⑬  ·  引言卡 / 金句卡
@@ -42,6 +43,7 @@ const CFG = {
   author: '费孝通',
   role:   '社会学家',
   source: '',          // 出处 / 书名（可留空）
+  camera: 'dolly in, 7s, slow ease-in-out',   // 镜头；null = 完全静止
   dur:    7.0,
 };
 /* ===================================================================== */
@@ -109,8 +111,25 @@ function layout() {
 
 function drawFrame(t) {
   const T = clamp(t, 0, DUR - 0.001);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
   g.clearRect(0, 0, W, H);
 
+  /* 镜头：一行自然语言，分镜里怎么想就怎么写。CFG.camera = null 关掉。 */
+  const line = window.__h2vCamera !== undefined ? window.__h2vCamera : CFG.camera;
+  /* 透明底不套镜头：缩放会把透明区一起放大，边缘漏出黑边 */
+  const cam = (!TRANSPARENT && line && typeof CAM !== 'undefined') ? CAM.move(line, T, DUR) : null;
+  if (!cam) { drawScene(T); return; }
+
+  /* 镜头放大后原始边缘跑到画布外 —— 先铺一层底色兜住，再套镜头 */
+  g.fillStyle = TH.bg;
+  g.fillRect(0, 0, W, H);
+  CAM.begin(g, cam, W, H);
+  drawScene(T);
+  CAM.end(g);
+}
+
+function drawScene(T) {
   if (!TRANSPARENT) {
     if (ST && SV.bgCached) SV.bgCached(g, ST, W, H, T, {}, 1);
     else {

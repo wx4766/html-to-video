@@ -94,3 +94,128 @@ test('push/pop 成对：内容画到一半抛错，也必须 restore', () => {
     '内容抛错时也必须 restore，否则变换会一直叠加到后面的帧'
   );
 });
+
+/* =====================================================================
+   第二层：镜头语言（v1.8）
+   这一层的坑和第一层不同：不是 NaN，是「露边」和「不确定」。
+   露边 = 放大不足却平移，画到画布外，成片边缘一条底色；
+   不确定 = 用了 Math.random，逐帧渲染时每帧抖成雪花。
+   ===================================================================== */
+
+test('camera line：英文/中文/速度词/缓动都能解析', () => {
+  const cases = [
+    ['dolly in, 3s, slow ease-in-out', 'dollyIn', 'inOut', 0.6, 3],
+    ['dolly in, 3s', 'dollyIn', 'inertia', 1, 3],
+    ['pan, 5s, medium, left', 'pan', 'inertia', 1, 5],
+    ['handheld, 1', 'handheld', 'linear', 1, null],
+    ['whip, 0.3s', 'whip', 'inOut', 1, 0.3],
+    ['推镜, 3s, 慢', 'dollyIn', 'inertia', 0.6, 3],
+    ['环绕', 'orbit', 'inertia', 1, null],
+    ['固定', 'static', 'linear', 1, null],
+  ];
+  for (const [line, id, ease, amount, dur] of cases) {
+    const p = CAM.parseLine(line);
+    assert.ok(p, `解析失败：${line}`);
+    assert.equal(p.id, id, line);
+    assert.equal(p.ease, ease, line);
+    assert.equal(p.amount, amount, line);
+    assert.equal(p.dur, dur, line);
+  }
+});
+
+test('camera line：认不出的词不算错，整条都认不出才返回 null', () => {
+  assert.equal(CAM.parseLine('dolly in, 3s, toward the figure').id, 'dollyIn');
+  assert.equal(CAM.parseLine('随便写点什么'), null);
+  assert.equal(CAM.parseLine(''), null);
+  assert.equal(CAM.parseLine(null), null);
+});
+
+test('缓动：端点固定且单调不减', () => {
+  for (const [name, fn] of Object.entries(CAM.EASE)) {
+    assert.equal(fn(0), 0, name);
+    assert.ok(Math.abs(fn(1) - 1) < 1e-9, name);
+    let prev = -1;
+    for (let i = 0; i <= 20; i++) {
+      const v = fn(i / 20);
+      assert.ok(v >= prev - 1e-9, `${name} 在 ${i / 20} 处回退`);
+      prev = v;
+    }
+  }
+});
+
+test('inertia 两端都还有速度（切点不会"停住"）', () => {
+  const e = CAM.EASE.inertia;
+  assert.ok(e(0.02) / 0.02 > 0.3, '起点太慢');
+  assert.ok((1 - e(0.98)) / 0.02 > 0.3, '终点太慢');
+});
+
+test('防露边：所有运动任意时刻 scale ≥ 1，位移不超过放大余量', () => {
+  const lines = CAM.list().map((m) => m.id);
+  let checked = 0;
+  for (const id of lines) {
+    for (let i = 0; i <= 40; i++) {
+      const t = (i / 40) * 8;
+      const c = CAM.move(id, t, 4);
+      if (!c) continue;
+      checked++;
+      assert.ok(c.scale >= 1 - 1e-9, `${id}@${t}s scale=${c.scale} < 1（会露边）`);
+      const maxT = (c.scale - 1) / 2 + 1e-9;
+      assert.ok(Math.abs(c.tx) <= maxT, `${id}@${t}s tx=${c.tx} > ${maxT}`);
+      assert.ok(Math.abs(c.ty) <= maxT, `${id}@${t}s ty=${c.ty} > ${maxT}`);
+      assert.ok(c.blur >= 0 && c.blur <= 10.01, `${id}@${t}s blur=${c.blur}`);
+      assert.ok(Number.isFinite(c.rot), `${id}@${t}s rot 非有限值`);
+    }
+  }
+  assert.ok(checked > 200, `只检查了 ${checked} 个时刻`);
+});
+
+test('确定性：同一时刻渲两次完全一致（手持也一样）', () => {
+  for (const line of ['handheld, 1', 'orbit, 6s', 'whip, 0.3s', 'dolly in, 3s']) {
+    for (const t of [0, 0.37, 1.9, 4.4]) {
+      assert.deepEqual(CAM.move(line, t, 5), CAM.move(line, t, 5), `${line}@${t}`);
+    }
+  }
+});
+
+test('手持是低频漂移：相邻帧位移 < 0.0008 画幅（不会看着像地震）', () => {
+  let maxJump = 0;
+  for (let i = 1; i <= 120; i++) {
+    const a = CAM.move('handheld, 1', i / 30, 5);
+    const b = CAM.move('handheld, 1', (i - 1) / 30, 5);
+    maxJump = Math.max(maxJump, Math.abs(a.tx - b.tx), Math.abs(a.ty - b.ty));
+  }
+  assert.ok(maxJump < 0.0008, `相邻帧位移 ${maxJump} 太大`);
+});
+
+test('retime：定格 / 半速 / 不变 / 变速斜坡', () => {
+  assert.equal(CAM.retime(3, [[2, 1], [2, 0]]), 2);
+  assert.ok(Math.abs(CAM.retime(2, [[0, 0.5]]) - 1) < 1e-9);
+  assert.ok(Math.abs(CAM.retime(3.5, [[0, 1]]) - 3.5) < 1e-9);
+  const ramp = CAM.retime(1.4, [[0, 1], [1.4, 0.25]]);
+  assert.ok(ramp > 0.7 && ramp < 1.4, `ramp=${ramp}`);
+});
+
+test('begin/end 成对，且 begin 会 save', () => {
+  const calls = [];
+  const g = { save: () => calls.push('save'), restore: () => calls.push('restore'),
+    translate: () => {}, rotate: () => {}, scale: () => {}, filter: '' };
+  const c = CAM.move('dolly in, 2s', 1, 4);
+  CAM.begin(g, c, 1920, 1080);
+  CAM.end(g);
+  assert.deepEqual(calls, ['save', 'restore']);
+});
+
+test('begin(null) 什么都不做（没镜头时不能凭空多一对 save/restore）', () => {
+  const calls = [];
+  const g = { save: () => calls.push('save'), restore: () => calls.push('restore'),
+    translate: () => {}, rotate: () => {}, scale: () => {}, filter: '' };
+  CAM.begin(g, null, 1920, 1080);
+  CAM.end(g);
+  assert.deepEqual(calls, ['restore']); // end 无论如何 restore 一次，begin 没 save
+});
+
+test('词汇表：12 种运动，每个都有中文名与"观众感受"', () => {
+  const list = CAM.list();
+  assert.equal(list.length, 12);
+  for (const m of list) assert.ok(m.cn && m.en && m.feel, `${m.id} 缺字段`);
+});

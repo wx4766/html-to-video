@@ -170,15 +170,126 @@ log-energy flux → autocorrelation for tempo → phase scan. Measured on a 120 
 BPM within 2, phase within ~9 ms. Speech-only audio reports low confidence instead of
 inventing a grid.
 
+## Camera language: one sentence per shot
+
+Beats decide *when* to cut. Camera decides *how the frame moves while it holds*.
+A shot list says "dolly in, 6s, ease-in-out" — not `from:[0,0,1] → to:[0.02,0,1.06]`.
+Now you can feed that sentence straight in:
+
+```bash
+bash assets/render.sh style-film.html --camera='dolly in, 6s, slow ease-in-out'
+bash assets/render.sh style-film.html --camera=auto      # pick per shot type
+bash assets/render.sh style-film.html --camera=off       # A/B comparison
+```
+
+```js
+// in a template — two lines
+const cam = CAM.move(CFG.camera, t, DUR);
+CAM.begin(g, cam, W, H); drawScene(t); CAM.end(g);
+```
+
+**12 moves**, each answering one question: *what should the viewer feel?*
+
+| Move | Feel | Move | Feel |
+|---|---|---|---|
+| `dolly in` | closeness, tension, "this matters" | `handheld` | presence, urgency, documentary |
+| `dolly out` | isolation, release, context | `dolly zoom` | realisation, unease (once per film) |
+| `pan` | scanning, following, linking two things | `rack focus` | attention moving from A to B |
+| `tilt` | look up = awe, look down = discovery | `whip pan` | energy, jump cut, comedy |
+| `orbit` | scrutiny, emphasis, hero shot | `push to` | "look here": a clue, a face |
+| `crane` | hope, scale, reveal from above | `static` | let the subject or light move |
+
+Three things you never have to compute:
+
+- **No black edges, ever.** Every move keeps `scale ≥ 1` and clamps translation to
+  `(scale-1)/2` — push in 8% and you can pan at most 4%. Verified at 200+ timestamps in tests.
+- **No frame-to-frame drift.** Handheld uses summed sines with a fixed seed, never
+  `Math.random()`; `move()` is a pure function of `t`, so parallel workers agree exactly.
+- **Resolution independent.** `tx/ty` are ratios (`0.02` = 2% of frame width), not pixels.
+
+`npx html-to-video camera` lists all 12 moves with syntax. `--camera=auto` reads the
+`AUTO_CAM` table in `assets/style-film.html` (hook→push, points→pan, metric→push-in,
+timeline→crane, outro→pull back).
+
+## Four gates before you ship
+
+Each gate catches a different class of defect. Running only one is how you ship a film
+that looks fine and nobody watches.
+
+| Gate | Command | Catches | Symptom if skipped |
+|---|---|---|---|
+| Script | `h2v check story.json` | lines too long, no turn, clichés | viewers stop reading |
+| Page | `assets/qa.sh page.html` | hidden randomness, clipped/overlapping text, font fallback | broken frames |
+| Film | `h2v qc out.mp4` | no motion in first 2s, black frames, freezes, silent track | bad retention |
+| Audio | `h2v master in.mp4` | loudness 6–8 LU below everyone else | sounds quiet on phones |
+
+### `h2v qc` — inspect the encoded file, not the page
+
+```bash
+node scripts/qc.js out/film.mp4
+```
+
+```
+  info   1920×1080 · 30fps · 20.5s · h264 · aac 48k
+  hook   0.482  ✓  black  none ✓  freeze  none ✓  dup  0 ✓
+  cuts   6 (1.0 / 4.0 / 7.0 / 10.5 / 14.0 / 17.5)
+  loud   −17.8 LUFS · true peak −3.2 dBTP  ⚠ quiet, run h2v master
+  sheet  →  qc/film.sheet.png
+```
+
+- **`hook` is a hard rule**: mean grey-level difference between adjacent frames over the
+  first 2 seconds must be ≥ 0.35, measured with `tblend=difference` + `signalstats`.
+  Fail → exit code 1. Because "does it move" is not a matter of opinion.
+- Measured baselines for that threshold: flat colour 0.00 · minimal title card 0.36–0.42 ·
+  same card plus grain 0.71 · real motion 0.85–1.2. Use `--hook-min=0.5` for live action.
+- Uses ffmpeg only, never ffprobe (many minimal environments lack it); metadata comes from
+  parsing `ffmpeg -i` stderr. No audio track → explicit `noAudio` branch, not a false alarm.
+
+### `h2v master` — EBU R128 loudness
+
+```bash
+node scripts/audio-master.js in.mp4 --video=in.mp4 --out=final.mp4
+# ▸ −17.77 LUFS → −13.90 LUFS (type=linear) · true peak −1.8 dBTP
+```
+
+Two-pass `loudnorm`: pass 1 measures, pass 2 applies fixed gain with `linear=true`.
+Single-pass is dynamic mode — it rides the level and pumps. Three traps already handled:
+
+- **`loudnorm` silently falls back to dynamic mode when LRA exceeds the target.**
+  The report carries `type`; anything other than `linear` gets a warning.
+- **Re-measure after limiting** — otherwise pass 2 uses pre-limiter peaks and computes
+  the wrong gain.
+- **AAC adds 0.5–0.7 dB of true peak**, so with video the target is −2 dBTP.
+
+### `h2v check` — script self-check
+
+```bash
+node scripts/script-check.js story.json
+```
+
+```
+  6 shots / 20.5s / 193 chars / 9.4 chars per second
+✗ fix:
+   · shot 1 (hook) sub has 17 chars > 14: "渲染器自己量拍子，镜头时长量化到整拍"
+```
+
+Checks what a machine can: per-line caps (14 CJK chars landscape, 12 portrait), ≤4 items per
+shot, reading speed ≤12 chars/s, cliché list, presence of a turn. The parts a machine cannot
+check (read it aloud; cut 30%) live in `references/writing.md`.
+
 ## One command for everything
 
 ```bash
 npx html-to-video doctor                 # environment check: what's missing, how to fix
 npx html-to-video templates              # list 14 templates
 npx html-to-video styles                 # list 12 styles
+npx html-to-video camera                 # list 12 camera moves
 npx html-to-video new my-video --template=quote-card
 npx html-to-video preview my-video.html --duration=6 --open
 npx html-to-video render my-video.html --duration=6 --fps=60
+npx html-to-video check story.json       # script self-check
+npx html-to-video qc out/film.mp4        # film QC
+npx html-to-video master in.mp4 --video=in.mp4 --out=final.mp4   # −14 LUFS master
 ```
 
 `preview` serves the page (so ESM/fetch work), freezes its clock via `__seekRender`,
@@ -202,7 +313,7 @@ and it reads `window.__sceneTable` (exposed by `SC.expose`) so it knows the real
 
 ## Project status
 
-`v1.5.0` — used daily, 109 automated tests, MIT. Not a startup, not a framework, no
+`v1.8.0` — used daily, 158 automated tests, MIT. Not a startup, not a framework, no
 roadmap theatre. It does one thing and reports its own defects:
 
 - **Deterministic** — same input → byte-identical output, verified by re-rendering

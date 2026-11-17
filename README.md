@@ -31,10 +31,11 @@
 | **可控到帧** | 任意帧率（真 60fps，不是插帧），任意时刻精确对齐 |
 | **文字完美** | 中文字体渲染正常，不会像文生视频那样糊成一团或错别字 |
 | **零费用** | 本地跑，不调任何 API |
-| **有质量门** | 内置自动化验收：确定性、卡顿、跳变、半截字、叠字、字幕带、字体回退 |
-| **开箱即用** | 11 个模板改个配置块就出片，不用从零学 canvas |
+| **四道质量门** | 文案 `check` / 页面 `qa` / 成片 `qc` / 声音 `master` —— 四类问题分别量化，不靠眼睛 |
+| **一句话一条镜头** | 12 个命名运动 + 5 种缓动，`dolly in, 6s, slow` 直接喂进去，自带防露边 |
+| **开箱即用** | 14 个模板改个配置块就出片，不用从零学 canvas |
 | **横竖屏都行** | 模板跟视口自适应，16:9 / 9:16 换 `--width/--height` 即可，不裁切 |
-| **能出「一支片子」** | 多镜头 + 8 种转场 + 持续运镜，一个 HTML 出整支，不用渲几段再拼 |
+| **能出「一支片子」** | 多镜头 + 8 种转场 + 镜头运动，一个 HTML 出整支，不用渲几段再拼 |
 | **自带素材** | 40+ 图标 / 参数化人物 / 卡片箭头 / 背景纹理，纯代码零依赖零版权风险 |
 | **能叠能配** | `--alpha` 出透明层叠到实拍上；`--srt` 挂外部字幕时间轴 |
 | **渲一次发一堆** | `--gif` / `--poster` / `--batch` 一次渲染出成片、动图、封面、批量任务 |
@@ -69,7 +70,7 @@
 |---|---|
 | **镜头表是 JSON** | 让模型产出 `[{kind,dur,title}, ...]` 比让它写 500 行 canvas 代码可靠得多 —— 改片子就是改 JSON |
 | **同输入同输出** | 改一句文案重渲，其它帧**逐像素不变**，可以做自动回归，不用担心「顺手改坏了别处」 |
-| **有质量门** | `qa.js` 把「黑屏 / 半截字 / 画面卡住 / 混入随机数」变成数字，脚本能自己判断渲坏了没有，不用人盯着看 |
+| **四道质量门** | `check` 管文案、`qa` 管页面、`qc` 管成片、`master` 管声音，全部输出数字与 JSON，脚本能自己判断渲坏了没有 |
 
 于是闭环是：LLM 写 JSON/HTML → 渲 → QA 自己判红绿 → 红了就照着报告改 → 再渲。
 人只在最后看一眼成片。
@@ -197,6 +198,111 @@ bash assets/render.sh style-film.html --audio=bgm.mp3 --beats --snap=beats
 ```bash
 node scripts/beats.js bgm.mp3 --out=beats.json     # 单独跑，看 BPM 与置信度
 ```
+
+### 镜头：一行字一条镜头
+
+切点解决了"什么时候换"，镜头解决"换的时候画面怎么动"。
+分镜表里写的是「推镜，6 秒，缓入缓出」，不是 `from:[0,0,1] → to:[0.02,0,1.06]` ——
+现在可以直接把那句话喂给渲染器：
+
+```bash
+bash assets/render.sh style-film.html --camera='dolly in, 6s, slow ease-in-out'
+bash assets/render.sh style-film.html --camera=auto      # 按镜头类型自动配
+bash assets/render.sh style-film.html --camera=off       # 关掉，做 A/B 对比
+```
+
+```js
+// 模板里就两行
+const cam = CAM.move(CFG.camera, t, DUR);            // ← 解析这句话
+CAM.begin(g, cam, W, H); drawScene(t); CAM.end(g);
+```
+
+**12 个运动**，每个对应一种"观众该感觉到什么"：
+
+| 运动 | 感觉 | 运动 | 感觉 |
+|---|---|---|---|
+| `dolly in` 推镜 | 亲近、紧张、"这件事重要" | `handheld` 手持 | 在场、紧迫、纪实 |
+| `dolly out` 拉镜 | 孤立、释放、交代环境 | `dolly zoom` 变焦推拉 | 醒悟、不安（一片只用一次） |
+| `pan` 横摇 | 扫视、跟随、把两件事连起来 | `rack focus` 拉焦 | 注意力从一处移到另一处 |
+| `tilt` 纵摇 | 仰视=敬畏，俯视=发现与重量 | `whip pan` 甩镜 | 能量、跳切、喜剧 |
+| `orbit` 环绕 | 审视、强调、英雄感 | `push to` 推近细节 | "看这里"：线索、一个表情 |
+| `crane` 升降 | 希望、尺度、从上方揭示 | `static` 固定 | 让主体或光自己动 |
+
+三个不用操心的细节：
+
+- **不会露黑边**。所有运动都保证 `scale ≥ 1`，位移按放大余量裁到 `(scale-1)/2` ——
+  想推 8% 就最多横移 4%，写超了会被夹住。200+ 个时刻在测试里逐个验证过。
+- **不会抖得不一样**。手持用正弦叠加 + 固定种子，不是 `Math.random()`；
+  `move()` 是 `t` 的纯函数，并行渲染的帧完全一致。
+- **换分辨率不用改数值**。`tx/ty` 是比例（`0.02` = 画宽 2%），不是像素。
+
+`npx html-to-video camera` 一次列全 12 个运动和写法；`--camera=auto` 的导演逻辑在
+`assets/style-film.html` 的 `AUTO_CAM` 表里，可以按片子改。
+
+### 成片质检：`h2v qc`
+
+`qa.sh` 查页面，`qc` 查**已经编好的 mp4** —— 编码参数、音轨、真实播放时的冻结与黑场，
+只有解码之后才看得见：
+
+```bash
+node scripts/qc.js out/film.mp4
+```
+
+```
+qc · film.mp4
+  info   1920×1080 · 30fps · 20.5s · h264 · aac 48k
+  hook   0.482  ✓（前 2 秒在动）
+  black  none   ✓  freeze  none ✓  dup  0 ✓
+  bright 34–212 ✓
+  cuts   6（1.0 / 4.0 / 7.0 / 10.5 / 14.0 / 17.5）
+  loud   −17.8 LUFS · 真峰值 −3.2 dBTP  ⚠ 偏轻，跑 h2v master
+  sheet  →  qc/film.sheet.png
+```
+
+| 检查 | 判据 |
+|---|---|
+| `hook` | 前 2 秒相邻帧平均灰度差 ≥ 0.35（**硬规则，不过就 exit 1**） |
+| `black` / `freeze` | `blackdetect` 无 ≥0.3s 黑段 / `freezedetect` 无 ≥1s 定格 |
+| `dup` | 相邻帧完全相同的对数（抓"整段复制"） |
+| `bright` | 平均亮度在 16–240（全黑全白通常是主题配错） |
+| `cuts` | 场景切换点数量与位置（对不上镜头表 = `--story` 没生效） |
+| `sheet` | 抽 9 帧拼一张联系表，一眼扫完整片 |
+
+hook 门槛有实测基线，不是拍脑袋：纯色静止 0.00 / 极简标题卡 0.36–0.42 /
+加胶片颗粒 0.71 / 正常运动片 0.85–1.2。实拍或强运动片用 `--hook-min=0.5`。
+
+### 响度母版：`h2v master`
+
+手机外放听着小、笔记本上听着大 —— 不是错觉，是没做响度归一，平台间能差 6–8 LU。
+目标是 **−14 LUFS / −2 dBTP**：
+
+```bash
+node scripts/audio-master.js in.mp4 --video=in.mp4 --out=final.mp4
+# ▸ −17.77 LUFS → −13.90 LUFS（type=linear）· 真峰值 −1.8 dBTP
+```
+
+两遍 `loudnorm`：pass 1 只测量，pass 2 用测得值 `linear=true` 做固定增益。
+一遍式是动态模式（边跑边压），会改变动态、抽气。三个坑已经在代码里填了：
+
+- **LRA 超目标时 `loudnorm` 会静默切回动态模式** —— 报告里 `type` 不是 `linear` 就明确告警。
+- **限幅后必须重新测量**，否则 pass 2 用限幅前的峰值算错增益。
+- **AAC 编码会把真峰值抬 0.5–0.7 dB**，所以带视频时目标压到 −2 dBTP。
+
+### 文案自检：`h2v check`
+
+```bash
+node scripts/script-check.js story.json
+```
+
+```
+  6 镜 / 20.5s / 193 字 / 9.4 字每秒
+✗ 要改的：
+   · 第 1 镜（hook）的 sub 有 17 个汉字 > 14：「渲染器自己量拍子，镜头时长量化到整拍」
+```
+
+查机器能查的：单行上限（横屏 14 字 / 竖屏 12 字）、每镜条目数（≤4）、
+阅读速度（≤12 字/秒）、陈词滥调命中、有没有转折镜头。
+机器查不了的（读出声打结、该砍的 30%）写在 `references/writing.md` 里 —— 那是规则，不是灵感。
 
 ### 给 Agent 用：`--json`
 
@@ -478,6 +584,9 @@ bash assets/render.sh my-animation.html --duration=12 --fps=60 --width=1920 --he
 
 # 5. 交付前验收（确定性问题、卡顿、半截字、叠字、字幕带、字体回退，一次全查）
 bash assets/qa.sh my-animation.html --duration=12 --fps=30
+
+# 6. 成片再过一道（前 2 秒有没有动、黑场、冻结、响度）
+node scripts/qc.js my-animation.mp4
 ```
 
 12 秒 60fps = 720 帧，实测约 6~7 分钟（concurrency=4）。
@@ -511,6 +620,7 @@ bash assets/qa.sh my-animation.html --duration=12 --fps=30
 | `--poster=<秒>` | 出片后顺手抽一张封面静帧 `.jpg` |
 | `--batch=<file.json>` | 一串任务按顺序渲，最后打汇总表；单个失败不连坐已渲好的 |
 | `--theme=<名>` | 换主题（`midnight` / `paper` / `neon`），覆盖模板里的 `CFG.theme`；打错名字会告警并回退 |
+| `--camera=<行>` | 镜头：`'dolly in, 6s, slow'` / `auto`（按镜头类型） / `off`（关掉），覆盖 `CFG.camera` |
 | `--out=<文件>` | 指定成片路径（默认同目录同名）；一份 HTML 出多套配色时用它，上级目录自动创建 |
 | `--json` | stdout 只输出一行结果 JSON（`output` / `duration` / `frames` / `warnings`），日志走 stderr |
 | `--headed` | 开着浏览器窗口渲（调试用；并发自动降到 1） |

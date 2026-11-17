@@ -13,6 +13,7 @@
 
 <script src="./lib/styles.js"></script>
 <script src="./lib/scenes.js"></script>
+<script src="./lib/camera.js"></script>
 <script>
 /* =========================================================================
    风格短片 · 一条命令出「有风格的」成片
@@ -83,7 +84,35 @@ const CFG = {
       small: 'github.com/wx4766/html-to-video',
     },
   ],
+
+  /* 镜头：'auto' = 按镜头 id 各配一个（见 AUTO_CAM），连续镜头之间运动不重复；
+     字符串 = 所有镜头都用这一条；null = 全片不动。每个镜头还能用 shot.camera 单独覆盖。
+     一行写法：'dolly in, 3s, slow ease-in-out' / 'pan, 4s, medium' / '手持'。 */
+  camera: 'auto',
 };
+
+/* 自动配镜：钩子用推（把人拉进来）、要点用横摇（扫过三条）、数据用推近（锁定那个数）、
+   对比用纵摇（上下看两边）、时间线用升降（从上方俯视全局）、片尾用拉（退出、交还）。
+   这是"导演逻辑"而不是随机：每个运动对应一种"观众该感觉到什么"。 */
+const AUTO_CAM = {
+  hook: 'dolly in',
+  points: 'pan',
+  metric: 'push to',
+  quote: 'dolly in',
+  steps: 'tilt',
+  compare: 'tilt',
+  timeline: 'crane',
+  outro: 'dolly out',
+};
+
+function cameraFor(shot) {
+  if (shot.camera === null) return null;                     // 这个镜头明确不要镜头
+  if (typeof shot.camera === 'string') return shot.camera;    // 逐镜指定
+  const g = window.__h2vCamera !== undefined ? window.__h2vCamera : CFG.camera;
+  if (g === null || g === undefined) return null;
+  if (g === 'auto') return AUTO_CAM[shot.id] || 'dolly in';
+  return g;
+}
 
 /* ── 尺寸与版式骨架 ─────────────────────────────────────────────── */
 let W = 0, H = 0, SX = 1, SY = 1, SF = 1, M = 0;
@@ -615,23 +644,42 @@ const DRAW = {
 };
 
 let TL = null;
+/* 转场时长：dip（经底色过渡），不用 fade（交叉溶解）—— fade 会让上下两镜的标题
+   在同一位置叠成一团，那几帧看着像「画面坏了」而不是「镜头换了」。
+   scenes.js 里写了这条规矩，这里是它的实际用例。 */
+const TRANS = 0.45;
+
 function buildTimeline() {
-  TL = SC.build(SHOTS.map((s, i) => ({
-    id: s.id,
-    dur: s.dur,
-    /* 文字为主的片子一律用 dip（经底色过渡），不用 fade（交叉溶解）。
-       原因：fade 会让上一镜的标题和下一镜的标题在同一位置叠成一团，
-       中间那几帧看着像「画面坏了」，不像「镜头换了」。
-       scenes.js 的注释里写了这条规矩，这里是它的实际用例。 */
-    trans: i === 0 ? null : { in: 'dip', dur: 0.45 },
-    draw: (g2, lt, ctx) => {
-      const fn = DRAW[s.id];
-      if (!fn) return;
-      g2.save();
-      fn(g2, lt, ctx);
-      g2.restore();
-    },
-  })), { lead: 0.4, tail: 0.5 });
+  TL = SC.build(SHOTS.map((s, i) => {
+    /* 转场会吃掉上一镜的尾巴：总时长 = Σdur − Σ转场时长。
+       于是第 i 个镜头的实际起点比 Σdur 早了 i×0.45s —— 六镜之后累计偏 2.25s。
+       标着「切点落在拍上」，实际越到后面越不在拍上（20.47s 的片子只出 18.22s，
+       正是这个差值）。
+       修法：把转场时长补回每一镜自己的 dur，起点就落回 Σdur 的整数位。
+       视觉不变（转场窗口还是 0.45s 的 dip），只是时间不再偷偷漂移。 */
+    const dur = s.dur + (i === 0 ? 0 : TRANS);
+    return {
+      id: s.id,
+      dur,
+      trans: i === 0 ? null : { in: 'dip', dur: TRANS },
+      draw: (g2, lt, ctx) => {
+        const fn = DRAW[s.id];
+        if (!fn) return;
+        /* 镜头只包住"这一个镜头的内容"，转场（dip 透明度）在外层合成 ——
+           两层各管各的，不会互相打架。 */
+        const line = cameraFor(s);
+        const cam = (line && typeof CAM !== 'undefined') ? CAM.move(line, lt, dur) : null;
+        g2.save();
+        if (cam) CAM.begin(g2, cam, W, H);
+        fn(g2, lt, ctx);
+        if (cam) CAM.end(g2);
+        g2.restore();
+      },
+    };
+  }), { lead: 0, tail: 0.5 });
+/* lead 从 0.4 改成 0：那 0.4 秒是"从底色淡入"，成片里就是开场黑一下 ——
+   观众第一反应是"卡了"，机检（h2v qc 的 hook / black）也会直接判不合格。
+   收尾的 tail 淡出保留：结束时的淡出是"收尾"，不是"没加载出来"。 */
 }
 
 function frame(t) {

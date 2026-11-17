@@ -87,6 +87,10 @@ export function tmpdir(prefix = 'h2v-test-') {
  * 这里按源码里真实出现的 `./xxx.js` 去拷，以后再加共用脚本也不用改测试。
  */
 const SIBLING_SCRIPT = /<script[^>]+src\s*=\s*["']\.\/([^"'/\\]+\.js)["']/g;
+/* `../lib/xxx.js` 也是常驻依赖（镜头、动效、图形库）。模板在 assets/templates/ 下写作
+   ../lib/，拷出仓库后就落空了 —— 和 `h2v new` 一样处理：改写成本目录 ./lib/ 再一起拷。
+   否则每个用模板的测试都会挂在「404 Failed to load resource」上，和被测行为无关。 */
+const PARENT_LIB_SCRIPT = /<script[^>]+src\s*=\s*["']\.\.\/lib\/([^"'/\\]+\.js)["']/g;
 
 export function copyTemplate(name, destFile) {
   const src = path.join(TEMPLATES, name);
@@ -99,6 +103,18 @@ export function copyTemplate(name, destFile) {
     if (!fs.existsSync(sib)) continue;
     fs.copyFileSync(sib, path.join(dir, m[1]));
     copied.push(m[1]);
+  }
+
+  const libs = [...code.matchAll(PARENT_LIB_SCRIPT)].map((m) => m[1]);
+  if (libs.length) {
+    fs.mkdirSync(path.join(dir, 'lib'), { recursive: true });
+    for (const lib of libs) {
+      const from = path.join(TEMPLATES, '..', 'lib', lib);
+      if (!fs.existsSync(from)) continue;
+      fs.copyFileSync(from, path.join(dir, 'lib', lib));
+      copied.push('lib/' + lib);
+    }
+    fs.writeFileSync(destFile, code.replace(PARENT_LIB_SCRIPT, (all) => all.replace('../lib/', './lib/')), 'utf8');
   }
   return { file: destFile, siblings: copied };
 }

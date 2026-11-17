@@ -193,7 +193,7 @@ function runBatch(file) {
   const FLAG_KEYS = new Set(['alpha', 'resume', 'keep-frames', 'allow-errors', 'keep-chrome', 'no-serve', 'snap-shots']);
   const VAL_KEYS = ['duration', 'from', 'to', 'fps', 'width', 'height', 'concurrency', 'settle',
     'audio', 'audio-fit', 'gop', 'srt', 'story', 'scene-log', 'poster', 'readytimeout', 'stills',
-    'tmpdir', 'theme', 'out', 'preset', 'beats', 'snap', 'bpm', 'offset'];
+    'tmpdir', 'theme', 'camera', 'out', 'preset', 'beats', 'snap', 'bpm', 'offset'];
 
   console.log(`▸ Batch: ${jobs.length} 个任务（${file}）`);
   const rows = [];
@@ -339,6 +339,16 @@ const WANT_GIF     = hasFlag('gif') || GIF_RAW !== null;
 const POSTER_AT    = arg('poster', null);       // 从成片里抽一帧当封面（秒）
 const TMPDIR_RAW   = arg('tmpdir', null);       // 逐帧 PNG 放哪块盘（默认挨着 HTML）
 const THEME        = arg('theme', null);        // 主题名，覆盖模板里的 CFG.theme
+/* 镜头：--camera（=auto，按镜头 id 配）/ --camera=dolly-in,3s / --camera=off
+   语义与 --theme 一致：只注入名字，怎么画由模板里的 camera.js 决定。 */
+const CAMERA_RAW   = arg('camera', null);
+const CAMERA = (() => {
+  if (CAMERA_RAW === null) return undefined;              // 没给：不干预，模板用自己的 CFG.camera
+  if (CAMERA_RAW === true) return 'auto';                  // --camera 裸写 = auto
+  const v = String(CAMERA_RAW).trim();
+  if (/^(off|none|null|static|fixed|不动|关)$/i.test(v)) return null;
+  return v;
+})();
 const OUT_RAW      = arg('out', null);          // 成片路径（默认同目录同名）
 const BEATS_ARG    = arg('beats', null);        // --beats（分析 --audio）/ --beats=pre.json
 const BEATS_ON     = hasFlag('beats') || BEATS_ARG !== null;
@@ -860,6 +870,19 @@ async function injectBeatsInit(context) {
   }
 }
 
+/* 镜头：和 __story / __theme 一样必须走 addInitScript ——
+   模板在顶层就把 CFG 读完了，加载后再注入已经晚了。
+   关掉镜头用哨兵值传（null 作为 addInitScript 的参数在部分 Playwright 版本会被吞掉）。 */
+async function injectCameraInit(context) {
+  if (CAMERA === undefined) return;
+  try {
+    await context.addInitScript(v => { window.__h2vCamera = v === '__off__' ? null : v; },
+      CAMERA === null ? '__off__' : CAMERA);
+  } catch (e) {
+    console.warn('⚠ 镜头注入失败，模板会用它自己的 CFG.camera：' + String((e && e.message) || e));
+  }
+}
+
 async function injectThemeInit(context) {
   if (!THEME) return;
   try {
@@ -1174,6 +1197,7 @@ async function renderStills(context, url, times, onPage) {
 
   await injectStoryInit(context);
   await injectThemeInit(context);
+  await injectCameraInit(context);
   await injectBeatsInit(context);
 
   /* 时间轴校准：只在「时长是猜出来的」情况下动手。

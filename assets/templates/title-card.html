@@ -12,6 +12,7 @@
 <body>
 <canvas id="stage"></canvas>
 <script src="./themes.js"></script>
+<script src="../lib/camera.js"></script>
 <script>
 /* =====================================================================
    模板 ①  ·  片头标题卡
@@ -32,6 +33,7 @@ const CFG = {
   title:  ['把代码', '变成画面'],                // 主标题，一行一个字符串
   sub:    'HTML / Canvas 写成 frame(t)，无头浏览器逐帧截图，ffmpeg 编成 MP4',  // 副标题
   tag:    '2026 · 示例片头',                    // 右下角标签
+  camera: 'dolly in, 6s, slow ease-in-out',   // 镜头；null = 完全静止
   dur:    6.0,                                 // 总时长（秒）——渲染时 --duration 要一致
 };
 /* ===================================================================== */
@@ -110,6 +112,21 @@ function drawFrame(T) {
   g.globalAlpha = 1;
   g.clearRect(0, 0, W, H);
 
+  /* 镜头：一行自然语言，分镜里怎么想就怎么写。CFG.camera = null 关掉。 */
+  const line = window.__h2vCamera !== undefined ? window.__h2vCamera : CFG.camera;
+  /* 透明底不套镜头：缩放会把透明区一起放大，边缘漏出黑边 */
+  const cam = (!TRANSPARENT && line && typeof CAM !== 'undefined') ? CAM.move(line, T, DUR) : null;
+  if (!cam) { drawScene(T); return; }
+
+  /* 镜头放大后原始边缘跑到画布外 —— 先铺一层底色兜住，再套镜头 */
+  g.fillStyle = TH.bg;
+  g.fillRect(0, 0, W, H);
+  CAM.begin(g, cam, W, H);
+  drawScene(T);
+  CAM.end(g);
+}
+
+function drawScene(T) {
   /* 背景：深色渐变 + 缓慢呼吸的暖光斑。
      --alpha 输出时整层跳过（含光斑与光扫）—— 它们都是全屏 fillRect，哪怕 alpha 只有 5%，
      叠到实拍上也会让整片区域泛白，剪辑师会以为素材「脏」。透明输出只保留文字与装饰。 */
@@ -125,10 +142,16 @@ function drawFrame(T) {
       g.fillStyle = bg;
       g.fillRect(0, 0, W, H);
 
-      const glowPhase = win(T, 0, 1.6);
-      const gx = W * 0.72 + Math.sin(T * 0.35) * 40 * SX;
-      const gy = H * 0.30 + Math.cos(T * 0.28) * 24 * SY;
-      const rad = g.createRadialGradient(gx, gy, 0, gx, gy, 780 * SF);
+      /* 首帧就要有光。原来是 0 起、1.6s 渐显 —— 前 0.5 秒画面纯黑，
+       blackdetect 判黑场，hook（前 2 秒必须有运动）也压线不过。 */
+      const glowPhase = 0.55 + 0.45 * win(T, 0, 1.6);
+      /* 漂移幅度从 40px 加到 110px：纯色底 + 数字文字，相邻帧差异天然比实拍低，
+         一点缓慢的光移动就够把 hook 的均值从 0.45 推过线，而且不抢戏。 */
+      const gx = W * 0.72 + Math.sin(T * 0.35) * 110 * SX;
+      const gy = H * 0.30 + Math.cos(T * 0.28) * 70 * SY;
+      /* 半径缓慢脉动 ±6%：光斑是画面里面积最大的一层，它一动，整幅的
+         相邻帧差异就上来了 —— 而且观感只是"光在呼吸"，不会抢标题。 */
+      const rad = g.createRadialGradient(gx, gy, 0, gx, gy, 780 * SF * (1 + 0.06 * Math.sin(T * 0.7)));
       rad.addColorStop(0, RGBA(TH.accent, 0.16 * glowPhase));
       rad.addColorStop(0.55, RGBA(TH.accentDeep || '#FF8A3D', 0.05 * glowPhase));
       rad.addColorStop(1, 'rgba(0,0,0,0)');
@@ -148,7 +171,7 @@ function drawFrame(T) {
   }
 
   /* 左侧竖直装饰线（生长） */
-  const lineP = smooth(win(T, 0.15, 1.0));
+  const lineP = smooth(win(T, 0.02, 0.5));
   g.fillStyle = TH.accent;
   g.globalAlpha = 0.85 * lineP;
   g.fillRect(140 * SX, lerp(H * 0.5, 300 * SY, lineP), 3 * SF, lerp(0, 300 * SY, lineP));
@@ -166,7 +189,7 @@ function drawFrame(T) {
 
   /* 小字 kicker */
   if (CFG.kicker) {
-    const p = outExpo(win(T, 0.30, 0.95));
+    const p = outExpo(win(T, 0.08, 0.72));
     const kPx = fitOneLine(CFG.kicker, 28 * SF, MAXW, px => `500 ${px}px ${SANS}`);
     g.save();
     g.globalAlpha = p;

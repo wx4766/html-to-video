@@ -16,6 +16,164 @@
 
 ---
 
+## [1.8.0] - 2026-11-17
+
+1.7.0 解决的是「片子看着高级」这件事的一半 —— 切点踩在拍上。
+这一版补的是另一半：**镜头**，以及**把「好看」拆成可以量、可以自检的四件事**。
+
+四件事分别管四个不同的东西，以前只有一个（`qa.js` 管页面），另外三个全靠眼睛：
+
+| 关 | 命令 | 管什么 | 以前怎么发现问题 |
+|---|---|---|---|
+| 文案 | `h2v check` | 字太多、没转折、陈词滥调 | 发出去被人说"读不完" |
+| 页面 | `qa.sh`（1.2 起） | 随机数、出框、叠字、字体回退 | —— |
+| 成片 | `h2v qc` | 前 2 秒没动、黑场、冻结、音轨静音 | 上传后平台数据差 |
+| 声音 | `h2v master` | 响度比别的片子小一截 | 手机外放才发现 |
+
+---
+
+### 新增 · 镜头语言：`assets/lib/camera.js` 第二层
+
+`camera.js` 原来是「运镜」—— 用 `from/to` 描述位移，灵活但要求你知道终点坐标。
+现在多了一层「镜头语言」：**一行自然语言就是一条镜头**。
+
+```js
+CAM.move('dolly in, 6s, slow ease-in-out', T, DUR)   // → { scale, tx, ty, rot, blur }
+```
+
+- **12 个命名运动**：`dolly in` 推镜 / `dolly out` 拉镜 / `pan` 横摇 / `tilt` 纵摇 /
+  `orbit` 环绕 / `crane` 升降 / `handheld` 手持 / `dolly zoom` 变焦推拉 /
+  `rack focus` 拉焦 / `whip pan` 甩镜 / `push to` 推近细节 / `static` 固定。
+  每个都在代码注释里写清「观众该感觉到什么」，写分镜先想这个再挑名字。
+- **5 种缓动**，含 `inertia`（0.35 linear + 0.65 smoothstep）—— 两端都保留速度，
+  镜头进出都不"停死"，切点落在运动中间时不会看着像卡了一下。
+- **中英文混写都认**：`'推镜，3s，慢'`、`'pan, 5s, medium, left'`、`'handheld, 1'`。
+  裸数字是**幅度**不是秒数（只有 `handheld` / `static` 这种没有默认时长的才当秒数）。
+- **防露边是默认行为**：所有运动保证 `scale ≥ 1`，位移按放大余量裁到 `(scale-1)/2`。
+  宁可镜头少动，不露黑边 —— 测试里 200+ 个时刻逐个验证。
+- **确定性**：手持抖动用正弦叠加 + 固定种子，不用 `Math.random()`；
+  `move()` 是 `t` 的纯函数，多 worker 并行渲染帧完全一致。
+- **`tx/ty` 是比例不是像素**（`0.02` = 画宽 2%），换分辨率不用改数值。
+
+**优先保留旧 API**：第一层的 `at / stack / push / pop / withCam / kenburns / breath / noise`
+一行没动，`explainer.html` 等老模板照旧跑。
+
+### 新增 · `--camera` 参数
+
+```bash
+--camera='dolly in, 6s, slow'   # 全片统一
+--camera=auto                   # 按镜头类型自动配（hook 推 / points 摇 / metric 推近 …）
+--camera=off                    # 关掉，做 A/B 对比
+```
+
+通过 `addInitScript` 注入 `window.__h2vCamera`，和 `__story` / `__beats` 同一条路。
+优先级：`shot.camera`（镜头表里写死）> `window.__h2vCamera`（命令行注入）> `CFG.camera`。
+
+**模板接入**：`title-card` / `quote-card` / `style-film` 三个已接，`CFG.camera` 一字段可改。
+`style-film` 带 `AUTO_CAM` 导演表，7 种镜头各有默认配法（`outro` 用 `dolly out` 收束、
+`timeline` 用 `crane` 交代尺度、`metric` 用 `push to` 把数字变线索）。
+
+**对照实测**（同一份 story，`--camera=auto` vs `--camera=off`）：
+画面内容包围盒宽度 1740 px vs 1619 px，比值 **1.0747**，精确等于 `pan` 的 `scale 1.075`；
+暗像素占比比 1.15 ≈ 1.075²。说明镜头确实在动，而且幅度就是设计值。
+
+### 新增 · 成片质检：`scripts/qc.js`
+
+`qa.js` 查页面（帧对不对），`qc.js` 查**已编码的 mp4**（片能不能用）。
+编码参数、音轨、真实播放时的冻结与黑场，只有解码之后才看得见。
+
+9 项检查：`hook` / `black` / `freeze` / `dup` / `bright` / `info` / `cuts` / `loud` / `sheet`。
+
+- **hook 是硬规则**：前 2 秒相邻帧平均灰度差 < 0.35 直接判失败（`exit 1`）。
+  用 `tblend=difference` + `signalstats` 量，不看"感觉"。
+- **阈值有实测基线**：纯色静止 0.00 / 极简标题卡 0.36–0.42 / 加胶片颗粒 0.71 /
+  正常运动片 0.85–1.2。实拍或强运动片建议 `--hook-min=0.5`。
+- **只用 ffmpeg，不依赖 ffprobe**（很多精简环境没有），元数据靠解析 `ffmpeg -i` 的 stderr。
+- 无音轨的片子走 `noAudio` 分支，不会误报「有音轨但没声音」。
+
+**这个工具上线第一件事就是抓自己人的 bug**：`title-card` / `quote-card` / `style-film`
+三个模板都有 0.4–0.5s 的黑场淡入 —— 正是 cinecode 硬规则禁止的东西。
+修法是「打底光斑从 0.55 起、入场提前到 0.02s、时间轴 `lead: 0`」，
+修完 `blackdetect` 从「0–0.5s」变成 none，hook 从 0.00 变成 0.48–0.96。
+
+### 新增 · 响度母版：`scripts/audio-master.js`
+
+目标是 **−14 LUFS / −2 dBTP**（视频平台通行落点），两遍 `loudnorm`：
+
+- pass 1 只测量，pass 2 用测得值 `linear=true` 做**固定增益**。
+  一遍式是动态模式（边跑边压），会改变动态、抽气。
+- **LRA 超目标时 `loudnorm` 会静默切回动态模式**，所以报告里带 `type` 字段，
+  不是 `linear` 就明确告警。
+- **限幅后要重新测量**：限幅器改变峰值，用限幅前的数值会算错增益
+  （代码里是 `let m = measure('')`，限幅后 `m = r.m` 接回去）。
+- **AAC 编码会把真峰值抬 0.5–0.7 dB**，所以带视频时目标压到 −2 dBTP 留余量。
+- 限幅链 `volume=g,alimiter=limit=…:level=false`。`level=false` 必须，
+  默认 `level=true` 会把输出自动抬到 0 dB，等于白限。
+
+实测：原始 −17.77 LUFS → 母版 −13.9 LUFS，真峰值 −1.8 dBTP，`type=linear`。
+
+### 新增 · 文案规范与自检：`references/writing.md` + `scripts/script-check.js`
+
+以前「文案好不好」只能靠模型自觉。现在有一份**规则文档**和一个**能跑的自检**：
+
+- 规则文档：分叉收敛 / 一镜一个转折（6 种转法）/ 结尾先写 / caption test /
+  字数预算表 / 陈词滥调清单 / 读出声 + 砍 30% / 首次观看者检查。
+- `h2v check story.json` 查机器能查的部分：单行上限（横屏 14 字、竖屏 12 字）、
+  每镜条目数（≤4）、阅读速度（≤12 字/秒）、陈词滥调命中、有没有转折镜头。
+- 第一次跑就抓出 demo 里两条 17 字的长句 —— 说明工具确实在工作，而不是只会说通过。
+
+### 新增 · CLI 子命令与 `new` 的改动
+
+```bash
+npx html-to-video camera      # 12 个运动 + 一行字怎么写
+npx html-to-video check s.json # 文案自检
+npx html-to-video qc out.mp4   # 成片质检
+npx html-to-video master …     # 响度母版
+```
+
+`h2v new` 现在会把 `assets/lib/camera.js` 一起拷到项目里，并把模板里的
+`../lib/camera.js` 改写为 `./lib/camera.js` —— 新建的项目不依赖仓库目录就能跑。
+
+### 修复
+
+- **转场吃掉了拍点对齐**（`style-film` 等用 `SC.build` 的模板）：
+  `SC.build` 的总时长是 `Σdur − Σ转场时长`，所以第 i 个镜头的实际起点比 `Σdur` 早了
+  `i × 0.45s`。六镜的片子累计偏 2.25s —— 渲染器会打一行「时间轴自报 18.22s，计划 20.47s」，
+  但没人当回事。真正的问题是：**标着「切点落在拍上」，越到后面越不在拍上**。
+  修法是把转场时长补回每一镜自己的 `dur`（视觉不变，转场窗口还是 0.45s 的 dip），
+  起点就落回 `Σdur` 的整数位。修完渲染器不再报这个差值。
+- **三个模板的首帧纯黑**（`title-card` / `quote-card` / `style-film`）：
+  淡入 + `SC.build` 的 `lead: 0.4` 让前 0.4s 是黑场。改法见上，`blackdetect` 已清零。
+- **`--camera=off` 的哨兵值处理**：`null` 经 `addInitScript` 序列化会变 `undefined`，
+  改用 `'__off__'` 哨兵，模板侧再翻成 `null`。
+- **`audio-master.js` 的 `--out=` 不生效**：第一版把 `argv[1]` 直接当输出路径，
+  `mix.mp4 --video=mix.mp4 --out=final.mp4` 会把 `--video=…` 当成文件名交给 ffmpeg，
+  报 `Unrecognized option`。现在位置参数只收不以 `--` 开头的项，`--out=` 与位置写法都能用。
+- **`qc.js` 的「全部通过」会盖掉 WARN**：响度不达标时那一行印 `FAIL`，但总结仍然是
+  「✓ 全部通过」（因为 `loud` 不影响退出码）。改成印 `WARN` 并在总结里点名
+  「硬规则全通过 · ⚠ 待处理 1 项：loud -17.7 LUFS」。
+
+### 文档
+
+- `SKILL.md` 新增「交付前四道关」总表、「镜头语言」「成片质检」「响度母版」
+  「文案」四节，`文件说明` 补齐新脚本。
+- `references/writing.md` 新增（中文写作规则）。
+- `THIRD-PARTY.md` 新增：cinecode（MIT © 2026 Sarp Yıldız）的归属与借鉴明细，
+  以及运行期依赖许可证说明。**MIT 要求保留版权声明**，本文件就是为此存在。
+
+### 测试
+
+`test/camera.test.mjs` 从 96 行扩到约 230 行，19 组用例：
+解析（中英文 / 速度词 / 裸数字归属）、缓动单调性、`inertia` 两端速度、
+**防露边 200+ 时刻**、确定性（同帧同输出）、手持低频性（相邻帧差 < 0.0008）、
+`retime`、`begin/end` 成对、词汇表 12 项。
+
+全套**158 项，157 项通过**。唯一失败的是 `startServer` 的 Windows 盘符路径用例 ——
+它在 Linux 上本来就不成立（输入 `C:/tmp/a.html` 会被解析成相对路径），不是回归；
+其余 157 项含全部渲染、卡点、镜头、模板契约、CLI 用例。
+
+---
+
 ## [1.7.0] - 2026-11-07
 
 这一版是「再挖两轮」的结果，两轮各有主题：

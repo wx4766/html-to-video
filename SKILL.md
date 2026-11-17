@@ -1,6 +1,6 @@
 ---
 name: html-to-video
-description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可卡点、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」「换个风格」「卡点」「音乐配画面」时使用。自带渲染器、14 个版式模板（多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡、引言卡、章节卡、界面演示）、12 种视觉风格（孔版印刷 / 剪纸 / 蓝图 / 粉笔 / 等距 / 霓虹 / 瑞士 / 水墨 / 水彩 / 铅笔 / 半调解说 / 黏土立体，一条命令切换）、节拍分析与卡点（--beats / --snap）、分镜预演、浏览器预览、环境自检、图标/人物/运镜素材库，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
+description: 把 HTML/Canvas 动画逐帧渲染成 MP4（可配乐、可卡点、可出 GIF、可出透明层）。当用户说「用代码做视频」「HTML 转视频」「导出 MP4/GIF」「做个动态图解/宣传片/数据动画」「逐帧渲染」「换个风格」「卡点」「音乐配画面」「加运镜」「成片检查」「响度归一」时使用。自带渲染器、14 个版式模板（多镜头讲解片、竖屏 9:16、前后对比、流程图、字幕卡、引言卡、章节卡、界面演示）、12 种视觉风格（孔版印刷 / 剪纸 / 蓝图 / 粉笔 / 等距 / 霓虹 / 瑞士 / 水墨 / 水彩 / 铅笔 / 半调解说 / 黏土立体，一条命令切换）、节拍分析与卡点（--beats / --snap）、**镜头语言（12 个命名运动 + 5 种缓动，一行自然语言一条镜头，自带防露边）**、分镜预演、浏览器预览、环境自检、图标/人物/运镜素材库、**文案自检（字数 / 条数 / 陈词滥调 / 转折）**、**成片质检（hook / 黑场 / 冻结 / 重复帧 / 响度 / 联系表）**、**EBU R128 响度母版（−14 LUFS / −2 dBTP）**，支持透明输出、外部字幕时间轴与 JSON 镜头表，装好依赖后一条命令出片。
 agent_created: true
 ---
 
@@ -20,6 +20,15 @@ agent_created: true
 优点：**确定性**（同输入同输出）、**可控到帧**、**中文文字完美**、**零费用**。
 最适合做：讲解动画、动态图解、产品演示、数据可视化动画、宣传片片头。
 不适合：实拍感/氛围镜头（那种走 VideoGen）。
+
+**交付前四道关**（分别管四个不同的东西，别只跑一个）：
+
+| 命令 | 管什么 | 查不出会怎样 |
+|---|---|---|
+| `h2v check story.json` | 文案 | 字太多读者跳读、全片没有转折 |
+| `assets/qa.sh page.html` | 页面 | 画面混了随机数、文字出框/叠字、字体悄悄回退 |
+| `h2v qc out.mp4` | 成片 | 前 2 秒没动、黑场、冻结、音轨静音 |
+| `h2v master in.mp4` | 声音 | 手机外放听着比别人小一截 |
 
 **能拿它做什么**（`assets/templates/` 里 14 个模板直接改字就能出片）：
 
@@ -147,10 +156,17 @@ WB_NODE_WORKSPACE="<你的 node 工作区绝对路径>"
 npx html-to-video doctor                 # 环境自检：缺什么、怎么修（只读）
 npx html-to-video templates              # 14 个模板
 npx html-to-video styles                 # 12 种风格
+npx html-to-video camera                 # 12 个镜头运动 + 一行字怎么写
 npx html-to-video new my-video --template=chapter-card
 npx html-to-video preview my-video.html --duration=6 --open
 npx html-to-video render my-video.html --duration=6 --fps=60
+npx html-to-video check story.json       # 文案自检（字数 / 条数 / 陈词滥调 / 转折）
+npx html-to-video qc out/film.mp4        # 成片质检（hook / 黑场 / 冻结 / 响度 / 联系表）
+npx html-to-video master in.mp4 --video=in.mp4 --out=final.mp4   # 响度母版 −14 LUFS
 ```
+
+**一句话分工**：`check` 管文案，`qa` 管页面，`qc` 管成片，`master` 管声音。
+四个都能 `--json`，Agent 直接读。
 
 **预览**：`scripts/preview.js` 起本地 http（ESM/fetch 都能跑），把页面放进 iframe，
 注入 `__seekRender` 冻结它自己的时钟，然后用滑块/空格/←→ 直接推 `__seek(t)`。
@@ -165,10 +181,18 @@ ffmpeg（是否含 libx264 与 ProRes）/ 中文字体 / 临时盘余量 / 工�
 ### 第 0 步（最省事的路）：挑一个模板改字
 
 ```bash
+npx html-to-video new my-video --template=bar-chart   # 推荐：依赖一起搬好
+# 或者，如果就在仓库目录里工作：
 cp assets/templates/bar-chart.html my-video.html
+
 # 打开 my-video.html，只改顶部 CFG 里的 title / data / note
 bash assets/render.sh my-video.html --duration=6 --fps=60
 ```
+
+⚠️ **模板不是单文件**：`./themes.js`（配色）和 `../lib/*.js`（动效 / 镜头 / 图形库）
+必须跟着走。只 `cp` 一个 HTML 出去，页面会 404 —— 而渲染器把「页面报错」判为失败，
+你看到的是「渲染失败」，很难联想到少文件。`h2v new` 会自动把依赖搬齐，
+并把 `../lib/camera.js` 改写成 `./lib/camera.js`；手工搬的话记得这一步。
 
 模板有**字幕安全区**意识：文字不会落在画面底部 15%（烧录字幕后会被盖住）。
 自己做版式时也照这个来。
@@ -545,6 +569,38 @@ FF="<node工作区>/node_modules/@ffmpeg-installer/win32-x64/ffmpeg.exe"   # Win
 # 竖屏：改 HTML 画布尺寸后重渲，别用裁剪
 ```
 
+### 响度母版：`h2v master`（同一个片子，在不同平台一样响）
+
+手机外放听着小、笔记本上听着大 —— 不是错觉，是没做响度归一。
+平台之间的差异可以差 6–8 LU。母版的目标是 **−14 LUFS / −2 dBTP**（视频平台通行的落点）。
+
+```bash
+node scripts/audio-master.js in.mp4 --video=in.mp4 --out=final.mp4          # 带画面
+node scripts/audio-master.js voice.wav --out=voice-master.wav               # 只要音频
+node scripts/audio-master.js in.mp4 --video=in.mp4 --out=final.mp4 --no-limit  # 不加限幅器
+```
+
+**两遍 `loudnorm`，第二遍必须线性**：
+
+| 遍 | 干什么 | 为什么不能合成一遍 |
+|---|---|---|
+| pass 1 | 只**测量**（LUFS / LRA / true peak），丢弃输出 | 归一化要用到整片的统计量，必须先看完 |
+| pass 2 | 用测得的数值 `linear=true` 做**固定增益** | 一遍式是动态模式 = 边跑边压，会改变动态、抽气 |
+
+两个坑，都踩过：
+
+- **LRA 超过目标时，`loudnorm` 会静默切回动态模式。** 报告里 `type` 字段不是 `linear`
+  就说明它偷偷加压限器了 —— 这时要放宽 `--lra` 或接受动态模式，别以为"归一成功了"。
+- **限幅之后要重新测量。** 限幅器改变峰值，pass 2 还用限幅前的数值会算错增益。
+  代码里是 `let m = measure('')`，限幅后 `m = r.m` 接回去 —— 用 `const` 就会静默错误。
+- **AAC 编码会把真峰值抬 0.5–0.7 dB。** 所以带视频时目标压到 −2 dBTP，留出编码余量。
+
+限幅链固定为 `volume=${g}dB,alimiter=limit=…:attack=5:release=60:level=false`。
+`level=false` 是**必须**的：默认 `level=true` 会把输出自动抬到 0 dB，等于白限。
+（本机那版 ffmpeg 的 `alimiter` 没有 `latency` 参数，写上去整条 filter 会解析失败。）
+
+实测一组：原始 −17.77 LUFS → 母版 −13.9 LUFS，真峰值 −1.8 dBTP，`type=linear`。
+
 ### 第 5 步：自动化验收（**交付前跑**）
 
 渲染器只保证「帧渲出来了」，不保证「画面是对的」。这一步把肉眼最容易漏的问题量化：
@@ -579,6 +635,44 @@ bash assets/qa.sh animation.html --duration=12 --fps=30
 > 已知盲区：画进离屏 canvas 再 `drawImage` 上来的文字追不到；被图形挡住的字查不到；
 > 采样从 `--skip` 之后开始，开场瞬间的问题看不到。这些都在报告里说明了。
 
+### 成片质检：`h2v qc`（量的是**已编码的 mp4**，不是页面）
+
+`qa.js` 查的是页面（帧对不对），`qc.js` 查的是成片（片能不能用）。
+两者不重复：编码参数、音轨、真实播放时的冻结与黑场，只有解码之后才看得见。
+
+```bash
+node scripts/qc.js out/film.mp4                # 人看的报告
+node scripts/qc.js out/film.mp4 --json         # Agent 读的 JSON
+node scripts/qc.js out/film.mp4 --hook-min=0.5 # 实拍片用严一点的 hook 门槛
+```
+
+| 检查 | 判据 | 为什么值得单列一项 |
+|---|---|---|
+| `hook` | 前 2 秒相邻帧平均灰度差 ≥ 0.35 | 短视频前 2 秒没动 = 划走。用 `tblend=difference` + `signalstats` 量，不看"感觉" |
+| `black` | `blackdetect` 无 ≥0.3s 的黑段 | 模板淡入淡出常把首帧做成纯黑，人眼在播放器里看不出来 |
+| `freeze` | `freezedetect` 无 ≥1s 的定格 | 渲染卡住/时间轴算错会得到"看着像静帧"的片子 |
+| `dup` | 相邻帧完全相同的对数 | 与 freeze 互补：dup 抓"整段复制"，freeze 抓"画到一半不动" |
+| `bright` | 平均亮度落在 16–240 | 全黑/全白通常是主题配错或图层顺序错了 |
+| `info` | 分辨率 / 帧率 / 时长 / 编码 / 采样率 | 一稿多发时确认没渲错比例 |
+| `cuts` | 场景切换点数量与位置 | 和镜头表对不上 = `--story` 没生效 |
+| `loud` | 有音轨时量响度，无音轨明确标 N/A | 见下面的响度母版 |
+| `sheet` | 抽 9 帧拼一张联系表 | 一眼扫完整片，比逐帧看快 |
+
+**hook 门槛的实测基线**（这是给阈值找依据，不是拍脑袋）：
+
+| 画面 | 相邻帧平均灰度差 |
+|---|---|
+| 纯色静止 | 0.00 |
+| 极简标题卡（有文字入场） | 0.36 – 0.42 |
+| 同画面再加胶片颗粒 | 0.71 |
+| 正常有运动的片子 | 0.85 – 1.2 |
+
+所以默认 `0.35`（数字/文字类刚好过线），实拍或强运动片建议 `--hook-min=0.5`。
+`hook` 失败会让进程 `exit 1` —— 这一条是硬规则，其余都是「提示去看一眼」。
+
+> 只用 ffmpeg，不依赖 ffprobe（很多精简环境没有）。元数据靠解析 `ffmpeg -i` 的 stderr。
+> 无音轨的片子走 `{ noAudio: true }` 分支，不会误报「有音轨但没声音」。
+
 ### 第 6 步：独立验证（别只看工具说成功）
 
 ```bash
@@ -593,6 +687,57 @@ bash assets/qa.sh animation.html --duration=12 --fps=30
 ⚠️ **验证渲染时务必换输出名或另建目录**。渲染器输出名固定为「HTML 同名 .mp4」，
 拿真文件名跑一次短渲染验证，会把成品覆盖成短版。（踩过，只能重新编码。）
 用 `--from/--to` 时输出名自带范围后缀，天然不会覆盖；也可以直接换目录。
+
+## 文案：先写对，再写好看
+
+技术再好，文案烂一样没人看完。这一段是**规则**，不是灵感建议 ——
+完整版在 `references/writing.md`，下面是能立刻用的部分。
+
+```bash
+node scripts/script-check.js story.json          # 横屏：单行上限 14 字
+node scripts/script-check.js story.json --vertical   # 竖屏：12 字
+```
+
+输出示例（真实跑出来的）：
+
+```
+  6 镜 / 20.5s / 193 字 / 9.4 字每秒
+
+     1. hook          3s   25 字
+  ⚠  2. points        4s   57 字  3 条
+     5. compare     3.5s   43 字
+
+✗ 要改的：
+   · 第 1 镜（hook）的 sub 有 17 个汉字 > 14：「渲染器自己量拍子，镜头时长量化到整拍」
+```
+
+**四条最容易违反的**：
+
+| 规则 | 具体 | 为什么 |
+|---|---|---|
+| 一行不超过 14 字（竖屏 12） | 超了观众开始跳读，不是"信息量大" | 手机屏上一行塞 18 个字，字号必然缩到看不清 |
+| 每镜条目 ≤ 4 条（竖屏 ≤ 3） | 多了就不是"看"，是"读" | 观众在一镜里能接住的信息有上限 |
+| 阅读速度 ≤ 12 字/秒 | 中文口播约 4.5 字/秒，屏幕文字可以快但要留出反应时间 | 快过这个数，字幕变成噪声 |
+| 一镜一个转折 | 6 种转法：对比 / 反转 / 代价 / 意外数字 / 时间跳 / 视角换 | 全片没有转折 = 没有"看到最后"的理由 |
+
+**字幕测试（caption test）**：把这句话当这一镜的图注读一遍 —— 如果它只是把画面又说了一遍，删掉。
+旁白要加画面给不了的东西：潜台词、对照、过去、心里的声音、一条规则。
+
+**陈词滥调一出现就删**：「在这个时代」「随着……的发展」「赋能」「闭环」「未来已来」「重新定义」
+「极致体验」。换成一个能拍出来的动作或一个具体数字 ——
+「极致体验」→「按下到出片，4 秒」。
+
+**字数预算表**（要超之前先看这张）：
+
+| 时长 | 旁白预算 | 单条屏幕文字 | 每镜最多几条 |
+|---|---|---|---|
+| 15 秒 | ≤ 65 字 | ≤ 12 字 | 2 |
+| 30 秒 | ≤ 130 字 | ≤ 14 字 | 3 |
+| 60 秒 | ≤ 260 字 | ≤ 16 字 | 4 |
+| 3 分钟 | ≤ 780 字 | ≤ 18 字 | 5 |
+
+`script-check.js` 只是机器能查的部分。剩下两条机器查不了，但必须做：
+**读出声**（打结的地方就是观众听不懂的地方）、**砍 30%**（第二遍不是润色，是删）。
 
 ## 动效库：assets/lib/motion.js
 
@@ -793,7 +938,12 @@ bash assets/render.sh assets/style-film.html \
 - 所有卡片用 `SV.card()` 的返回值排版，字号用 `Math.min(理想值, cb.h * 比例)` 夹一道
 - 入场用 `SV.clamp((t - 延迟) / 时长)` + `SV.enter(ST, p)`，别自己写缓动
 
-## 运镜：assets/lib/camera.js
+## 运镜与镜头语言：assets/lib/camera.js
+
+分两层，互不干扰：**第一层是参数**（从哪到哪，像素级控制），
+**第二层是意图**（推、摇、环绕，一句话一条镜头）。老代码只用第一层，不受影响。
+
+### 第一层：轻运镜（治「画面死了」）
 
 画面元素都到位之后还剩几秒 —— 那几秒最容易「死」，`qa.js` 会报「最长连续静止」。
 加一点持续运镜能活过来，而且比堆装饰元素更不抢戏。
@@ -813,6 +963,96 @@ CAM.withCam(g, CAM.at(cam, t, W, H), W, H, () => { /* 画内容 */ });
 
 两条硬规矩：**运镜前先把底色铺满**（缩放/平移会露边）；
 **缩放小于 1 一定露边**，要拉远就把内容画得比视口大。
+
+### 第二层：镜头语言（一行字一条镜头）
+
+专业分镜表里写的是「推镜，6 秒，缓入缓出」，不是 `from:[0,0,1] to:[0.02,0,1.06]`。
+第二层让你直接把那句话喂进去 —— 这也是 [cinecode](https://github.com/sarpstar/cinecode)（MIT）的思路，
+本项目按 Canvas 2D 重写了运动、缓动与手感，不是照抄。
+
+```js
+const line = window.__h2vCamera !== undefined ? window.__h2vCamera : CFG.camera;
+const cam = (!TRANSPARENT && line && typeof CAM !== 'undefined') ? CAM.move(line, T, DUR) : null;
+if (!cam) { drawScene(T); return; }                     // 没镜头：一条像素都不变
+
+g.fillStyle = TH.bg; g.fillRect(0, 0, W, H);            // 先铺底，否则露边
+CAM.begin(g, cam, W, H);                                // 内含 save()
+drawScene(T);
+CAM.end(g);                                             // 内含 restore()
+```
+
+`move()` 返回 `{ scale, tx, ty, rot, blur, bgScale, ... }`，**`tx/ty` 是比例不是像素**
+（`0.02` = 画宽的 2%），换分辨率不用改数值。
+
+**12 个运动**（`CAM.list()` 一次打印全部）：写分镜先想「观众该感觉到什么」，再挑名字。
+
+| 名字 | 中文 | 感觉 | 默认 |
+|---|---|---|---|
+| `dolly in` | 推镜 | 亲近、紧张、"这件事重要" | 4s / inertia |
+| `dolly out` | 拉镜 | 孤立、释放、交代环境 | 5s / inOut |
+| `pan` | 横摇 | 扫视、跟随、把两件事连起来 | 4s / inertia |
+| `tilt` | 纵摇 | 仰视=敬畏，俯视=发现与重量 | 3.5s / inOut |
+| `orbit` | 环绕 | 审视、强调、英雄感 | 6s / inertia |
+| `crane` | 升降 | 希望、尺度、从上方揭示 | 5s / inOut |
+| `handheld` | 手持 | 在场、紧迫、纪实 | 跟镜头等长 |
+| `dolly zoom` | 变焦推拉 | 醒悟、不安、失真（**一片只用一次**） | 3.5s / inOut |
+| `rack focus` | 拉焦 | 注意力从一处移到另一处 | 1.2s / inOut |
+| `whip pan` | 甩镜 | 能量、跳切、喜剧 | 0.32s / inOut |
+| `push to` | 推近细节 | "看这里"：线索、一个表情 | 3s / inOut |
+| `static` | 固定 | 让主体或光自己动 | 不动 |
+
+**一句话的语法**（容错优先，中英文混写都认）：
+
+```
+<运动名> [, <时长>] [, <缓动|速度>] [, <方向/锚点>]
+```
+
+```js
+'dolly in, 6s, slow ease-in-out'   // 推镜 · 6 秒 · 幅度调慢
+'pan, 5s, medium, left'            // 横摇 · 5 秒 · 往左
+'handheld, 1'                      // 手持 · 幅度 1（时长跟镜头走）
+'whip, 0.3s'  '推镜，3s，慢'        // 甩镜 / 中文写法
+```
+
+- **时长**只认带单位的数字（`6s` / `6秒`）；裸数字是**幅度**（`handheld, 1`），
+  只有该运动本身没有默认时长（`handheld` / `static`）时才当秒数。
+- **5 种缓动**：`linear` / `ease-in` / `ease-out` / `ease-in-out` / `inertia`。
+  `inertia = 0.35·linear + 0.65·smoothstep` —— 两端都保留速度，所以镜头进、出都不"停死"，
+  切点落在运动中间时不会看着像卡了一下。
+- 速度词（`slow` / `fast` / `慢` / `快`）**只改幅度不改时长**，时长仍由 `--snap-shots` 对齐拍点。
+
+**三条护栏，写代码时不用自己算**：
+
+1. **防露边是默认的。** 所有运动都保证 `scale ≥ 1`，位移量按放大余量裁剪：
+   `maxT = (scale - 1) / 2`，放多大就最多能平移多少画幅。想推 8% 就最多横移 4%，
+   写超了会被夹住 —— 宁可镜头少动，不露黑边。测试里 200+ 个时刻逐个验证过。
+2. **同一帧永远长一样。** 手持抖动用正弦叠加 + 固定种子，不用 `Math.random()`；
+   `move(line, t, dur)` 是 `t` 的纯函数，多 worker 并行渲染结果一致。
+3. **`RETIME` 不重算镜头。** 换主题、改时长时用 `CAM.retime(line, newDur)` 只改速度，
+   不重新解析字符串。
+
+**CLI 上怎么用**：
+
+```bash
+node scripts/render-video-seek.js page.html --camera='dolly in, 6s, slow'   # 全片统一
+node scripts/render-video-seek.js page.html --camera=auto                   # 按镜头类型自动配
+node scripts/render-video-seek.js page.html --camera=off                    # 关掉，对比用
+```
+
+`--camera=auto` 的导演逻辑在 `assets/style-film.html` 的 `AUTO_CAM` 表里，可按片子改：
+
+| 镜头 | 配什么 | 为什么 |
+|---|---|---|
+| `hook` | `dolly in` | 第一秒就要有"往前走"的感觉 |
+| `points` | `pan` | 扫过几条要点 = 一条视线把它们连起来 |
+| `metric` | `push to` | 数字是线索，推近 |
+| `quote` | `dolly in` | 让观众靠近那句话 |
+| `steps` / `compare` | `tilt` | 上下比较，眼睛自然会往下走 |
+| `timeline` | `crane` | 升降最能交代"一条时间线有多长" |
+| `outro` | `dolly out` | 拉远 = 收束、离开 |
+
+优先级：代码里 `shot.camera`（字符串）> `window.__h2vCamera`（注入）> `CFG.camera`；
+`shot.camera: null` 和 `--camera=off` 都能把某个镜头/整片钉成不动。
 
 ## 素材库：图标 / 人物 / 图形
 
@@ -876,6 +1116,10 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 |---|---|
 | `scripts/render-video-seek.js` | 渲染器内核（冻结时钟 + 逐帧 seek 截图 + ffmpeg 编码 + 报错判定），自包含 |
 | `scripts/qa.js` | 自动化验收（确定性/动感/流畅/框景/字体/报错），纯 Node 零新依赖 |
+| `scripts/qc.js` | **成片质检**：hook / 黑场 / 冻结 / 重复帧 / 亮度 / 场景切换 / 响度 / 联系表，只依赖 ffmpeg |
+| `scripts/audio-master.js` | **响度母版**：两遍 `loudnorm` 线性归一 → −14 LUFS / −2 dBTP，可选限幅 |
+| `scripts/script-check.js` | **文案自检**：单行字数 / 每镜条数 / 阅读速度 / 陈词滥调 / 有没有转折 |
+| `references/writing.md` | 文案规则全文：分叉收敛、六种转折、字数预算、陈词滥调清单、首次观看者检查 |
 | `scripts/lib/hide-chrome.cjs` | 「隐藏播放控件」的共享规则，渲染器与验收器用同一份，规则不会漂移 |
 | `scripts/lib/local-server.cjs` | 本地 http 静态服务器（只绑 127.0.0.1），解锁 ESM / fetch；零新依赖 |
 | `scripts/detect-env.js` | 探测本机浏览器缓存，输出该装哪个 playwright 版本 |
@@ -891,7 +1135,7 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 | `assets/templates/themes.js` | 三套内置主题（midnight / paper / neon），新模板用它换配色 |
 | `assets/lib/motion.js` | 动效时间库（缓动/弹簧/步进/错开），纯函数、零依赖 |
 | `assets/lib/scenes.js` | 多镜头时间轴 + 8 种转场（cut/fade/dip/slide/push/rise/zoom/wipe），纯函数、零依赖 |
-| `assets/lib/camera.js` | 运镜（推拉 / 呼吸 / 手持微抖 / 撞击震动），确定性伪噪声，不用随机数 |
+| `assets/lib/camera.js` | **两层**：运镜（推拉 / 呼吸 / 手持微抖 / 撞击震动，确定性伪噪声）+ **镜头语言**（12 个命名运动 / 5 种缓动 / 一行字解析 / 防露边），确定性 |
 | `assets/lib/shapes.js` | 图形元件：40+ 线性图标 / 卡片 / 箭头 / 正交连接线 / 背景纹理 |
 | `assets/lib/figures.js` | 参数化人物（发型 / 表情 / 姿势 / 配色）+ 对话气泡 |
 | `assets/lib/styles.js` | **风格库**：12 种视觉语言（孔版印刷/剪纸/蓝图/粉笔/等距/霓虹/瑞士/水墨/水彩/铅笔/半调/黏土），`SV.bg` / `SV.text` / `SV.card` / `SV.bar` / `SV.overlay` / `SV.boil` / `SV.BEAT` / `SV.pulse` |
