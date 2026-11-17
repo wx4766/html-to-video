@@ -1,7 +1,7 @@
 {
   "name": "html-to-video",
-  "version": "1.9.0",
-  "description": "Render HTML/Canvas animations to MP4 frame by frame — deterministic, frame-accurate, no GPU. 14 visual styles + 14 templates + beat-synced cuts + camera language + QC + loudness master. · 用代码逐帧做视频：HTML / Canvas → MP4 / GIF / 透明层",
+  "version": "2.0.0",
+  "description": "15 templates + 14 visual styles + beat-synced cuts + camera language + 2.5D space + 100k-brush engine + lighting + QC + loudness master.",
   "keywords": [
     "html-to-video",
     "html-to-mp4",

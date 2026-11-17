@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>模板 · 程序化电影（一个世界，一条镜头轨迹）</title>
+<style>
+  html, body { margin: 0; background: #05070d; }
+  canvas { display: block; width: 100vw; height: 100vh; object-fit: contain; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../lib/brush.js"></script>
+<script src="../lib/space.js"></script>
+<script src="../lib/light.js"></script>
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════════════════════════
+   program-film —— 连续世界模板（v2.0）
+   ─────────────────────────────────────────────────────────────────
+   和 style-film 的根本区别：
+     style-film  每个镜头画到自己的离屏画布，再合成 → 镜头之间没有空间
+     program-film 全片只有一个世界，镜头在里移动 → 前一镜的楼还在下一镜里
+   后者才有「推过去看那个东西」「穿过一条街」这种连续感。
+   ═══════════════════════════════════════════════════════════════════ */
+
+const CFG = {
+  W: 1920, H: 1080,
+  DUR: 20,
+  seed: 21,
+  /* 光线时间轴：黄昏 → 夜。0 是片头，1 是片尾。 */
+  /* 四段而不是两段：日落 → 黄昏 → 夜。
+     开场那一段是「全屏变暗」，这也是 hook 判定的主要来源 ——
+     只靠镜头推进（局部位移）过不了 0.35。 */
+  sky: [[0, 'golden'], [0.20, 'dusk'], [0.60, 'night'], [1, 'night']],
+  /* 线稿模式：true 时楼只有轮廓（「灯塔从线框变写实」那种前半段） */
+  wireUntil: 0.0,
+};
+
+/* 文案：每段有 t0/t1，主行 + 副行。单行不超过 14 个汉字。 */
+const LINES = [
+  { t0: 0.0, t1: 3.4, big: '城市还在烧', sub: '日落前十七分钟' },
+  { t0: 3.4, t1: 6.8, big: '光从楼缝里退', sub: '最后一点暖色在顶上' },
+  { t0: 6.8, t1: 10.2, big: '先是高处的窗', sub: '写字楼总是最早亮' },
+  { t0: 10.2, t1: 13.6, big: '然后是一整片', sub: '六点四十，街就满了' },
+  { t0: 13.6, t1: 16.8, big: '每个亮点是人', sub: '一扇窗就是一段生活' },
+  { t0: 16.8, t1: 20.0, big: '两小时，一座城', sub: '同样的楼，换了一套光' },
+];
+
+/* 若外部给了 story，就用它的文案，其余仍用本模板的世界 */
+if (Array.isArray(window.__story) && window.__story.length) {
+  const src = window.__story;
+  LINES.length = 0;
+  const step = CFG.DUR / src.length;
+  src.forEach((s, i) => {
+    LINES.push({
+      t0: i * step, t1: (i + 1) * step,
+      big: s.big || s.text || s.title || s.head || '',
+      sub: s.sub || s.note || s.small || '',
+    });
+  });
+}
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+let W = CFG.W, H = CFG.H;
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (t) => t * t * (3 - 2 * t);
+const hash = (s, i) => {
+  let h = Math.imul(s | 0, 0x27d4eb2d) + Math.imul(i | 0, 0x165667b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
+/* 窗口包络：进入 a 秒、满 1 秒、退出 b 秒，两端都软 */
+function win(T, a, b) {
+  const fin = 0.5, fout = 0.34;
+  if (T < a || T > b) return 0;
+  return Math.min(1, (T - a) / fin, (b - T) / fout);
+}
+
+/* ── 世界：两排楼 ────────────────────────────────────────────────
+   一条街沿 z 轴伸出去，两排楼。每栋楼记录自己的窗格随机种子，
+   灯亮不亮由「时间 + 种子」决定 —— 不是随机数，是 t 的函数。 */
+function buildCity(seed) {
+  const rows = [];
+  const N = 26;
+  for (let side = -1; side <= 1; side += 2) {
+    let z = 200;
+    for (let i = 0; i < N; i++) {
+      const r1 = hash(seed, i * 7 + (side > 0 ? 101 : 202));
+      const r2 = hash(seed, i * 7 + 3 + (side > 0 ? 101 : 202));
+      /* 瘦高：宽 90~190、高 340~1380、进深 70~150。
+         之前宽 140~300 + 深 160~360，投影出来是方块；
+         真实楼群的识别特征是「高度差大、进深浅」。 */
+      const w = 90 + r1 * 100;
+      const h = 340 + Math.pow(r2, 1.7) * 1040;
+      const gap = 46 + r1 * 96;
+      const x = side * (410 + r1 * 170);
+      rows.push({
+        id: i * 2 + (side > 0 ? 1 : 0),
+        x, z, w, h,
+        depth: 70 + r2 * 80,
+        tone: 0.20 + r2 * 0.12,          // 墙面明度（0 黑 1 白）
+        seed: (seed * 31 + i * 13 + (side > 0 ? 7 : 3)) | 0,
+        rows: Math.max(6, Math.round(h / 15)),
+        cols: Math.max(3, Math.round(w / 13)),
+      });
+      z += gap + w * 0.55;
+    }
+  }
+  return rows;
+}
+
+const CITY = buildCity(CFG.seed);
+/* 远到近排一次，每帧不再重排（相机只沿 z 走，顺序不变） */
+const CITY_SORTED = CITY.slice().sort((a, b) => b.z - a.z);
+
+/* ── 城市灯海 ────────────────────────────────────────────────────
+   远处城市的万家灯火：三层，各 26,000 点，随 t 依次亮起。
+   为什么不每帧现画：26,000 次 fillRect × 3 层 = 78,000 次/帧，
+   逐帧渲染 600 帧要 20 分钟。预渲染成三张图，每帧只 drawImage。
+   ——「大量」和「可渲染」必须同时成立，才叫能力。 */
+let BAND_Y = CFG.H * 0.31;
+const LIGHT_LAYERS = [];
+function buildLights() {
+  LIGHT_LAYERS.length = 0;
+  BAND_Y = H * 0.31;
+  for (let k = 0; k < 3; k++) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    for (let i = 0; i < 26000; i++) {
+      const rx = hash(CFG.seed * 7 + k, i * 5 + 1);
+      const ry = hash(CFG.seed * 7 + k, i * 5 + 2);
+      const rb = hash(CFG.seed * 7 + k, i * 5 + 3);
+      const x = rx * W;
+      /* 越靠地平线越密：pow(ry, 0.55) 把点压向带上沿 */
+      const y = BAND_Y - 96 + Math.pow(ry, 0.50) * 250;
+      const br = 0.22 + rb * 0.78;
+      const sz = br > 0.88 ? 2.0 : 1.2;
+      /* 暖黄到橘：城市灯光的色温区间 */
+      g.fillStyle = `rgba(255,${Math.round(196 + br * 48)},${Math.round(112 + br * 84)},${0.22 + br * 0.52})`;
+      g.fillRect(x, y, sz, sz);
+    }
+    /* 一层很轻的模糊。几万个 1.2px 的方点直接叠，在街道尽头会糊成
+       「雪花屏」——因为那里没有楼挡住，所有点都露出来。
+       城市灯光在空气里本来就是软的，模糊掉才像光。一次成本，每帧省下来。 */
+    const c2 = document.createElement('canvas');
+    c2.width = W; c2.height = H;
+    const g2 = c2.getContext('2d');
+    g2.filter = 'blur(1.7px)';
+    g2.drawImage(c, 0, 0);
+    LIGHT_LAYERS.push(c2);
+  }
+}
+buildLights();
+
+/* ── 相机轨迹 ────────────────────────────────────────────────────
+   一条推进 + 抬头的轨迹。key 的 t 归一化到 0..1，方便改时长。 */
+function camAt(T) {
+  const u = T / CFG.DUR;                        // 0..1
+  /* 前快后慢（1-(1-u)^2.4），不是 smoothstep。
+     原因：smoothstep 起步几乎为零，前 2 秒镜头只走 36 单位，
+     画面几乎不动 —— qc 的 hook 判死（0.13，门槛 0.35）。
+     观众在信息流里只有 2 秒决定要不要划走，开场必须立刻在动。 */
+  const e = 1 - Math.pow(1 - clamp(u, 0, 1), 2.4);
+  /* 世界 y 向下：地面 y=0，相机在地面之上所以 y 是负数。
+     高 300 约等于站在三四层楼上 —— 比人眼高一点，能看到街的纵深。 */
+  const z = lerp(-1550, -420, e);
+  const y = lerp(-300, -238, e);
+  /* look 的眼光比机位抬得更快：镜头一边走一边往上看，
+     观众才会注意到「窗户在亮」。抬头 = look 的 y 更负。 */
+  const lookY = lerp(-250, -520, smooth(clamp((u - 0.22) / 0.78, 0, 1)));
+  const lookZ = z + 1900;
+  const roll = Math.sin(u * 3.1) * 0.006 + Math.sin(u * 11.7) * 0.0016;
+  /* 第二项是常驻微振：手举机器不会绝对静止。没有它，任何一段
+     渐近末端的运镜都会被 qc 判成「画面卡住」。 */
+  const bob = Math.sin(u * 9.3) * 7;
+  return SP.cam({ pos: [Math.sin(u * 1.4) * 26, y + bob, z], look: [0, lookY + bob * 0.5, lookZ], fov: 46, roll, w: W, h: H });
+}
+
+/* 光照着色：材质明度 × （环境光 + 主光 × 受光比例）。
+   k 是这个面「有多正对光源」—— 正面朝街（背光）取小值，侧面取大值。
+   这一步是「立体」与「纸片」的分水岭：没有它，加了侧面也只是一块灰。 */
+function lit(lum, L, k) {
+  const a = L.ambI, s = L.sunI * k;
+  /* 三个系数不是随手写的：混凝土/玻璃幕墙的固有色偏冷（蓝多红少），
+     如果不偏，黄昏的橙光会把它染成巧克力色。 */
+  return [
+    lum * (L.ambient[0] * a + L.sun[0] * s) * 3.4 * 0.80,
+    lum * (L.ambient[1] * a + L.sun[1] * s) * 3.4 * 0.90,
+    lum * (L.ambient[2] * a + L.sun[2] * s) * 3.6 * 1.02,
+  ];
+}
+function css(c, fog, amb, mul) {
+  const m = mul == null ? 1 : mul;
+  const f = fog == null ? 0 : fog;
+  const r = clamp(c[0] * m * (1 - f) + amb[0] * f, 0, 255) | 0;
+  const g = clamp(c[1] * m * (1 - f) + amb[1] * f, 0, 255) | 0;
+  const b = clamp(c[2] * m * (1 - f) + amb[2] * f, 0, 255) | 0;
+  return `rgb(${r},${g},${b})`;
+}
+
+/* ── 绘制：一栋楼（3D 盒子） ────────────────────────────────────
+   投 8 个顶点，画「正面 + 朝街的那一面」。
+   站在街中间看两侧的楼，看到的永远是楼的**内侧**（朝街面）——
+   所以侧面用主光着色、正面用环境光，两面的明暗差就是体积。 */
+function back_i(i) { return i * 2654435761 % 2147483647; }
+
+function drawBuilding(g, b, cam, T, L, wire) {
+  const hw = b.w / 2;
+  const z0 = b.z, z1 = b.z + b.depth;
+  const yt = -b.h;
+
+  const bL = SP.project(cam, [b.x - hw, 0, z0]);
+  const bR = SP.project(cam, [b.x + hw, 0, z0]);
+  const tL = SP.project(cam, [b.x - hw, yt, z0]);
+  const tR = SP.project(cam, [b.x + hw, yt, z0]);
+  if (!bL.vis || !bR.vis || !tL.vis || !tR.vis) return;
+
+  const wPx = Math.abs(bR.x - bL.x);
+  const hPx = Math.abs(bL.y - tL.y);
+  if (wPx < 2 || hPx < 2) return;
+
+  const fog = SP.fog(cam, bL.z, { near: 1400, far: 5200, max: 0.80 });
+  const amb = L.ambient;
+
+  /* 哪一面朝街：相机在楼的左边就看到左面，反之右面。 */
+  const seeRight = cam.pos[0] > b.x + hw;
+  const seeLeft = cam.pos[0] < b.x - hw;
+  const sideSign = seeRight ? 1 : seeLeft ? -1 : 0;
+  const sx = b.x + sideSign * hw;
+  const sB = sideSign ? SP.project(cam, [sx, 0, z0]) : null;
+  const sT = sideSign ? SP.project(cam, [sx, yt, z0]) : null;
+  const sB2 = sideSign ? SP.project(cam, [sx, 0, z1]) : null;
+  const sT2 = sideSign ? SP.project(cam, [sx, yt, z1]) : null;
+
+  g.save();
+
+  if (wire) {
+    /* 线稿：只有轮廓和窗格线。冷色、低透明。 */
+    const a = 0.40 * (1 - fog);
+    g.strokeStyle = `rgba(168,206,255,${a})`;
+    g.lineWidth = Math.max(0.6, 1.1 * bL.s);
+    g.beginPath();
+    g.moveTo(bL.x, bL.y); g.lineTo(bR.x, bR.y); g.lineTo(tR.x, tR.y); g.lineTo(tL.x, tL.y);
+    g.closePath(); g.stroke();
+    if (sideSign && sB2 && sB2.vis) {
+      g.globalAlpha = 0.6;
+      g.beginPath();
+      g.moveTo(sB.x, sB.y); g.lineTo(sB2.x, sB2.y); g.lineTo(sT2.x, sT2.y); g.lineTo(sT.x, sT.y);
+      g.closePath(); g.stroke();
+      g.globalAlpha = 1;
+    }
+    /* 窗格线 */
+    g.globalAlpha = 0.34;
+    for (let c = 1; c < b.cols; c++) {
+      const k = c / b.cols;
+      const x0 = lerp(bL.x, bR.x, k), x1 = lerp(tL.x, tR.x, k);
+      g.beginPath(); g.moveTo(x0, bL.y); g.lineTo(x1, tL.y); g.stroke();
+    }
+    for (let rr = 1; rr < b.rows; rr++) {
+      const k = rr / b.rows;
+      const y0 = lerp(bL.y, tL.y, k), y1 = lerp(bR.y, tR.y, k);
+      g.beginPath(); g.moveTo(bL.x, y0); g.lineTo(bR.x, y1); g.stroke();
+    }
+    g.restore();
+    return;
+  }
+
+  /* 侧面：受主光。先画（它在正面后面，虽然不重叠，但按远到近更稳）。 */
+  if (sideSign && sB2 && sB2.vis && sT2.vis) {
+    g.beginPath();
+    g.moveTo(sB.x, sB.y); g.lineTo(sB2.x, sB2.y); g.lineTo(sT2.x, sT2.y); g.lineTo(sT.x, sT.y);
+    g.closePath();
+    g.fillStyle = css(lit(b.tone, L, 0.80), fog, amb, 1.02);
+    g.fill();
+
+    /* 侧面的窗：只画竖排的暗条，省掉逐窗计算。
+       近处的楼才画，远处那点宽度看不出来。 */
+    if (wPx > 40) {
+      const sw = Math.abs(sB2.x - sB.x);
+      if (sw > 8) {
+        const litP = Math.pow(clamp(T / (CFG.DUR * 0.78), 0, 1), 0.62);
+        const th = lerp(0.95, 0.34, smooth(litP));
+        for (let c = 0; c < Math.max(2, Math.round(sw / 26)); c++) {
+          const k = (c + 0.5) / Math.max(2, Math.round(sw / 26));
+          const px = lerp(sB.x, sB2.x, k), py = lerp(sB.y, sB2.y, k);
+          const qx = lerp(sT.x, sT2.x, k), qy = lerp(sT.y, sT2.y, k);
+          for (let rr = 0; rr < b.rows; rr++) {
+            if (hash(b.seed, c * 13 + rr * 71) < th) continue;
+            const r0 = rr / b.rows, r1 = (rr + 0.72) / b.rows;
+            g.globalAlpha = 0.62 * (1 - fog);
+            g.fillStyle = 'rgba(255,214,150,1)';
+            g.fillRect(
+              lerp(px, qx, r0), lerp(py, qy, r0),
+              Math.max(1, sw * 0.05), Math.max(1, (qy - py) / b.rows * 0.55),
+            );
+          }
+        }
+        g.globalAlpha = 1;
+      }
+    }
+  }
+
+  /* 正面：背光，比侧面暗。窗户画在这上面。 */
+  g.beginPath();
+  g.moveTo(bL.x, bL.y); g.lineTo(bR.x, bR.y); g.lineTo(tR.x, tR.y); g.lineTo(tL.x, tL.y);
+  g.closePath();
+  g.fillStyle = css(lit(b.tone, L, 0.34), fog, amb, 1.12);
+  g.fill();
+
+  /* 正面与侧面的交界：一条 1px 暗线。没有它，两个面同色时会连成一片，
+     楼看着像一个斜切的纸片。 */
+  if (sideSign) {
+    g.strokeStyle = `rgba(0,0,0,${0.34 * (1 - fog)})`;
+    g.lineWidth = Math.max(0.5, 1.0 * bL.s);
+    g.beginPath(); g.moveTo(sB.x, sB.y); g.lineTo(sT.x, sT.y); g.stroke();
+  }
+
+  /* 顶沿受光边：一条 1~3px 的亮线。有它楼才「立」在光里。 */
+  const rim = L.sun;
+  g.strokeStyle = `rgba(${rim[0] | 0},${rim[1] | 0},${rim[2] | 0},${(0.14 + 0.40 * L.sunI) * (1 - fog)})`;
+  g.lineWidth = Math.max(1, 2.2 * bL.s);
+  g.beginPath(); g.moveTo(tL.x, tL.y); g.lineTo(tR.x, tR.y); g.stroke();
+
+  /* 墙面的竖向笔触：只画在楼自己的正面内，不溢出。
+     近处楼（wPx>70）才画 —— 远处那点宽度画上去是噪点。 */
+  if (wPx > 70) {
+    const n = Math.min(26, Math.round(wPx / 26));
+    for (let i = 0; i < n; i++) {
+      const k = hash(b.seed, back_i(i));
+      const xx = bL.x + wPx * ((i + 0.5) / n + (k - 0.5) * 0.5 / n);
+      g.globalAlpha = 0.05 + k * 0.05;
+      g.strokeStyle = k > 0.5 ? 'rgba(255,240,214,1)' : 'rgba(0,0,0,1)';
+      g.lineWidth = 0.8 + k * 1.4;
+      g.beginPath();
+      g.moveTo(xx, tL.y + hPx * 0.02);
+      g.lineTo(xx + (k - 0.5) * 4, bL.y - hPx * 0.01);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+
+  /* 正面窗户 */
+  const litP = Math.pow(clamp(T / (CFG.DUR * 0.78), 0, 1), 0.62);
+  const thresh = lerp(0.96, 0.42, smooth(litP));
+  if (wPx > 12 && hPx > 16) {
+    const cw = wPx / b.cols, chh = hPx / b.rows;
+    /* 竖长窗 + 大窗间墙：正方形格子一排排填满是「马赛克」，
+       真实楼面是竖向开窗、横向有楼板。 */
+    const ww = Math.max(1, cw * 0.52);
+    const wh = Math.max(1, chh * 0.54);
+    for (let c = 0; c < b.cols; c++) {
+      for (let rw = 0; rw < b.rows; rw++) {
+        /* 三选一：整层亮（办公室）、整列亮（设备房）、单窗亮。
+           纯逐窗随机 → 均匀网格，像 Excel；有了整层整列，
+           才像真的有人在一层层上班。 */
+        const rowLit = hash(b.seed, rw * 191 + 5) > thresh;
+        const colLit = hash(b.seed, c * 313 + 9) > thresh + 0.18;
+        const cellLit = hash(b.seed, c * 31 + rw * 7) > thresh;
+        if (!(rowLit || colLit || cellLit)) continue;
+        const bri = 0.5 + hash(b.seed, c * 17 + rw * 53) * 0.5;
+        const warm = hash(b.seed, c * 5 + rw * 11);
+        g.fillStyle = `rgba(255,${Math.round(lerp(198, 224, warm))},${Math.round(lerp(126, 170, warm))},${bri * (0.32 - fog * 0.27)})`;
+        g.fillRect(
+          bL.x + c * cw + (cw - ww) / 2, tL.y + rw * chh + (chh - wh) / 2,
+          ww, wh,
+        );
+      }
+    }
+  }
+  g.restore();
+}
+
+/* ── 主绘制 ────────────────────────────────────────────────────── */
+function drawFrame(T) {
+  T = clamp(T, 0, CFG.DUR - 0.001);
+  const u = T / CFG.DUR;
+  const L = LT.timeline(CFG.sky, u);
+  const cam = camAt(T);
+
+  /* 1. 天空：地平线暖、天顶冷。颜色从环境光与主光里取，
+        不是写死的渐变色 —— 换时间轴整片天会跟着变。 */
+  const horizon = SP.project(cam, [0, 0, 6000]);
+  const hzY = clamp(horizon.vis ? horizon.y : H * 0.62, H * 0.30, H * 0.92);
+  const sk = ctx.createLinearGradient(0, -H * 0.15, 0, hzY + H * 0.10);
+  sk.addColorStop(0, `rgb(${L.ambient[0] * 0.55 | 0},${L.ambient[1] * 0.62 | 0},${L.ambient[2] * 0.95 | 0})`);
+  sk.addColorStop(0.55, `rgb(${lerp(L.ambient[0], L.sun[0], 0.30) | 0},${lerp(L.ambient[1], L.sun[1], 0.24) | 0},${lerp(L.ambient[2], L.sun[2], 0.16) | 0})`);
+  sk.addColorStop(1, `rgb(${L.sun[0] * 0.72 | 0},${L.sun[1] * 0.60 | 0},${L.sun[2] * 0.50 | 0})`);
+  ctx.fillStyle = sk;
+  ctx.fillRect(0, 0, W, H);
+
+  /* 2. 天空的云：三团柔和的暖色，不是笔触。
+        云在真实画面里是虚的，用笔触画会变成「雨丝」——
+        这是 2.0 的一条教训：笔触只用在需要质感的实体上。 */
+  for (let i = 0; i < 4; i++) {
+    const cx = W * (0.10 + i * 0.26) - u * 46 * (i % 2 ? 1 : -1);
+    const cy = H * (0.08 + (i % 3) * 0.075);
+    const rr = W * (0.17 + (i % 2) * 0.11);
+    LT.radial(ctx, {
+      x: cx, y: cy, r: rr, inner: 0.18, mode: 'source-over',
+      color: [lerp(L.ambient[0], L.sun[0], 0.5) | 0, lerp(L.ambient[1], L.sun[1], 0.42) | 0, lerp(L.ambient[2], L.sun[2], 0.36) | 0],
+      i: 0.075 + 0.05 * L.sunI,
+    });
+  }
+
+  /* 2b. 城市灯海：三层依次亮起。地平线上下浮时整体跟着平移。 */
+  const bandDy = hzY - BAND_Y;
+  for (let k = 0; k < 3; k++) {
+    const a = clamp((u - 0.02 - k * 0.15) / 0.30, 0, 1);
+    if (a <= 0) continue;
+    ctx.save();
+    /* 裁到地平线附近的一条窄带。不裁的话，镜头一抬头，
+       灯海就跟着升到天上去，变成「星空」——看着像 bug。 */
+    ctx.beginPath();
+    ctx.rect(0, hzY - 96, W, 190);
+    ctx.clip();
+    ctx.globalAlpha = smooth(a) * 0.66;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(LIGHT_LAYERS[k], 0, bandDy);
+    ctx.restore();
+  }
+
+  /* 3. 地面：沥青不是橙色，是「被夕阳打了一下」的深灰。
+        这里如果直接用 sun 的颜色会变成沙漠 —— 只能用它的 0.3。 */
+  /* 地面不能只用环境光算 —— 那样夜里是纯黑，一大块空洞。
+     真实街面被两侧路灯反复照，基础亮度始终在 RGB 30~45 之间。
+     这里给一个「城市环境光」下限，再叠天空/夕阳的反射。 */
+  const cityLit = lerp(0.35, 1.0, clamp((u - 0.25) / 0.35, 0, 1));
+  const gBase = [
+    (28 + 16 * cityLit) * (0.55 + L.ambI * 0.55),
+    (26 + 12 * cityLit) * (0.55 + L.ambI * 0.55),
+    (32 + 12 * cityLit) * (0.55 + L.ambI * 0.55),
+  ];
+  const gr = ctx.createLinearGradient(0, hzY, 0, H);
+  gr.addColorStop(0, `rgb(${lerp(L.sun[0] * 0.22, gBase[0], 0.55) | 0},${lerp(L.sun[1] * 0.17, gBase[1], 0.55) | 0},${lerp(L.sun[2] * 0.18, gBase[2], 0.55) | 0})`);
+  gr.addColorStop(0.18, `rgb(${gBase[0] | 0},${gBase[1] | 0},${gBase[2] | 0})`);
+  gr.addColorStop(1, `rgb(${gBase[0] * 0.62 | 0},${gBase[1] * 0.62 | 0},${gBase[2] * 0.68 | 0})`);
+  ctx.fillStyle = gr;
+  ctx.fillRect(0, hzY, W, H - hzY);
+
+  /* 中央虚线：一条就够，它的作用是「告诉观众这是车道」，
+     不是「画一个马路」。太清楚反而假。 */
+  ctx.save();
+  for (let z = 300; z < 5200; z += 300) {
+    const a = SP.project(cam, [0, 0, z]);
+    const b = SP.project(cam, [0, 0, z + 150]);
+    if (!a.vis || !b.vis) continue;
+    const fg = SP.fog(cam, a.z, { near: 1200, far: 5000, max: 0.95 });
+    ctx.globalAlpha = (1 - fg) * 0.13;
+    ctx.strokeStyle = 'rgb(232,222,200)';
+    ctx.lineWidth = Math.max(0.6, Math.min(3, 5 * a.s));
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.restore();
+
+  /* 3b. 路面的横向接缝：每隔 420 世界单位一条。
+        这几条线是全片透视感的来源 —— 少了它们，地面就是一块色板。 */
+  ctx.save();
+  ctx.strokeStyle = `rgba(${L.sun[0] * 0.55 | 0},${L.sun[1] * 0.45 | 0},${L.sun[2] * 0.40 | 0},0.16)`;
+  for (let z = 200; z < 6000; z += 420) {
+    const a = SP.project(cam, [-760, 0, z]);
+    const b = SP.project(cam, [760, 0, z]);
+    if (!a.vis || !b.vis) continue;
+    const fg = SP.fog(cam, a.z, { near: 1200, far: 5200, max: 0.9 });
+    ctx.globalAlpha = (1 - fg) * 0.32;
+    ctx.lineWidth = Math.max(0.4, Math.min(1.8, 1.1 * a.s));
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.restore();
+
+  /* 4. 楼：远到近。线稿 → 实体在 u=0.18 处切换，
+        切换那 0.6 秒用透明度过渡，不是硬切。 */
+  const wireP = CFG.wireUntil > 0 ? clamp((u - CFG.wireUntil) / 0.05, 0, 1) : 1;
+  for (let i = 0; i < CITY_SORTED.length; i++) {
+    const b = CITY_SORTED[i];
+    if (wireP < 1 && wireP > 0) {
+      drawBuilding(ctx, b, cam, T, L, true);
+      ctx.globalAlpha = smooth(wireP);
+      drawBuilding(ctx, b, cam, T, L, false);
+      ctx.globalAlpha = 1;
+    } else {
+      drawBuilding(ctx, b, cam, T, L, wireP < 0.5);
+    }
+  }
+
+  /* 5. （笔触已移进 drawBuilding，只画在楼面上。
+        曾经这里是一整幅 overlay 的竖向笔触 —— 结果天空也吃了竖向条纹，
+        像下着雨。教训：全屏叠加的「质感」一定会污染它不该去的地方。） */
+
+  /* 5b. 路灯。这条街上真正让「夜」成立的不是窗，是路上的灯：
+         灯头一个亮点 + 一圈光辉 + 地面上一块压扁的光斑。
+         三样缺一不可 —— 少了地面光斑，灯看着像浮在空中的萤火虫。 */
+  const LAMPS = [[-545, 260], [545, 520], [-545, 980], [545, 1460], [-545, 2050], [545, 2760]];
+  const lampOn = clamp((u - 0.30) / 0.22, 0, 1);
+  if (lampOn > 0.01) {
+    for (let i = 0; i < LAMPS.length; i++) {
+      const lp = SP.project(cam, [LAMPS[i][0], -72, LAMPS[i][1]]);
+      if (!lp.vis) continue;
+      const fg = SP.fog(cam, lp.z, { near: 1500, far: 5600, max: 0.9 });
+      const k = (1 - fg) * lampOn;
+      const r = Math.min(430, 200 * lp.s);
+
+      /* 地面光斑：椭圆，压在灯正下方 */
+      const gp = SP.project(cam, [LAMPS[i][0], 0, LAMPS[i][1]]);
+      if (gp.vis) {
+        ctx.save();
+        ctx.translate(gp.x, gp.y);
+        ctx.scale(1, 0.30);
+        const ggr = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.62);
+        ggr.addColorStop(0, `rgba(255,186,104,${0.30 * k})`);
+        ggr.addColorStop(1, 'rgba(255,186,104,0)');
+        ctx.fillStyle = ggr;
+        ctx.beginPath(); ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+
+      LT.radial(ctx, { x: lp.x, y: lp.y, r, color: [255, 196, 120], i: 0.34 * k, inner: 0.03 });
+      ctx.save();
+      ctx.globalAlpha = k;
+      ctx.fillStyle = 'rgba(255,232,186,0.95)';
+      ctx.beginPath(); ctx.arc(lp.x, lp.y, Math.max(1.2, 2.6 * lp.s), 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* 6. 城市光：地平线一带的暖辉 + 左侧一盏路灯。
+        两个光源的颜色都从 L.sun 派生，所以跟着时间走。 */
+  LT.radial(ctx, {
+    x: W * 0.5, y: hzY + H * 0.02, r: W * 0.62,
+    color: L.sun, i: 0.05 + 0.09 * L.sunI, inner: 0.02,
+  });
+  /* 街道尽头那一小团更亮：没有它，街道通向一片纯黑，
+     观众会觉得「画面缺一块」。 */
+  LT.radial(ctx, {
+    x: W * 0.5, y: hzY + 6, r: W * 0.16,
+    color: [255, 224, 176], i: 0.10 + 0.22 * lampOn, inner: 0.01,
+  });
+  LT.radial(ctx, {
+    x: W * 0.13, y: H * 0.66, r: W * 0.30,
+    color: [255, 214, 150], i: 0.16 * clamp((u - 0.45) / 0.3, 0, 1), inner: 0.04,
+  });
+
+  /* 7. 收尾：调色 → 曝光 → 暗角。顺序不能反
+        （暗角在调色前做，会被后面的调色一起推亮）。 */
+  LT.grade(ctx, W, H, L, { alpha: 0.18 });
+  LT.vignette(ctx, W, H, { amount: 0.46, cy: 0.46 });
+
+  /* 8. 文字区的底衬：左下角一块渐变压暗。
+        不加的话，文字压在亮地面上根本读不出来 —— 底衬不能只靠
+        「文字背后一个矩形」，那会变成一块黑膏药。渐变才是字幕片的做法。 */
+  const gd = ctx.createLinearGradient(0, H * 0.50, 0, H);
+  gd.addColorStop(0, 'rgba(2,4,9,0)');
+  gd.addColorStop(0.45, 'rgba(2,4,9,0.30)');
+  gd.addColorStop(1, 'rgba(2,4,9,0.66)');
+  ctx.fillStyle = gd;
+  ctx.fillRect(0, H * 0.50, W * 0.80, H * 0.50);
+
+  /* 9. 文字。主行大字压在左下安全区，副行跟在后头。
+        每段有独立的入场窗口，前一段出去后一段才进来。 */
+  drawLines(T);
+}
+
+function drawLines(T) {
+  const fontMain = '"Noto Sans SC", "Source Han Sans SC", "PingFang SC", system-ui, sans-serif';
+  const fontMono = 'ui-monospace, "SF Mono", Menlo, monospace';
+
+  for (let i = 0; i < LINES.length; i++) {
+    const L = LINES[i];
+    const p = win(T, L.t0 + 0.10, L.t1 - 0.06);
+    if (p <= 0) continue;
+    const e = smooth(p);
+
+    const bigSize = Math.min(W * 0.082, 132);
+    const x = W * 0.085;
+    const y = H * 0.735;
+
+    ctx.save();
+    /* 大字从下方 26px 抬起：入场有方向，不是淡入一个静止的东西 */
+    ctx.translate(0, (1 - e) * 26);
+    ctx.globalAlpha = e;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+
+    ctx.font = `700 ${bigSize}px ${fontMain}`;
+
+    ctx.shadowColor = 'rgba(0,0,0,0.62)';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = '#f6efe2';
+    ctx.fillText(L.big, x, y);
+    ctx.shadowBlur = 0;
+
+    if (L.sub) {
+      const sp = win(T, L.t0 + 0.42, L.t1 - 0.04);
+      if (sp > 0) {
+        ctx.globalAlpha = smooth(sp) * 0.72;
+        ctx.font = `400 ${Math.round(bigSize * 0.26)}px ${fontMono}`;
+        ctx.fillStyle = '#e8dcc6';
+        ctx.fillText(L.sub, x + 3, y + bigSize * 0.56);
+      }
+    }
+
+    /* 段号：右下角，给片子一点「档案感」 */
+    ctx.globalAlpha = e * 0.46;
+    ctx.font = `400 22px ${fontMono}`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`${String(i + 1).padStart(2, '0')} / ${String(LINES.length).padStart(2, '0')}`, W * 0.915, H * 0.905);
+    ctx.restore();
+  }
+}
+
+/* ── 尺寸与渲染契约 ────────────────────────────────────────────── */
+function resize() {
+  /* 跟随视口，不写死尺寸 —— 写死的话 --width/--height 会静默裁掉右下角。
+     尺寸变了要重建灯海（它是按像素预渲染的）。 */
+  const w = Math.max(1, Math.round(window.innerWidth));
+  const h = Math.max(1, Math.round(window.innerHeight));
+  if (w === W && h === H && canvas.width === w) return;
+  const shrank = w !== W || h !== H;
+  W = w; H = h;
+  canvas.width = W; canvas.height = H;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (shrank) buildLights();
+}
+resize();
+window.addEventListener('resize', () => { resize(); renderAt(0); });
+
+function renderAt(t) { drawFrame(clamp(t, 0, CFG.DUR - 0.001)); }
+window.__seek = renderAt;
+window.__ready = true;
+
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = (now) => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % CFG.DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

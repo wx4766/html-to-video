@@ -83,7 +83,7 @@ node scripts/render-video-seek.js my-video.html --duration=6 --fps=30 --width=10
 
 ---
 
-## 14 templates you can ship today
+## 15 templates you can ship today
 
 Copy one, edit `CFG`, render. Each template is a single self-contained HTML file.
 
@@ -108,6 +108,49 @@ Every template ships in both landscape and portrait layout — the layout picks 
 the viewport, so `--width/--height` is the only switch.
 
 ---
+
+## One world, one camera path (v2.0)
+
+Every 1.x template is "one shot, one canvas": each shot renders to its own offscreen buffer, then
+transitions composite them. Clean, but it cannot do three things — **push in on something**
+(the next shot is a fresh canvas, that thing is gone), **travel through a space**, or
+**change the light over time** (a translucent black overlay is a filter, not light).
+
+2.0 adds three independent layers. Use one or all:
+
+| Module | Solves | Key capability |
+|---|---|---|
+| `assets/lib/space.js` | Camera movement through a continuous space | Perspective projection / depth sort / distance fog / look-at camera / keyframed path / ring·grid·helix layouts |
+| `assets/lib/brush.js` | Scale — the texture of 100k strokes | Bucketed batch submission (`stroke` calls drop from 100k to a dozen) / morphing / text snapping / direction fields |
+| `assets/lib/light.js` | Light that changes | Blackbody colour temperature (1900K→9500K) / day-night keyframes / radial light & shafts / grade·exposure·vignette·bloom |
+
+```bash
+node scripts/render-video-seek.js assets/templates/program-film.html --duration=20
+```
+
+That renders **a street from dusk to midnight in 20 seconds**: two rows of 3D box towers
+(real projected vertices — faces away from the sun shaded by ambient, street-facing sides by key light),
+78k city lights in three layers, six street lamps with ground pools, one travelling camera,
+colour temperature 2200K → 9500K.
+
+**Why 2.0 and not 1.10**: it changes the rendering structure (per-shot offscreen → one world), not just features.
+
+| Measured | |
+|---|---|
+| 120k strokes generated | 61 ms |
+| 120k strokes morphed | 22 ms |
+| 100k strokes snapped to text | 310 ms |
+| 20s film at 1920×1080 / 30fps | 600 frames, `h2v qc` all green |
+
+| Can do | Cannot do |
+|---|---|
+| Camera dolly / pan / travel through space | Shadow maps / PBR (no z-buffer, painter's algorithm only) |
+| Texture from 100k+ strokes | Per-pixel shaders (fluid, fire, glass refraction) |
+| Light changing over time | Millions of particles per frame on the fly (pre-render instead) |
+| Continuous viewpoint change (flat → 3D tunnel) | Real material reflection (suggested with light + strokes) |
+
+Need real 3D? Drop in `three.js` — the renderer only cares about a canvas, not how you draw on it,
+and `--alpha` lets you composite a WebGL layer over live footage.
 
 ## 14 visual styles: same content, different film
 

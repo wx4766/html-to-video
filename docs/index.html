@@ -78,6 +78,10 @@ h2{font-size:clamp(23px,3.2vw,31px);letter-spacing:-.02em;margin:0 0 34px;font-w
 /* features */
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
   border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:26px 0 8px}
+.duo figure{margin:0}
+.duo img{width:100%;display:block;border-radius:10px;border:1px solid var(--line)}
+.duo figcaption{font-size:12px;opacity:.55;margin-top:8px;letter-spacing:.04em}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
   border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .cell{background:var(--paper);padding:26px 24px 28px}
@@ -129,6 +133,7 @@ footer a:hover{color:var(--ink)}
 @media(max-width:820px){
   .grid3{grid-template-columns:1fr}
   .grid4{grid-template-columns:1fr}
+  .duo{grid-template-columns:1fr}
   .cards{grid-template-columns:repeat(2,1fr)}
   .two{grid-template-columns:1fr}
   .ratios{justify-content:flex-start;overflow-x:auto;padding-bottom:6px}
@@ -237,6 +242,34 @@ footer a:hover{color:var(--ink)}
   <div class="cmd" style="margin-top:22px"><span>$</span>h2v check story.json &amp;&amp; h2v qc out.mp4 &amp;&amp; h2v master out.mp4 --out final.mp4</div>
 </section>
 
+<section id="program" class="wrap">
+  <p class="sec-title">v2.0 · 换的是渲染结构</p>
+  <h2>一个世界，一条镜头轨迹</h2>
+  <p class="lede">1.x 的模板是一镜一画：每镜画到自己的画布再合成。干净，但镜头没法「推过去看某个东西」——下一镜是全新画布，那东西已经不在了；也没法穿过一条街，更没法让光随时间变。2.0 把全片放进同一个空间，镜头只是在这个空间里移动。</p>
+  <div class="duo">
+    <figure><img src="preview-program-dusk.png" alt="黄昏的城市街道"><figcaption>0s · 2200K · 日落最后两分钟</figcaption></figure>
+    <figure><img src="preview-program-night.png" alt="深夜的城市街道"><figcaption>18s · 9500K · 窗户亮了一大半</figcaption></figure>
+  </div>
+  <div class="grid3" style="margin-top:26px">
+    <div class="cell">
+      <span class="tag">lib/space.js</span>
+      <h3>空间</h3>
+      <p>透视投影、深度排序、距离雾、look-at 相机、关键帧轨迹。不是 3D 引擎，只做「让镜头在连续空间里移动」——够用来推过去讲一个结构，或穿过一条街。</p>
+    </div>
+    <div class="cell">
+      <span class="tag">lib/brush.js</span>
+      <h3>笔触</h3>
+      <p>TypedArray 笔触场，按「颜色 × 粗细」分桶批量提交，stroke 调用从十万次降到十几个。12 万笔生成 61ms、形态插值 22ms。</p>
+    </div>
+    <div class="cell">
+      <span class="tag">lib/light.js</span>
+      <h3>光</h3>
+      <p>黑体色温、昼夜关键帧、径向光与光束、全屏调色与暗角。环境光和主光分开存——只调一个那是加滤镜，不是换时间。</p>
+    </div>
+  </div>
+  <div class="cmd" style="margin-top:22px"><span>$</span>h2v new my-film --template=program-film &amp;&amp; h2v render my-film.html --duration=20</div>
+</section>
+
 <section id="ratios" class="wrap">
   <p class="sec-title">同一份 HTML</p>
   <h2>出片只需要换参数，不需要重做</h2>
@@ -327,7 +360,7 @@ footer a:hover{color:var(--ink)}
 </section>
 
 <section id="templates" class="wrap">
-  <p class="sec-title">14 个开箱模板 · 14 种风格</p>
+  <p class="sec-title">15 个开箱模板 · 14 种风格</p>
   <h2>改文字就能出片</h2>
   <div class="cards">
     <a class="card" href="demo-bar-chart.gif"><img src="img/preview-bar-chart.jpg" width="760" height="428" alt="柱状图动画模板" loading="lazy" decoding="async"><div class="cap"><span>柱状图</span><code>bar-chart</code></div></a>

@@ -75,7 +75,7 @@
 于是闭环是：LLM 写 JSON/HTML → 渲 → QA 自己判红绿 → 红了就照着报告改 → 再渲。
 人只在最后看一眼成片。
 
-## 14 个开箱即用模板
+## 15 个开箱即用模板
 
 拷贝一个，改顶部 `CFG` 里的文案和数据，直接出片。
 
@@ -95,6 +95,8 @@
 | [<img src="docs/img/preview-quote-card.jpg" width="150" alt="引言卡">](docs/img/preview-quote-card.jpg) | `assets/templates/quote-card.html` | **引言卡 / 金句**：大引号压底 + 引文逐行推进 + 出处短线，访谈 / 书摘 / 播客切片用 |
 | [<img src="docs/img/preview-chapter-card.jpg" width="150" alt="章节卡">](docs/img/preview-chapter-card.jpg) | `assets/templates/chapter-card.html` | **章节卡 / 过渡页**：序号水印 + 标题 + 章节进度点，把长片切成几段 |
 | [<img src="docs/img/preview-ui-showcase.jpg" width="150" alt="界面演示">](docs/img/preview-ui-showcase.jpg) | `assets/templates/ui-showcase.html` | **界面演示**：窗口推入 + 缓推 + 两块聚光标注，产品发布 / 功能更新用；也可换成真实截图 |
+
+| [<img src="docs/img/preview-ui-showcase.jpg" width="150" alt="程序化电影">](docs/preview-program-film.png) | `assets/templates/program-film.html` | **程序化电影**：一条街从黄昏到深夜，3D 盒子楼 + 7.8 万点灯海 + 镜头穿越 + 色温从 2200K 走到 9500K。v2.0 三层能力的最小完整例子 |
 
 > 动图只为让你看见「它在动」；**点动图打开原片**看真实画质（横屏 1080p，竖屏 1080×1920）。
 > 静帧大图在 `docs/preview-*.png`。
@@ -453,6 +455,45 @@ node scripts/render-video-seek.js subtitle-card.html --duration=8 --srt=voice.sr
 实测 4 句 / 80 帧，误差 0 ms。
 
 > 底部 15% 是各平台进度条 / 按钮区，字幕踩进去等于白写；`qa.js` 会提示「进字幕带」。
+
+## 一个世界，一条镜头轨迹（v2.0）
+
+1.x 的模板都是「一镜一画」：每镜画到自己的离屏画布再合成。干净，但做不了三件事——
+**镜头推过去看某个东西**（下一镜是全新画布，那东西已经不在了）、**镜头穿过一条街**、
+**光随时间变**（只能叠半透明黑，那是滤镜不是光）。
+
+2.0 加了三层。三个库互相独立，可以只用其中一个：
+
+| 库 | 解决什么 | 关键能力 |
+|---|---|---|
+| `assets/lib/space.js` | 镜头在连续空间里移动 | 透视投影 / 深度排序 / 距离雾 / look-at 相机 / 关键帧轨迹 / 环形·网格·螺旋布局 |
+| `assets/lib/brush.js` | 「量」——十万笔的质感 | 按「颜色 × 粗细」分桶批量提交（`stroke` 从 10 万次降到十几个）/ 形态插值 / 文字轮廓吸附 / 方向场 |
+| `assets/lib/light.js` | 光随时间变 | 黑体色温（1900K→9500K）/ 昼夜关键帧 / 径向光·光束 / 调色·曝光·暗角·泛光 |
+
+```bash
+node scripts/render-video-seek.js assets/templates/program-film.html --duration=20
+```
+
+出的是**一条街从黄昏到深夜的 20 秒**：两排 3D 盒子楼（真实 3D 顶点投影，正面背光、侧面受光）、
+7.8 万点城市灯海分三层亮起、6 盏路灯与地面光斑、一条推进的镜头轨迹、色温 2200K → 9500K。
+
+**为什么是 2.0 而不是 1.10**：它换的是渲染结构（逐镜离屏 → 一个世界），不是加功能。
+
+| 实测 | 数字 |
+|---|---|
+| 12 万笔生成 | 61 ms |
+| 12 万笔形态插值 | 22 ms |
+| 10 万笔吸附到文字 | 310 ms |
+| 20s 成片（1920×1080 / 30fps） | 600 帧，`h2v qc` 全绿 |
+
+| 能做 | 做不了 |
+|---|---|
+| 镜头在空间里推、摇、穿行 | 阴影贴图 / PBR（没有 z-buffer，只有画家算法） |
+| 十万级笔触的质感 | 逐像素 shader（流体、火焰、玻璃折射） |
+| 光随时间变（黄昏→夜→晨） | 百万级粒子每帧现算（要那个量级得预渲染） |
+| 视角连续变换（平面→3D 通道） | 真实材质反射（用光照 + 笔触去「暗示」） |
+
+需要真 3D 时直接上 `three.js` —— 渲染器只认 canvas，不关心你怎么画；`--alpha` 可以把 WebGL 图层叠到实拍上。
 
 ## 14 种风格：同样的内容，换个样子
 

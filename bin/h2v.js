@@ -17,7 +17,7 @@
  *   npx html-to-video storyboard demo.html --duration=24
  *   npx html-to-video doctor
  *   npx html-to-video styles            # 列出视觉风格（按家族分组）
- *   npx html-to-video templates         # 列出 14 个版式模板
+ *   npx html-to-video templates         # 列出 15 个版式模板
  *   npx html-to-video new my-video      # 拷一个模板出来改
  */
 'use strict';
@@ -202,23 +202,35 @@ switch (cmd) {
     const outThemes = path.join(path.dirname(out), 'themes.js');
     if (!fs.existsSync(outThemes)) fs.copyFileSync(themes, outThemes);
 
-    /* 模板里写的是 ../lib/camera.js（在 assets/templates/ 下正好指向 assets/lib/）。
-       拷到用户目录后 ../lib 会落到项目外面 —— 所以改写成本目录 ./lib/，
-       并把 camera.js 一起拷过去。少这一步，模板会在加载时 404，
-       而渲染器把"页面报错"判为失败，用户看到的是"渲染失败"。 */
-    const camSrc = path.join(srcDir, '..', 'lib', 'camera.js');
-    if (fs.existsSync(camSrc)) {
+    /* 模板里写的是 ../lib/xxx.js（在 assets/templates/ 下正好指向 assets/lib/）。
+       拷到用户目录后 ../lib 会落到项目外面 —— 所以改写成 ./lib/，
+       并把用到的库全部拷过去。少这一步，模板会在加载时 404，
+       而渲染器把"页面报错"判为失败，用户看到的是"渲染失败"。
+
+       v2.0 起不再写死 camera.js：模板可能引 brush / space / light 里的任意几个，
+       漏一个就是白屏。这里按 HTML 里实际出现的引用逐个处理。 */
+    let html = fs.readFileSync(out, 'utf8');
+    const libs = [...new Set(
+      [...html.matchAll(/\.\.\/lib\/([\w.-]+\.js)/g)].map((m) => m[1]),
+    )];
+    if (libs.length) {
       const libDir = path.join(path.dirname(out), 'lib');
       fs.mkdirSync(libDir, { recursive: true });
-      const camDst = path.join(libDir, 'camera.js');
-      if (!fs.existsSync(camDst)) fs.copyFileSync(camSrc, camDst);
-      const html = fs.readFileSync(out, 'utf8');
-      const fixed = html.replace('\.\.\/lib\/camera\.js', './lib/camera.js');
-      if (fixed !== html) fs.writeFileSync(out, fixed, 'utf8');
+      for (const f of libs) {
+        const from = path.join(srcDir, '..', 'lib', f);
+        if (!fs.existsSync(from)) {
+          console.warn(`⚠ 模板引用了 ../lib/${f}，但 assets/lib 里没有这个文件`);
+          continue;
+        }
+        const to = path.join(libDir, f);
+        if (!fs.existsSync(to)) fs.copyFileSync(from, to);
+        html = html.split(`../lib/${f}`).join(`./lib/${f}`);
+      }
+      fs.writeFileSync(out, html, 'utf8');
     }
 
     console.log(`✓ 已创建 ${outName}（来自 ${tpl}）`);
-    console.log(`  同目录一起拷了 themes.js（换配色要用）与 lib/camera.js（镜头运动）`);
+    console.log(`  同目录一起拷了 themes.js（换配色）与 lib/ 下用到的库（镜头/笔触/空间/光照）`);
     console.log(`  下一步：改文件顶部的 CFG，然后  h2v preview ${outName} --duration=6`);
     break;
   }

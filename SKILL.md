@@ -1093,6 +1093,135 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 
 `qa.sh` 会检查字体可用性，并在「声明的字体其实没生效（悄悄回退了）」时给出警告。
 
+## 程序化电影：一个世界，一条镜头轨迹（v2.0）
+
+在这之前，所有模板都是「一镜一画」：每个镜头画到自己的离屏画布，再转场合成。
+这套结构能出很干净的图表和卡片，但有三件事做不到：
+
+- 镜头**推过去看某个东西** —— 下一镜里那东西已经没了，因为每镜都是新画布；
+- 镜头**穿过**一个空间 —— 一条街、一列门、一层层结构，穿不过去；
+- **光随时间变** —— 窗外的天从黄昏暗到夜，只能靠叠一层半透明黑。
+
+v2.0 加了三层来补这三件事。三个库互相独立，可以只用其中一个。
+
+### 空间：`assets/lib/space.js`
+
+不是 3D 引擎（没有网格、没有光照模型、没有 z-buffer），只做一件事：
+**让镜头在一个连续空间里移动**。物体是贴在空间里的平面片，按深度排序、按距离缩放、加雾。
+
+```js
+const cam = SP.cam({ pos: [0, -300, -1500], look: [0, -250, 400], fov: 46, w: W, h: H });
+const p = SP.project(cam, [120, 0, 600]);   // → { x, y, z, s, vis }
+//  x,y 屏幕像素 · z 相机深度 · s「1 世界单位 = 多少像素」
+```
+
+| API | 用途 |
+|---|---|
+| `SP.cam({pos, look, fov, roll, w, h})` | 建相机。`roll` 做视角滚转（Pong 变通道那种） |
+| `SP.project(cam, [x,y,z])` | 投影。`vis=false` 表示在近裁剪面之后 |
+| `SP.sort(cam, items)` / `SP.draw(g, cam, items)` | 深度排序 / 排序后逐个回调 |
+| `SP.fog(cam, z, {near, far, max})` | 距离雾。伪造深度最便宜也最有效的一招 |
+| `SP.lerpCam(a, b, k)` / `SP.track(keys, t)` | 机位插值 / 关键帧相机 |
+| `SP.ring / grid / helix / rowZ / orbit` | 布局：摆物体最费事的是算坐标 |
+
+**坐标约定**：世界 x 右、y **下**、z 朝远离观众。相机在地面之上，所以 `y` 是负数。
+这一条写错，楼会翻到天上去 —— 而且画面照画，不会报错。
+
+**手性别凭直觉改**：`basis()` 里那三行（`r = f × worldUp`、`u = f × r`）反了就是
+左右颠倒 + 上下颠倒。`test/space.test.mjs` 里全是对方向的断言，改坏了会立刻红。
+
+### 笔触：`assets/lib/brush.js`
+
+版式模板一次画几十个元素，`fillRect` 量级够用。但「十万笔」「每帧百万笔」那种片子
+不是靠更精细的代码，是靠数量级：单笔在十万笔里根本看不出来，能看出来的是整体的
+疏密、方向、留白。这一层专门解决「量」。
+
+```js
+const f = BR.field(120000, {
+  seed: 7, area: { x: 0, y: 0, w: W, h: H },
+  angle: BR.vortex(W / 2, H / 2, 1.0),      // 方向场：漩涡
+  len: [8, 44], wid: [1.1, 3.6],            // 每笔长度 / 粗细
+  color: BR.jitterColor([38, 58, 92], 0.10, 7, 6),  // 同色系 6 档
+});
+BR.draw(g, f, { alpha: 0.9, reveal: k });   // reveal: 逐笔生长
+```
+
+| API | 用途 |
+|---|---|
+| `BR.field(n, opts)` | 生成笔触场（TypedArray，确定性 rng） |
+| `BR.draw(g, f, {alpha, reveal, widMul})` | 按「颜色 × 粗细」分桶批量提交 |
+| `BR.drawDots(g, f, opts)` | 点画模式（星光、纸屑、雨） |
+| `BR.morph(a, b, k)` | 两个场插值 → 「纸张聚成鸟」 |
+| `BR.textPoints(text, opts)` + `BR.snap(f, pts, {k})` | 文字轮廓采样 + 笔触吸附 → 「笔触聚成字」 |
+| `BR.vortex / wind / dir / nz` | 方向场与噪声 |
+
+**为什么必须分桶**：10 万次 `fillRect` 每次过一遍状态检查，实测比批量 `stroke` 慢 15~20 倍。
+分桶后 `stroke` 调用次数从 10 万降到十几个。
+
+**颜色必须量化**：桶数 = 色数 × 粗细档。颜色每笔都不同时桶数等于笔数，批量提交就白做了。
+`jitterColor` 走固定档位；`field` 的 `maxColors`（默认 32）兜底，超了就把通道量化合并。
+
+**实测**：12 万笔生成 61ms、morph 22ms、10 万笔吸附 310ms。
+
+### 光照：`assets/lib/light.js`
+
+「配色」和「光」不是一回事。同一组颜色，正午的硬光和黄昏的斜光完全是两支片。
+
+```js
+const L = LT.timeline([[0, 'golden'], [0.2, 'dusk'], [0.6, 'night'], [1, 'night']], u);
+LT.grade(g, W, H, L, { alpha: 0.2 });       // 全屏统一色温
+LT.radial(g, { x, y, r, color: L.sun, i: 0.4 });
+LT.vignette(g, W, H, { amount: 0.45 });
+```
+
+| API | 用途 |
+|---|---|
+| `LT.kelvin(K)` | 黑体辐射近似。1900K 烛光橙 / 5600K 日光 / 9500K 阴天冷蓝 |
+| `LT.sky(t)` | 昼夜循环（0=深夜 → 0.5 正午 → 1=深夜） |
+| `LT.timeline(keys, t)` | 任意关键帧。插值用 smoothstep，不是线性 |
+| `LT.grade / exposure / vignette / bloom / flash` | 全屏调色 / 曝光 / 暗角 / 泛光 / 闪白 |
+| `LT.radial / shaft` | 径向光 / 光束（体积光的 2D 近似） |
+
+**环境光与主光必须分开**：只调一个就是「加滤镜」，不是「换时间」。
+`SKY` 里每个预设都有 `ambient`（阴影里的颜色）和 `sun`（受光面的颜色）。
+
+**grade 用 overlay 而不是 multiply/screen**：它保留明暗只改色相。
+用 multiply 会整体变暗，用 screen 会整体发白，都不像光。
+
+### 承载体：`assets/templates/program-film.html`
+
+这个模板把三层串起来：一条街、两排楼、一条推进的镜头轨迹、一段从日落到深夜的光。
+默认出片 20 秒（`CFG.DUR`），改 `LINES` 换文案，改 `CFG.sky` 换光线时间轴。
+
+```bash
+h2v new my-film --template=program-film
+# 改文件顶部的 CFG：DUR / sky / LINES
+h2v render my-film.html --duration=20 --fps=30
+```
+
+`h2v new` 会把 `brush.js / space.js / light.js` 一起拷到 `./lib/` 并改好路径 ——
+v2.0 起不再写死 `camera.js`，模板引用哪个就拷哪个。
+
+### 现在能做什么、做不了什么
+
+| 能做 | 例子 |
+|---|---|
+| 镜头在空间里推、摇、穿行 | 沿着一条街走、穿过一列门 |
+| 镜头「移过去讲某个东西」 | 3D 细胞课件那种「讲到核糖体，镜头转过去」 |
+| 十万级笔触的质感 | 油画、星空、灯海、纸张聚成鸟 |
+| 光随时间变 | 黄昏 → 夜 → 晨 |
+| 视角连续变换 | 平面游戏视角滚转成 3D 通道 |
+
+| 做不了 | 原因 |
+|---|---|
+| 真实 3D 光照（阴影贴图、PBR） | 没有 z-buffer，只有画家算法 + 平面着色 |
+| 逐像素 shader（流体、火焰、玻璃折射） | Canvas 2D 没有可编程管线 |
+| 真实材质（金属反射、次表面散射） | 同上。用光照 + 笔触去「暗示」，不是模拟 |
+| 百万级粒子每帧现算 | 单帧 100 万次 draw 调用在浏览器里是秒级。要么预渲染，要么不到这个量 |
+
+需要真 3D 时：直接用 `three.js` + 我们这套渲染器（它只认 canvas，不关心你怎么画）。
+`--alpha` 透明输出也可以把 WebGL 图层叠到实拍上。
+
 ## 渲染中途 ffmpeg 失败怎么办
 
 **帧不会丢**：渲染器在编码失败时保留 `.seek-tmp-*/` 里的全部 PNG，并打印出可直接粘贴的编码命令。
@@ -1132,11 +1261,15 @@ FIG.draw(g, FIG.preset('host', { x: W * 0.22, y: H * 0.84, h: H * 0.42, t, pose:
 | `assets/animation-skeleton.html` | 动画骨架模板，已实现完整渲染契约 |
 | `scripts/lib/cues.cjs` | 字幕时间轴解析（SRT / VTT / JSON），会自动排序并修掉时长非正、首尾重叠的 cue |
 | `scripts/lib/qa-rules.cjs` | 验收判据的纯函数（框景 / 持续 / 分块 / 统计），可脱离浏览器单测 |
-| `assets/templates/*.html` | 11 个开箱即用模板（多镜头讲解片/片头/条形图/折线/大数字/时间线/竖屏卡/前后对比/流程图/解说卡/竖屏字幕卡），改 CFG 即用 |
+| `assets/templates/*.html` | 15 个开箱即用模板（多镜头讲解片/片头/条形图/折线/大数字/时间线/竖屏卡/前后对比/流程图/解说卡/竖屏字幕卡/**程序化电影**），改 CFG 即用 |
+| `assets/templates/program-film.html` | **程序化电影**：一个世界 + 一条镜头轨迹 + 一段日光变化。笔触、2.5D 空间、光照三层串起来的最小完整例子 |
 | `assets/templates/themes.js` | 三套内置主题（midnight / paper / neon），新模板用它换配色 |
 | `assets/lib/motion.js` | 动效时间库（缓动/弹簧/步进/错开），纯函数、零依赖 |
 | `assets/lib/scenes.js` | 多镜头时间轴 + 8 种转场（cut/fade/dip/slide/push/rise/zoom/wipe），纯函数、零依赖 |
 | `assets/lib/camera.js` | **两层**：运镜（推拉 / 呼吸 / 手持微抖 / 撞击震动，确定性伪噪声）+ **镜头语言**（12 个命名运动 / 5 种缓动 / 一行字解析 / 防露边），确定性 |
+| `assets/lib/space.js` | **2.5D 空间**：透视投影 / 深度排序 / 距离雾 / look-at 相机 / 关键帧轨迹 / 环形·网格·螺旋布局 |
+| `assets/lib/brush.js` | **大规模笔触**：TypedArray 笔触场 / 颜色×粗细分桶批量提交 / 形态插值 / 文字吸附 / 方向场（十万笔量级） |
+| `assets/lib/light.js` | **光照**：黑体色温 / 昼夜关键帧 / 径向光·光束 / 全屏调色·曝光·暗角·泛光 |
 | `assets/lib/shapes.js` | 图形元件：40+ 线性图标 / 卡片 / 箭头 / 正交连接线 / 背景纹理 |
 | `assets/lib/figures.js` | 参数化人物（发型 / 表情 / 姿势 / 配色）+ 对话气泡 |
 | `assets/lib/styles.js` | **风格库**：14 种视觉语言，分五个家族（印刷 / 手作 / 绘画 / 信息图 / 数字界面），`SV.bg` / `SV.text` / `SV.card` / `SV.bar` / `SV.overlay` / `SV.boil` / `SV.BEAT` / `SV.pulse` / `SV.FAMILY` |
