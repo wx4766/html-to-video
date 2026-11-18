@@ -148,6 +148,28 @@ node scripts/foley.js --out=bed.wav --dur=41 --preset=lighthouse
 10. **`-ss` 放在 `-i` 前面是「就近关键帧」**，抽出来的不是你要的那一秒。
     查帧要用 `-i ... -ss 30`（或者先精确解码）。
 
+### 发布时才暴露的三处
+
+代码全绿不等于「能发布」。这三处都在 `git push` 之后才看见：
+
+1. **CI 从 2.0 起一直是红的**，而且挂在一个跟测试无关的步骤上：
+   `runs-on: ubuntu-latest` 在 2026 年指向 26.04，`playwright install --with-deps`
+   只认到 24.04 —— `Error: Playwright does not support chromium on ubuntu26.04-x64`。
+   第 6 步就失败，后面 `Check ffmpeg` 和 `Run tests` 全部 skipped。
+   **两次发布都带着红叉，没人看日志。** 钉 `ubuntu-24.04` 之后 246 项全过（9.7 分钟）。
+2. **`package-lock.json` 停在 1.6.0**，顶层依赖还写着早已删掉的
+   `@ffmpeg-installer/ffmpeg ^1.1.0`（一个 100 MB 级的二进制包），一共 13 个 entry。
+   实际只有 playwright 一个。`npm ci` 会直接 EUSAGE；`npm install` 只是默默把
+   `node_modules` 装对，lock 不修就一直是错的。
+3. **`npm pack` 出来 1.8 GB / 1362 个文件**。`files: ["assets/"]` 是整目录递归，
+   而 `.gitignore` 里那几条（`*.stills/`、`.seek-tmp-*/`）在这里**完全不生效**：
+   有 `files` 字段时 npm 不读 `.gitignore`，加 `.npmignore` 也不读（实测无效）。
+   其中 1.7 GB 是 `assets/templates/` 下三个中断渲染留下的 `.seek-tmp-*` 帧目录。
+   白名单收到后缀级（`assets/templates/*.html`）后 **442 kB / 69 files**。
+
+第 3 条的教训最实在：**「仓库里没有」和「包里没有」是两件事**，
+而 `.gitignore` 只保证前者。
+
 ## [2.0.0] - 2026-11-18
 
 一次结构性升级：从「换幻灯片」到「在一个连续空间里拍」。
