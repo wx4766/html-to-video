@@ -95,8 +95,8 @@
 | [<img src="docs/img/preview-quote-card.jpg" width="150" alt="引言卡">](docs/img/preview-quote-card.jpg) | `assets/templates/quote-card.html` | **引言卡 / 金句**：大引号压底 + 引文逐行推进 + 出处短线，访谈 / 书摘 / 播客切片用 |
 | [<img src="docs/img/preview-chapter-card.jpg" width="150" alt="章节卡">](docs/img/preview-chapter-card.jpg) | `assets/templates/chapter-card.html` | **章节卡 / 过渡页**：序号水印 + 标题 + 章节进度点，把长片切成几段 |
 | [<img src="docs/img/preview-ui-showcase.jpg" width="150" alt="界面演示">](docs/img/preview-ui-showcase.jpg) | `assets/templates/ui-showcase.html` | **界面演示**：窗口推入 + 缓推 + 两块聚光标注，产品发布 / 功能更新用；也可换成真实截图 |
-
-| [<img src="docs/img/preview-ui-showcase.jpg" width="150" alt="程序化电影">](docs/preview-program-film.png) | `assets/templates/program-film.html` | **程序化电影**：一条街从黄昏到深夜，3D 盒子楼 + 7.8 万点灯海 + 镜头穿越 + 色温从 2200K 走到 9500K。v2.0 三层能力的最小完整例子 |
+| [<img src="docs/preview-program-dusk.png" width="150" alt="程序化电影">](docs/preview-program-night.png) | `assets/templates/program-film.html` | **程序化电影**：一条街从黄昏到深夜，3D 盒子楼 + 7.8 万点灯海 + 镜头穿越 + 色温从 2200K 走到 9500K。v2.0 三层能力的最小完整例子 |
+| [<img src="docs/preview-solid-dusk.png" width="150" alt="实体渲染">](docs/preview-solid-beam.png) | `assets/templates/lighthouse.html` | **实体渲染 / 场景片**：礁石、海、灯塔全是带法线的实体面，逐面着色。41 秒 7 镜，岩层 / 盐渍 / 苔按高度取色，光束扫出二十四海里。v2.1 的能力样本 |
 
 > 动图只为让你看见「它在动」；**点动图打开原片**看真实画质（横屏 1080p，竖屏 1080×1920）。
 > 静帧大图在 `docs/preview-*.png`。
