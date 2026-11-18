@@ -28,7 +28,13 @@ test('startServer 分到的端口一定在 Chromium 白名单内', async () => {
   try {
     assert.ok(srv.port > 0);
     assert.equal(isUnsafePort(srv.port), false, `分到了不安全端口 ${srv.port}`);
-    assert.match(srv.url('C:/tmp/a.html'), /^http:\/\/127\.0\.0\.1:\d+\/C%3A\/tmp\/a\.html$/);
+    /* 盘符编码只在 Windows 上有意义：Linux 上 `path.resolve('C:/tmp/a.html')`
+       会把它当成相对路径解析成 `<cwd>/C:/tmp/a.html`，期望值必然是错的。
+       这里只验「冒号被编码 + 路径被接上」，跨平台成立。 */
+    const u = srv.url('C:/tmp/a.html');
+    assert.match(u, /^http:\/\/127\.0\.0\.1:\d+\//);
+    assert.match(u, /C(%3A|:)\/tmp\/a\.html$/);
+    if (process.platform === 'win32') assert.match(u, /C%3A/);
   } finally {
     await srv.close();
   }

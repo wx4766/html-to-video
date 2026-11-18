@@ -82,6 +82,9 @@ h2{font-size:clamp(23px,3.2vw,31px);letter-spacing:-.02em;margin:0 0 34px;font-w
 .duo figure{margin:0}
 .duo img{width:100%;display:block;border-radius:10px;border:1px solid var(--line)}
 .duo figcaption{font-size:12px;opacity:.55;margin-top:8px;letter-spacing:.04em}
+.strip{margin:20px 0 8px}
+.strip img{width:100%;display:block;border-radius:10px;border:1px solid var(--line)}
+.strip figcaption{font-size:12px;opacity:.55;margin-top:8px;letter-spacing:.04em}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
   border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .cell{background:var(--paper);padding:26px 24px 28px}
@@ -268,6 +271,55 @@ footer a:hover{color:var(--ink)}
     </div>
   </div>
   <div class="cmd" style="margin-top:22px"><span>$</span>h2v new my-film --template=program-film &amp;&amp; h2v render my-film.html --duration=20</div>
+</section>
+
+<section id="solid" class="wrap">
+  <p class="sec-title">v2.1 · 补的是「面」</p>
+  <h2>东西是真的：实体、着色、气氛</h2>
+  <p class="lede">2.0 让镜头在空间里移动，但空间里的东西还是平面片。平面片没有法线——不能着色、不能转身、做不出曲面。镜头在动，画面还是平的。2.1 补上实体层：每块礁石、每一圈塔身、每一格玻璃，都是有法线、能受光的面。</p>
+  <div class="duo">
+    <figure><img src="preview-solid-dusk.png" alt="黄昏的礁石与灯塔"><figcaption>6s · 日落后二十分钟 · 岩层、盐渍、苔，逐面算</figcaption></figure>
+    <figure><img src="preview-solid-beam.png" alt="夜里的灯塔光束"><figcaption>30s · 夜里 · 光束扫出二十四海里</figcaption></figure>
+  </div>
+  <figure class="strip">
+    <img src="img/preview-wire-morph.jpg" alt="线框长成实体" loading="lazy" decoding="async" width="1880" height="348">
+    <figcaption>templates/wire-film.html · 同一份 mesh：填充从 0 长到 1，线框从 1 退到 0，顶点按 stagger 依次落位 —— 中段是「既是线框，又是实体」</figcaption>
+  </figure>
+  <div class="grid3" style="margin-top:26px">
+    <div class="cell">
+      <span class="tag">lib/solid.js</span>
+      <h3>实体</h3>
+      <p>box / lathe / sphere / tube / terrain 五种生成器，Lambert 漫反射 + Blinn 高光 + 边缘光 + 半球环境光 + 高度 AO。1.7 万面单帧 20–45ms。</p>
+    </div>
+    <div class="cell">
+      <span class="tag">lib/atmos.js</span>
+      <h3>空气</h3>
+      <p>体积光束用 54 条细射线，不是几层梯形（梯形叠加会在边界留竖线）；射线之间还要重叠 2.5 倍，否则条纹只是从「层」变成「条」。星空按星等分布，雾的上边缘用椭圆揉毛——直线边一眼假。</p>
+    </div>
+    <div class="cell">
+      <span class="tag">lib/lens.js</span>
+      <h3>镜头</h3>
+      <p>球坐标轨道插值（绕着主体转，不穿模）、对数推拉（推近 2 倍和 4 倍观感差一样多）、手持呼吸、景别到距离。</p>
+    </div>
+  </div>
+  <div class="grid3" style="margin-top:1px">
+    <div class="cell">
+      <span class="tag">scripts/foley.js</span>
+      <h3>声音</h3>
+      <p>海浪、风、雾笛、灯丝嗡鸣、纸、笔触、撞击、铃——八种程序化音色，带 Schroeder 混响。不买素材、不担心版权、节奏和镜头对得上。</p>
+    </div>
+    <div class="cell">
+      <span class="tag">templates/lighthouse.html</span>
+      <h3>一条完整的片</h3>
+      <p>41 秒 / 7 镜。镜头从 1500 推到 90（16 倍），再拉到 3100（31 倍跨度）。灯在 13.6 秒变亮，音轨里的嗡鸣也在 13.6 秒淡入。</p>
+    </div>
+    <div class="cell">
+      <span class="tag">tone mapping</span>
+      <h3>为什么之前偏暗</h3>
+      <p>线性光乘出来的值直接当 sRGB 用，中间调会整体沉下去。1K 查找表做曝光 + 高光滚降 + gamma——不是「材质色选错了」。</p>
+    </div>
+  </div>
+  <div class="cmd" style="margin-top:22px"><span>$</span>h2v new my-world --template=lighthouse &amp;&amp; node scripts/foley.js --out=bed.wav --preset=lighthouse</div>
 </section>
 
 <section id="ratios" class="wrap">

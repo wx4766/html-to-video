@@ -1338,11 +1338,33 @@ async function renderStills(context, url, times, onPage) {
   /* 编码参数
      · 普通   H.264 yuv420p crf18，兼容性最高
      · alpha  ProRes 4444 + yuva444p10le，剪辑软件直接拖进时间线就是透明背景 */
+  /* H.264 编码器要探测：不同发行版的 ffmpeg 构建差别很大，2026 年的官方
+     静态构建就默认 --disable-libx264（改成只带 libopenh264）。
+     硬编码 libx264 会在「帧全截完、只差编码」的时候才报错，白等十几分钟。 */
+  function pickH264() {
+    const probe = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-hide_banner', '-encoders'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const list = probe.status === 0 && probe.stdout ? probe.stdout.toString() : '';
+    if (list.includes(' libx264 ')) {
+      return ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'medium'];
+    }
+    if (list.includes(' libopenh264 ')) {
+      console.warn('⚠ 这个 ffmpeg 没有 libx264，改用 libopenh264（码率模式，质量略低）');
+      return ['-c:v', 'libopenh264', '-pix_fmt', 'yuv420p', '-b:v', '12M'];
+    }
+    if (list.includes(' h264_nvenc ')) {
+      console.warn('⚠ 没有 libx264，改用 h264_nvenc');
+      return ['-c:v', 'h264_nvenc', '-pix_fmt', 'yuv420p', '-cq', '19', '-preset', 'p5'];
+    }
+    console.error('✗ 这个 ffmpeg 没有任何 H.264 编码器（libx264 / libopenh264 / h264_nvenc 都没有）。');
+    console.error('  帧已留在 ' + TMP_DIR + '，装完整版后可直接手动编码。');
+    process.exit(1);
+    return [];
+  }
+
   const enc = ALPHA
     ? ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le',
       '-vendor', 'apl0', '-qscale:v', '11', '-r', String(FPS), '-movflags', '+faststart']
-    : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'medium',
-      '-r', String(FPS), '-movflags', '+faststart'];
+    : pickH264().concat(['-r', String(FPS), '-movflags', '+faststart']);
 
   if (ALPHA) {
     // prores_ks 不是所有 ffmpeg 构建都有（比如只开了 libx264 的精简版）。

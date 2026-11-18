@@ -83,7 +83,7 @@ node scripts/render-video-seek.js my-video.html --duration=6 --fps=30 --width=10
 
 ---
 
-## 15 templates you can ship today
+## 16 templates you can ship today
 
 Copy one, edit `CFG`, render. Each template is a single self-contained HTML file.
 
@@ -151,6 +151,34 @@ colour temperature 2200K → 9500K.
 
 Need real 3D? Drop in `three.js` — the renderer only cares about a canvas, not how you draw on it,
 and `--alpha` lets you composite a WebGL layer over live footage.
+
+
+## Solid geometry, shading, atmosphere (v2.1)
+
+v2.0 gave you a continuous space. But everything in it was still a **billboard** —
+a flat card with no normal, so it could not be lit, turned, or curved. The camera
+moved; the image stayed flat.
+
+v2.1 adds the missing layer: **faces**.
+
+| Module | What it solves | What's inside |
+|---|---|---|
+| `assets/lib/solid.js` | Objects are solid | `box` / `lathe` / `sphere` / `tube` / `terrain` + Lambert·Blinn·rim·hemisphere·AO + tone mapping + per-face color + surface bump |
+| `assets/lib/atmos.js` | Light travels through air | layered sky / star field / ground haze / volumetric beam (54 rays, not stacked quads) / glow / lens flare / water ripples / film grain |
+| `assets/lib/lens.js` | The camera has grammar | spherical orbit (never clips through the subject) / **logarithmic** dolly / shot-size→distance / handheld breathing / cut list |
+| `scripts/foley.js` | Sound that matches picture | 8 procedural voices (waves/wind/foghorn/hum/paper/brush/impact/chime) + event list + Schroeder reverb |
+
+```bash
+h2v new my-world --template=lighthouse
+node scripts/foley.js --out=bed.wav --dur=41 --preset=lighthouse
+h2v render my-world.html --duration=41 --fps=30 --audio=bed.wav
+```
+
+`lighthouse.html` is a 41-second, 7-shot film. The rock and tower are modelled
+(strata colouring, salt stains, moss, per-face grime). The camera pushes from 1500
+to 90 — 16×, logarithmically — then pulls back to 3100 for a 31× total range.
+The light walks from 3000K dusk to 6800K night. The lamp ignites at 13.6s; the
+transformer hum in the soundtrack fades in at 13.6s too.
 
 ## 14 visual styles: same content, different film
 

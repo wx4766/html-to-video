@@ -38,6 +38,11 @@ const CAPS = {
   /* program-film 自带光照系统（LT.sky），不走 CFG.theme；
      它读 window.__story 覆盖文案，但不读 __cues 时间轴。 */
   'program-film.html':      { theme: false, cues: false, alpha: false },
+  /* lighthouse 自带完整的世界/光/镜头/文案，不读 theme 与 cues；
+     它的文案写在模板里（每一镜一句），不走 __story。 */
+  'lighthouse.html':        { theme: false, cues: false, alpha: false },
+  /* wire-film 是能力演示（线框 → 实体），文案只有一行角标 */
+  'wire-film.html':         { theme: false, cues: false, alpha: false },
   'number-counter.html':    { theme: true,  cues: false, alpha: false },
   'subtitle-card.html':     { theme: true,  cues: true,  alpha: true  },
   'timeline.html':          { theme: true,  cues: false, alpha: false },

@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>模板 · 灯塔（实体世界 / 多镜 / 昼夜）</title>
+<style>
+  html, body { margin: 0; background: #05070d; }
+  canvas { display: block; width: 100vw; height: 100vh; object-fit: contain; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../lib/space.js"></script>
+<script src="../lib/light.js"></script>
+<script src="../lib/solid.js"></script>
+<script src="../lib/atmos.js"></script>
+<script src="../lib/lens.js"></script>
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════════════════════════
+   lighthouse —— 实体世界模板（v2.1）
+   ─────────────────────────────────────────────────────────────────
+   和 program-film 的差别不是「更好看」，是**多了三样东西**：
+     1. 实体：礁石/塔身/灯室是有法线的面，能受光、能转身、能有暗部
+     2. 尺度：一条镜头从 1500 推到 90（16 倍），再拉到 2800（31 倍）
+     3. 剪辑：20 秒连续推轨 + 四个切点，不是一个镜头飘到底
+   这三样是「可探索的世界」和「一段会动的图」的分界。
+   ═══════════════════════════════════════════════════════════════════ */
+
+const CFG = {
+  W: 1920, H: 1080,
+  DUR: 41,
+  seed: 17,
+};
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (t) => t * t * (3 - 2 * t);
+const sstep = (a, b, x) => smooth(clamp((x - a) / Math.max(1e-6, b - a), 0, 1));
+const TAU = Math.PI * 2;
+
+/* ── 噪声：所有细节都必须由种子决定，不能有 Math.random ──────────────
+   seek 渲染会跳帧调用 renderAt(t)，任何随机状态都会让同一帧两次渲染不一致。 */
+function hash2(x, y, s) {
+  let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(s | 0, 0x9e3779b9);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise(x, y, s) {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash2(xi, yi, s), b = hash2(xi + 1, yi, s);
+  const c = hash2(xi, yi + 1, s), d = hash2(xi + 1, yi + 1, s);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+function fbm(x, y, oct, s) {
+  let sum = 0, amp = 0.5, f = 1;
+  for (let i = 0; i < oct; i++) { sum += amp * vnoise(x * f, y * f, s + i * 31); f *= 2.03; amp *= 0.5; }
+  return sum;
+}
+
+/* ── 地形 ────────────────────────────────────────────────────────
+   岛：中心 90 半径的平顶放塔，往外 260 单位降到海面，再往外沉下去。
+   噪声只负责「不要是圆锥」，不负责形状 —— 形状要能被镜头记住。 */
+function H(x, z) {
+  const r = Math.hypot(x, z);
+  const a = Math.atan2(z, x);
+  /* 水线半径随方位变化：正圆形的岛一眼就是「程序生成」，
+     真实海岛的岸线是几个大小不同的岬角拼起来的。 */
+  const R = 322 + Math.sin(a * 2.7 + 0.4) * 58 + Math.sin(a * 5.9 + 1.9) * 27 + Math.sin(a * 11.3 + 3.1) * 11;
+  const t = clamp((r - 86) / Math.max(40, R - 86), 0, 1);
+  let y = -76 + Math.pow(t, 1.5) * 52;
+  if (r > R) y += Math.pow((r - R) / 340, 1.15) * 66;
+  const n1 = fbm(x * 0.0055 + 3.1, z * 0.0055 + 7.7, 5, CFG.seed) - 0.5;
+  const n2 = fbm(x * 0.021 + 1.3, z * 0.021 + 2.9, 4, CFG.seed + 9) - 0.5;
+  const rough = 0.28 + t * 2.7;
+  return y + n1 * 54 * rough + n2 * 14 * rough;
+}
+
+/* ── 世界 ────────────────────────────────────────────────────────
+   build 只跑一次：几何生成 + 变换都在这里，每帧只做投影和着色。 */
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+let W = CFG.W, H_ = CFG.H;
+
+let ROCK = null, TOWER = [], LAMP = null, CORE = null, SHARDS = [], FG = null;
+let TOWER_TOP = -341;
+
+function buildWorld() {
+  /* 礁石：132×132。面片在 1080p 上约 12px，够细；
+     再细一倍（260×260）绘制要 100ms/帧，不值得。 */
+  const rock = SD.terrain(132, 132, 1700, 1700, (u, v) => {
+    const x = (u - 0.5) * 1700, z = (v - 0.5) * 1700;
+    let y = H(x, z);
+    /* 网格边界必须沉到水下，否则会露出断面的一排锯齿。
+       但「直接压到固定高度」会在 patch 四边立起一圈竖直的墙 ——
+       从外面看是一条笔直的亮边横在海面上，像贴了块半透明塑料。
+       改成平滑加速下沉：没有竖直面，边界自己没入水下。 */
+    const e = Math.min(u, 1 - u, v, 1 - v);
+    if (e < 0.075) { const k = 1 - e / 0.075; y += k * k * 118; }
+    return y;
+  }, { color: [104, 100, 96], mat: 'rock' });
+  /* 水下部分不裁掉，改成「染成水色」。
+     裁掉的话，水面那条交界线会露出地形网格的锯齿，像一张撕开的纸。 */
+  rock.bump = 0.24;
+  /* 逐面取色：浪打湿的一圈发白，往上偏暖灰，最上面掺一点苔绿 */
+  rock.colorBy = (x, y, z) => {
+    /* 水面以下：快速融进水色。深度越深越暗，留一点「浅滩透光」 */
+    if (y > 2) {
+      /* 越深越暗，最终融进海面底色；再在 0–9 之间掺一圈白浪，
+         把「地形网格和水的交界」变成「浪打在石头上」。 */
+      const d = clamp(y / 42, 0, 1);
+      let r = lerp(58, 14, d), g = lerp(44, 14, d), b = lerp(44, 20, d);
+      const foam = clamp(1 - y / 9, 0, 1) * clamp((fbm(x * 0.09, z * 0.09, 3, 33) - 0.42) * 3, 0, 1);
+      r = lerp(r, 196, foam * 0.8); g = lerp(g, 200, foam * 0.8); b = lerp(b, 202, foam * 0.8);
+      return [r, g, b];
+    }
+    const up = clamp((-y - 6) / 190, 0, 1);
+    const wet = clamp(1 - (-y - 4) / 20, 0, 1);
+    let r = 54 + up * 34, g = 56 + up * 32, b = 60 + up * 30;
+    /* 沉积岩层：水平条纹。这是「岩石」和「土堆」最大的区别 ——
+       真实崖壁是一层一层的，不是一整块均匀的灰。 */
+    const band = Math.sin((-y) * 0.16 + fbm(x * 0.01, z * 0.01, 2, 12) * 5.5);
+    const bandAmt = 0.10 + 0.08 * up;
+    r *= 1 + band * bandAmt; g *= 1 + band * bandAmt * 0.95; b *= 1 + band * bandAmt * 0.85;
+    if (wet > 0) {
+      r = r * (1 - wet * 0.62) + 96 * wet * 0.62;
+      g = g * (1 - wet * 0.62) + 104 * wet * 0.62;
+      b = b * (1 - wet * 0.62) + 110 * wet * 0.62;
+    }
+    const moss = clamp((fbm(x * 0.04, z * 0.04, 3, 5) - 0.60) * 3, 0, 1) * up;
+    r = r * (1 - moss * 0.40); g = g * (1 - moss * 0.08); b = b * (1 - moss * 0.34);
+    return [r, g, b];
+  };
+  ROCK = rock;
+
+  /* 塔：基座 → 白石身 → 红环 → 走廊 → 灯室 → 顶罩
+     每一段单独 lathe，因为颜色/材质不同；接缝处用「套环」盖住。 */
+  const base = SD.lathe([[62, -84], [58, -70], [46, -60], [33, -54], [0, -52]], 28, { color: [92, 90, 88], mat: 'rock' });
+  base.bump = 0.16;
+
+  const white = SD.lathe([[27, -58], [25, -96], [21, -170], [17.5, -226], [16.6, -246]], 28, { color: [228, 224, 213], mat: 'matte' });
+  white.colorBy = (x, y, z) => {
+    const k = clamp((-y - 58) / 188, 0, 1);
+    /* 底部被浪打：盐渍 + 水痕；顶部被灯熏：淡淡的灰 */
+    const salt = Math.pow(1 - k, 3.0) * 0.30;
+    const soot = Math.pow(k, 7) * 0.12;
+    const streak = 0.06 * Math.max(0, fbm(Math.atan2(z, x) * 3.4, (-y) * 0.06, 3, 21) - 0.62) * 3;
+    const d = salt + soot + streak;
+    /* 灯室正下方被自己的光照亮：一圈暖白，夜里最显眼的那块 */
+    const lit = Math.pow(clamp((k - 0.80) / 0.20, 0, 1), 2.2) * LIGHT_ON * 0.26;
+    return [228 * (1 - d) + lit * 90, 224 * (1 - d * 0.97) + lit * 74, 213 * (1 - d * 0.9) + lit * 40];
+  };
+  white.bump = 0.035;
+
+  const red = SD.lathe([[16.6, -246], [17.6, -258], [17.6, -292]], 28, { color: [172, 56, 46], mat: 'matte' });
+  red.colorBy = (x, y, z) => [172 * (0.90 + 0.10 * Math.sin((-y) * 0.4)), 56, 46];
+  red.bump = 0.04;
+
+  const deck = SD.lathe([[17.6, -292.5], [24.6, -293.8], [24.6, -296.6], [17.6, -297.8]], 28, { color: [56, 58, 66], mat: 'metal' });
+
+  /* 灯室玻璃：mat glass；亮度由 0 到 1 由外部按时间改 colorBy */
+  const glass = SD.lathe([[12.4, -301], [11.6, -310], [11.6, -330], [13.6, -336]], 24, { color: [255, 236, 196], mat: 'glass' });
+  /* 半透明：不透明的话灯芯会被玻璃整个盖住，「灯室」就变成一根白柱子 */
+  glass.alpha = 0.38;
+  /* 八根竖框：玻璃桶和灯室之间只差这八根线 */
+  const mullions = [];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + 0.12;
+    mullions.push(SD.xform(SD.box(1.6, 31, 1.6, { color: [40, 42, 48], mat: 'metal' }),
+      { p: [Math.cos(a) * 12.1, -317, Math.sin(a) * 12.1], ry: -a }));
+  }
+
+  const core = SD.sphere(8.2, { seg: 18, rings: 14, color: [255, 250, 232], mat: 'emissive' });
+
+  const cap = SD.lathe([[15.2, -333], [14, -338], [7.5, -346.5], [0, -349]], 24, { color: [40, 42, 50], mat: 'matte' });
+
+  /* 走廊栏杆：一圈细管。灯塔的标志性轮廓一半来自这里。 */
+  const railPts = [];
+  const RN = 30;
+  for (let i = 0; i <= RN; i++) {
+    const a = (i / RN) * TAU;
+    railPts.push([Math.cos(a) * 24.4, -312, Math.sin(a) * 24.4]);
+  }
+  const rail = SD.tube(railPts, 1.1, { seg: 6, color: [64, 66, 74], mat: 'metal' });
+  /* 立柱 */
+  const posts = [];
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * TAU;
+    const p = SD.box(1.4, 12, 1.4, { color: [60, 62, 70], mat: 'metal' });
+    posts.push(SD.xform(p, { p: [Math.cos(a) * 24.4, -306, Math.sin(a) * 24.4] }));
+  }
+
+  /* 门：嵌在塔身底部，一块深色 + 一块更深的门框 */
+  const door = SD.xform(SD.box(1, 30, 13, { color: [42, 40, 40], mat: 'matte' }), { p: [0, -44, -24] });
+  const doorFrame = SD.xform(SD.box(1, 36, 19, { color: [58, 54, 50], mat: 'matte' }), { p: [0, -46, -23] });
+
+  TOWER = [base, white, red, deck, glass, cap, rail, door, doorFrame, ...posts, ...mullions];
+  LAMP = glass;
+  CORE = core;
+  TOWER_TOP = -349;
+
+  /* 碎石：礁石不是一块曲面，是一堆碎块。40 块石头能把
+     「低模曲面」的观感换成「崖」—— 轮廓复杂度比面数更重要。 */
+  const shards = [];
+  for (let i = 0; i < 44; i++) {
+    const a = hash2(i, 3, CFG.seed) * TAU;
+    const rad = 105 + Math.pow(hash2(i, 7, CFG.seed), 0.7) * 300;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    const s = 7 + hash2(i, 11, CFG.seed) * 26;
+    const b = SD.box(s * (1 + hash2(i, 13, CFG.seed) * 0.7), s * (0.55 + hash2(i, 17, CFG.seed) * 0.7), s, {
+      color: (() => { const v = 74 + hash2(i, 19, CFG.seed) * 30; return [v, v * 0.98, v * 0.95]; })(),
+      mat: 'rock',
+    });
+    b.bump = 0.18;
+    const yy = H(x, z);
+    if (yy > 2) continue;   /* 沉在水下的石头不画：画了会变成水面的方块 */
+    shards.push(SD.xform(b, { p: [x, yy + s * 0.25, z], ry: hash2(i, 31, CFG.seed) * TAU }));
+  }
+  SHARDS = shards;
+
+  /* 前景巨石：贴着镜头路径放，给每个镜头一个「第一层」。
+     没有前景的画面永远像模型展示台。 */
+  const fg = [];
+  for (let i = 0; i < 5; i++) {
+    const a = -0.55 + i * 0.34;
+    const rad = 420 + hash2(i, 41, CFG.seed) * 120;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    const s = 34 + hash2(i, 43, CFG.seed) * 40;
+    const b = SD.box(s * 1.5, s, s * 1.2, { color: [58, 56, 54], mat: 'rock' });
+    b.bump = 0.22;
+    const yy2 = H(x, z);
+    if (yy2 > 2) continue;
+    fg.push(SD.xform(b, { p: [x, yy2 + s * 0.2, z], ry: hash2(i, 47, CFG.seed) * TAU }));
+  }
+  FG = fg;
+}
+buildWorld();
+
+/* ── 昼夜 ────────────────────────────────────────────────────────
+   黄昏 → 夜。天空、水色、雾色、主光强度都从这一个 u 派生，
+   不同步会露馅（天黑了水还是橙的，一眼假）。 */
+const SKY_DUSK = [[0, [11, 19, 34]], [0.30, [43, 43, 70]], [0.58, [109, 74, 78]], [0.82, [184, 116, 77]], [1, [230, 160, 95]]];
+const SKY_NIGHT = [[0, [4, 6, 15]], [0.34, [8, 12, 28]], [0.62, [16, 20, 40]], [0.84, [30, 28, 48]], [1, [46, 38, 52]]];
+
+function mixStops(u) {
+  const k = sstep(0.42, 0.78, u);
+  return SKY_DUSK.map((s, i) => {
+    const n = SKY_NIGHT[i];
+    const c = [lerp(s[1][0], n[1][0], k), lerp(s[1][1], n[1][1], k), lerp(s[1][2], n[1][2], k)];
+    return [s[0], 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')'];
+  });
+}
+
+/* ── 镜头 ────────────────────────────────────────────────────────
+   0–20 秒是一镜到底：1500 → 260，方位转 1.5 弧度。
+   距离按对数走 —— 线性插值会让前 10 秒「几乎没动」。
+   之后切四次：灯室、海面、极远、仰视。 */
+const SHOTS = [
+  { t0: 0, t1: 7.0 },
+  { t0: 7.0, t1: 14.0 },
+  { t0: 14.0, t1: 20.0 },
+  { t0: 20.0, t1: 25.0 },
+  { t0: 25.0, t1: 31.0 },
+  { t0: 31.0, t1: 36.0 },
+  { t0: 36.0, t1: 41.0 },
+];
+
+function camAt(T) {
+  const sz = { w: W, h: H_ };
+  const u = clamp(T / CFG.DUR, 0, 1);
+
+  if (T < 7) {
+    /* 镜1：大远景，缓慢右移。留白给字幕。 */
+    /* outCubic：前 1 秒就走完 40% 的位移。inOutSine 起步太软，
+       自动检测会把它判成「静止开场」。 */
+    const k = LN.EASE.outCubic(clamp(T / 7, 0, 1));
+    return LN.orbitCam([0, -192, 0], {
+      az: lerp(0.80, 1.12, k), el: lerp(0.018, 0.052, k),
+      dist: lerp(1620, 1150, k), fov: 30, w: sz.w, h: sz.h,
+    });
+  }
+  if (T < 14) {
+    /* 镜2：贴海面推近。el 压低到 0.02，让地平线压在塔身中段。 */
+    const k = LN.EASE.inOutCubic(clamp((T - 7) / 7, 0, 1));
+    return LN.orbitCam([0, -196, 0], {
+      az: lerp(1.12, 1.62, k), el: lerp(0.052, 0.02, k),
+      dist: Math.exp(lerp(Math.log(1150), Math.log(430), k)), fov: lerp(30, 34, k),
+      w: sz.w, h: sz.h,
+    });
+  }
+  if (T < 20) {
+    /* 镜3：绕塔半圈，灯在这段亮起来。 */
+    const k = LN.EASE.inOutSine(clamp((T - 14) / 6, 0, 1));
+    return LN.orbitCam([0, -206, 0], {
+      az: lerp(1.62, 3.05, k), el: lerp(0.02, 0.075, k),
+      dist: Math.exp(lerp(Math.log(430), Math.log(405), k)), fov: lerp(34, 32, k),
+      w: sz.w, h: sz.h,
+    });
+  }
+  if (T < 25) {
+    /* 镜4：灯室特写。仰一点，让顶罩压住画面上沿。 */
+    const k = LN.EASE.outCubic(clamp((T - 20) / 5, 0, 1));
+    return LN.orbitCam([0, -318, 0], {
+      az: lerp(3.05, 3.22, k), el: lerp(0.16, 0.10, k),
+      dist: lerp(176, 146, k), fov: 30, w: sz.w, h: sz.h,
+    });
+  }
+  if (T < 31) {
+    /* 镜5：转向海面。塔在左边缘，光束扫出去 —— 这个镜头讲「光去哪了」。 */
+    const k = LN.EASE.inOutSine(clamp((T - 25) / 6, 0, 1));
+    return LN.orbitCam([70, -300, 0], {
+      az: lerp(2.62, 2.86, k), el: lerp(0.05, 0.075, k),
+      dist: lerp(330, 372, k), fov: 42, w: sz.w, h: sz.h,
+      lookAt: [120, -250, 0],
+    });
+  }
+  if (T < 36) {
+    /* 镜6：极远拉出。塔变成一粒光，海占满画面。 */
+    const k = LN.EASE.outCubic(clamp((T - 31) / 5, 0, 1));
+    return LN.orbitCam([0, -150, 0], {
+      az: lerp(2.86, 3.05, k), el: lerp(0.075, 0.10, k),
+      dist: Math.exp(lerp(Math.log(900), Math.log(3100), k)), fov: lerp(36, 30, k),
+      w: sz.w, h: sz.h,
+    });
+  }
+  /* 镜7：仰视塔身，光从头顶扫过。收尾。 */
+  const k = LN.EASE.inOutSine(clamp((T - 36) / 5, 0, 1));
+  return LN.orbitCam([0, -250, 0], {
+    az: lerp(3.05, 3.30, k), el: lerp(-0.30, -0.44, k),
+    dist: lerp(300, 250, k), fov: 40, w: sz.w, h: sz.h,
+    lookAt: [0, -270, 0],
+  });
+}
+
+/* ── 每帧 ────────────────────────────────────────────────────────
+   顺序就是「什么挡住什么」：天空 → 海 → 远景 → 雾 → 近景 → 光 → 后期。
+   3D 分三次画是为了把雾插在远景和近景之间 —— 一张 z-buffer 做不到的事，
+   分层反而能精确控制。 */
+let LIGHT_ON = 0;
+
+function drawFrame(T) {
+  T = clamp(T, 0, CFG.DUR - 0.001);
+  const u = T / CFG.DUR;
+  const W2 = W, H2 = H_;
+
+  const hz = H2 * 0.545;
+  const sunX = W2 * 0.685;
+
+  /* 灯亮：黄昏末段点亮，之后常亮 */
+  /* 灯从第 1 帧就亮着 —— 黄昏点灯本来就是常识，而且光束旋转是
+     开场唯一的运动来源（QC 的 hook 只量前 2 秒）。13.6s 那次是「变亮」，
+     不是「点亮」，叙事上照样成立。 */
+  LIGHT_ON = 0.70 + 0.30 * sstep(0.325, 0.395, u);
+
+  const cam = camAt(T);
+  LN.apply(cam, LN.handheld(T, { amp: 0.9, speed: 0.8, seed: 3 }));
+
+  /* 主光：随时间从暖到冷、从强到弱 */
+  const skyU = sstep(0.36, 0.80, u);
+  const skyLight = LT.sky(skyU < 0.5 ? 'dusk' : 'night');
+  const L = SD.keyLight(skyLight, cam, {
+    azimuth: -46, elev: lerp(22, 34, skyU),
+    fog: [lerp(58, 14, skyU), lerp(40, 18, skyU), lerp(42, 30, skyU)],
+    fogNear: 760, fogFar: 3400,
+    rim: 0.26, fill: 0.20,
+    exposure: lerp(1.34, 1.55, skyU),
+    hemiTop: [lerp(0.44, 0.13, skyU), lerp(0.37, 0.15, skyU), lerp(0.33, 0.22, skyU)],
+    hemiBot: [0.10, 0.095, 0.10],
+  });
+
+  /* 天空 */
+  const stops = mixStops(u);
+  AT.sky(ctx, W2, H2, {
+    horizon: hz / H2, stops,
+    below: skyU > 0.5 ? '#0a0d16' : '#171a24',
+    band: LIGHT_ON > 0.02 ? '#ffc48c' : '#ffb46e',
+    bandX: sunX, bandW: W2 * 0.40, bandH: H2 * 0.17,
+    bandI: lerp(0.62, 0.10, skyU) * (1 - LIGHT_ON * 0.55),
+  });
+
+  AT.stars(ctx, W2, H2, { horizon: hz / H2, n: 300, t: T, i: sstep(0.30, 0.72, skyU) });
+
+  /* 海：先画水，再画只露出水面的礁石 —— 顺序反了石头会浮起来 */
+  AT.water(ctx, W2, H2, hz, {
+    t: T, x: sunX,
+    color: skyU > 0.5 ? '#8fa6c8' : '#ffc089',
+    i: lerp(0.50, 0.22, skyU), rows: 46,
+    topColor: skyU > 0.5 ? 'rgba(22,28,46,0.92)' : 'rgba(62,44,44,0.88)',
+    midColor: skyU > 0.5 ? 'rgba(12,16,28,0.95)' : 'rgba(28,26,36,0.94)',
+  });
+
+  /* 远景：塔（先画，让雾盖住塔脚） */
+  const towerAll = TOWER.concat([CORE]);
+  SD.draw(ctx, cam, towerAll, L, { seam: 0.8 });
+
+  /* 雾：压在地平线，把塔脚和远海揉在一起 */
+  AT.haze(ctx, W2, H2, {
+    y: 0.50, h: 0.16,
+    color: skyU > 0.5 ? '#0e1424' : '#7a5648',
+    i: lerp(0.46, 0.30, skyU), seed: 5, n: 9,
+  });
+
+  /* 近景：礁石 + 碎石 + 前景巨石 */
+  SD.draw(ctx, cam, [ROCK].concat(SHARDS, FG), L, { seam: 0.7 });
+
+  /* ── 灯与光束 ──
+     光束不是画在 3D 里的：它是一个锥体，但在 2D 里用「投影起点 + 投影方向」
+     算更可控，而且旋转时光束长度会自然伸缩（朝向镜头长、背向短），
+     这正是真实灯塔的观感。 */
+  const lampP = SP.project(cam, [0, -318, 0]);
+  if (lampP.vis) {
+    /* 相位让开场那一刻光束正对镜头（-0.75 ≈ 相机方位角）。
+       转 6.8 秒一圈，比真实灯塔略快，但开场需要这个「迎面一束光」。 */
+    const spin = T * 0.92 - 0.75;
+    const now = LIGHT_ON;
+    if (now > 0.02) {
+      /* 光束方向：世界 +x 起转，投影到屏幕 */
+      const far = 800;
+      const endP = SP.project(cam, [Math.cos(spin) * far, -318, Math.sin(spin) * far]);
+      let ang = -0.5, len = 900;
+      if (endP.vis) {
+        ang = Math.atan2(endP.y - lampP.y, endP.x - lampP.x);
+        len = Math.hypot(endP.x - lampP.x, endP.y - lampP.y);
+        len = clamp(len, 260, 2200);
+      }
+      /* 光束朝向相机时投影会翻转，用「灯到相机的水平角」做一次修正 */
+      const toCam = Math.atan2(cam.pos[2], cam.pos[0]);
+      const diff = Math.abs(((spin - toCam + Math.PI * 3) % TAU) - Math.PI);
+      const facing = 1 - clamp(diff / Math.PI, 0, 1);
+
+      AT.beam(ctx, {
+        x: lampP.x, y: lampP.y, angle: ang, len: len * (0.5 + facing * 0.7),
+        w0: 7 + facing * 9, w1: 110 + facing * 430, spread: 0.24 + facing * 0.14,
+        color: '#ffe1ad', i: 0.42 * now * (0.45 + facing * 0.85), rays: 58,
+      });
+      AT.beam(ctx, {
+        x: lampP.x, y: lampP.y, angle: ang, len: len * (0.35 + facing * 0.4),
+        w0: 3, w1: 40 + facing * 90, spread: 0.075,
+        color: '#fff3d6', i: 0.30 * now, rays: 40,
+      });
+    }
+    AT.glow(ctx, {
+      x: lampP.x, y: lampP.y,
+      r: 84 + now * 62, color: '#ffe3b4',
+      i: 0.20 + now * 0.40,
+    });
+    /* 星芒：只在灯亮之后，强度跟镜头景别走（特写里更明显） */
+    if (now > 0.05) {
+      const near = clamp(1 - (cam.pos[1] + 318) / 400, 0, 1);
+      AT.flare(ctx, {
+        x: lampP.x, y: lampP.y,
+        len: 90 + now * 90, color: '#fff6dc',
+        i: (0.18 + now * 0.30) * (0.5 + near * 0.7),
+      });
+    }
+  }
+
+  /* 浮尘只在有光的时候看得见 */
+  AT.dust(ctx, W2, H2, { n: 56, t: T, color: '#ffe6bd', i: 0.22 + LIGHT_ON * 0.22 });
+
+  /* 后期：色温统一 → 暗角 → 颗粒 */
+  LT.grade(ctx, W2, H2, skyLight, { alpha: lerp(0.26, 0.12, skyU) });
+  LT.vignette(ctx, W2, H2, { amount: 0.52 });
+  AT.grain(ctx, W2, H2, { i: 0.05, t: T });
+
+  drawLines(T, u, skyU);
+}
+
+/* ── 文案 ────────────────────────────────────────────────────────
+   每一镜一句。单行不超过 13 字 —— 超过就不是字幕，是论文。 */
+const LINES = [
+  { t0: 0.6, t1: 6.4, big: '海面上只有这一盏灯', sub: '北纬三十八度 · 入夜前二十分钟' },
+  { t0: 7.4, t1: 13.4, big: '一百三十七级台阶', sub: '守塔人每天上两次' },
+  { t0: 14.2, t1: 19.6, big: '日落之后，它替所有船看路', sub: '灯在这里，已经亮了八十年' },
+  { t0: 20.4, t1: 24.6, big: '灯芯只有拳头大', sub: '一束光走二十四海里，才有人看见' },
+  { t0: 25.4, t1: 30.6, big: '转一圈，十二秒', sub: '它不等谁' },
+  { t0: 31.4, t1: 35.6, big: '一个人，一座塔', sub: '剩下的都是海' },
+  { t0: 36.4, t1: 40.4, big: '天亮了，它才睡', sub: '—— 守塔人记，第四十七年' },
+];
+
+function drawLines(T, u, skyU) {
+  const fontMain = '"Noto Sans SC", "Source Han Sans SC", "PingFang SC", system-ui, sans-serif';
+  const fontMono = 'ui-monospace, "SF Mono", Menlo, monospace';
+  /* 文字压在暗处：左下角压一块暗。必须用椭圆渐变 ——
+     之前是 fillRect(0, .58H, .78W, .42H)：右边一条 x=0.78W 的笔直竖边、
+     上边一条 y=0.58H 的横边，观众看到的是「画面右下角贴了块半透明塑料」。
+     矩形填充的边缘一定会被看出来，哪怕 alpha 只有 0.1。 */
+  ctx.save();
+  ctx.translate(W * 0.10, H_ * 1.06);
+  ctx.scale(1, (H_ * 0.52) / (W * 0.72));
+  const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, W * 0.72);
+  rg.addColorStop(0, 'rgba(4,6,12,0.62)');
+  rg.addColorStop(0.45, 'rgba(4,6,12,0.42)');
+  rg.addColorStop(0.75, 'rgba(4,6,12,0.14)');
+  rg.addColorStop(1, 'rgba(4,6,12,0)');
+  ctx.fillStyle = rg;
+  ctx.fillRect(-W * 1.5, -H_ * 4, W * 4, H_ * 8);
+  ctx.restore();
+
+  for (let i = 0; i < LINES.length; i++) {
+    const L = LINES[i];
+    const p = Math.min((T - L.t0) / 0.55, (L.t1 - T) / 0.40, 1);
+    if (p <= 0) continue;
+    const e = smooth(p);
+    const big = Math.min(W * 0.055, 96);
+    const x = W * 0.072;
+    const y = H_ * 0.80;
+
+    ctx.save();
+    ctx.translate(0, (1 - e) * 22);
+    ctx.globalAlpha = e;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 16;
+    ctx.font = '700 ' + big + 'px ' + fontMain;
+    ctx.fillStyle = '#f4ecdd';
+    ctx.fillText(L.big, x, y);
+    ctx.shadowBlur = 0;
+
+    const sp = clamp((T - L.t0 - 0.35) / 0.5, 0, 1);
+    if (L.sub && sp > 0) {
+      ctx.globalAlpha = smooth(sp) * 0.74;
+      ctx.font = '400 ' + Math.round(big * 0.27) + 'px ' + fontMono;
+      ctx.fillStyle = '#e6dbc6';
+      ctx.fillText(L.sub, x + 2, y + big * 0.55);
+    }
+    ctx.globalAlpha = e * 0.42;
+    ctx.font = '400 20px ' + fontMono;
+    ctx.textAlign = 'right';
+    ctx.fillText(String(i + 1).padStart(2, '0') + ' / ' + String(LINES.length).padStart(2, '0'), W * 0.93, H_ * 0.925);
+    ctx.restore();
+  }
+}
+
+/* ── 尺寸 ────────────────────────────────────────────────────────
+   跟随视口，不写死 —— 写死会让 --width/--height 静默裁掉右下角。 */
+function resize() {
+  const dpr = 1;
+  W = Math.max(320, Math.round(window.innerWidth * dpr));
+  H_ = Math.max(180, Math.round(window.innerHeight * dpr));
+  canvas.width = W; canvas.height = H_;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+}
+window.addEventListener('resize', () => { resize(); renderAt(0); });
+
+function renderAt(t) { drawFrame(clamp(t, 0, CFG.DUR - 0.001)); }
+window.__seek = renderAt;
+window.__duration = CFG.DUR;
+
+resize();
+renderAt(0);
+/* 渲染器等这个信号。要先渲一帧再置位 —— 否则第一帧可能是空白 */
+window.__ready = true;
+
+/* 预览模式（h2v preview）会注入 __seekRender：冻结时钟，只跟随 seek。
+   没有它，浏览器里的 rAF 会和 seek 抢同一块画布，预览会闪。 */
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tick = (now) => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % CFG.DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

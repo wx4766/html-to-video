@@ -551,15 +551,22 @@ function drawFrame(T) {
   LT.grade(ctx, W, H, L, { alpha: 0.18 });
   LT.vignette(ctx, W, H, { amount: 0.46, cy: 0.46 });
 
-  /* 8. 文字区的底衬：左下角一块渐变压暗。
-        不加的话，文字压在亮地面上根本读不出来 —— 底衬不能只靠
-        「文字背后一个矩形」，那会变成一块黑膏药。渐变才是字幕片的做法。 */
-  const gd = ctx.createLinearGradient(0, H * 0.50, 0, H);
-  gd.addColorStop(0, 'rgba(2,4,9,0)');
-  gd.addColorStop(0.45, 'rgba(2,4,9,0.30)');
-  gd.addColorStop(1, 'rgba(2,4,9,0.66)');
-  ctx.fillStyle = gd;
-  ctx.fillRect(0, H * 0.50, W * 0.80, H * 0.50);
+  /* 8. 文字区的底衬：左下角一块椭圆压暗。
+        不加的话，文字压在亮地面上根本读不出来。但也不能用 fillRect ——
+        `fillRect(0, .5H, .8W, .5H)` 的右边缘是一条 x=0.8W 的笔直竖边，
+        上边缘是一条横边，观众看到的是「右下角贴了块半透明黑塑料」。
+        椭圆的边界是渐隐的，压暗感和读得清都还在。 */
+  ctx.save();
+  ctx.translate(W * 0.08, H * 1.04);
+  ctx.scale(1, (H * 0.56) / (W * 0.74));
+  const rgScrim = ctx.createRadialGradient(0, 0, 0, 0, 0, W * 0.74);
+  rgScrim.addColorStop(0, 'rgba(2,4,9,0.68)');
+  rgScrim.addColorStop(0.45, 'rgba(2,4,9,0.44)');
+  rgScrim.addColorStop(0.76, 'rgba(2,4,9,0.14)');
+  rgScrim.addColorStop(1, 'rgba(2,4,9,0)');
+  ctx.fillStyle = rgScrim;
+  ctx.fillRect(-W * 1.6, -H * 4, W * 4.2, H * 8);
+  ctx.restore();
 
   /* 9. 文字。主行大字压在左下安全区，副行跟在后头。
         每段有独立的入场窗口，前一段出去后一段才进来。 */

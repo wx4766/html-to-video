@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>模板 · 线框长成实体</title>
+<style>
+  html, body { margin: 0; background: #04060a; }
+  canvas { display: block; width: 100vw; height: 100vh; object-fit: contain; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../lib/space.js"></script>
+<script src="../lib/light.js"></script>
+<script src="../lib/solid.js"></script>
+<script src="../lib/atmos.js"></script>
+<script src="../lib/lens.js"></script>
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════════════════════════
+   wire-film —— 「先有线，再长成东西」（v2.1）
+   ─────────────────────────────────────────────────────────────────
+   这个效果在顶级视频里反复出现：灯塔先是线框，然后一层层变成实体；
+   纸片先是一堆点，然后聚成鸟。技术上只有一件事 —— **同一批几何，
+   在两套渲染状态之间过渡**。
+
+   这里用最便宜的做法：同一份 mesh，`wire` 从 1 降到 0，
+   填充从 0 升到 1。中间那一秒，它既是线框又是实体 —— 那正是最好看的部分。
+   ═══════════════════════════════════════════════════════════════════ */
+
+const CFG = { W: 1920, H: 1080, DUR: 4.6 };
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (t) => t * t * (3 - 2 * t);
+const sstep = (a, b, x) => smooth(clamp((x - a) / Math.max(1e-6, b - a), 0, 1));
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+let W = CFG.W, H = CFG.H;
+
+/* ── 塔：lathe 分段（同 lighthouse，但只留必要部分） ───────────── */
+const SEGS = [
+  { p: [[62, -84], [58, -70], [46, -60], [33, -54], [0, -52]], c: [96, 94, 92], t: 'rock' },
+  { p: [[27, -58], [25, -96], [21, -170], [17.5, -226], [16.6, -246]], c: [228, 224, 213], t: 'matte' },
+  { p: [[16.6, -246], [17.6, -258], [17.6, -292]], c: [176, 58, 48], t: 'matte' },
+  { p: [[17.6, -292.5], [24.6, -293.8], [24.6, -296.6], [17.6, -297.8]], c: [56, 58, 66], t: 'metal' },
+  { p: [[12.4, -301], [11.6, -310], [11.6, -330], [13.6, -336]], c: [255, 236, 196], t: 'glass' },
+  { p: [[15.2, -333], [14, -338], [7.5, -346.5], [0, -349]], c: [40, 42, 50], t: 'matte' },
+];
+const PARTS = SEGS.map((s) => SD.lathe(s.p, 26, { color: s.c, mat: s.t }));
+PARTS[4].alpha = 0.45;
+
+const CORE = SD.sphere(8, { seg: 16, rings: 12, color: [255, 250, 232], mat: 'emissive' });
+
+/* 十二根经线：线框阶段最抓人的就是这些竖线，
+   它们让「一个圆柱」读成「一个被建模的物体」。 */
+const RIBS = [];
+for (let i = 0; i < 12; i++) {
+  const a = (i / 12) * Math.PI * 2;
+  const pts = [];
+  for (let k = 0; k <= 10; k++) {
+    const v = k / 10;
+    const y = lerp(-58, -336, v);
+    const r = lerp(27, 12.4, Math.pow(v, 1.4));
+    pts.push([Math.cos(a) * r, y, Math.sin(a) * r]);
+  }
+  RIBS.push(SD.tube(pts, 0.55, { seg: 4, color: [120, 214, 236], mat: 'emissive' }));
+}
+
+/* 地面光斑：2D 椭圆就够。3D 画网格在低角度下会退化成两条斜线，
+   反而像渲染 bug。 */
+
+function camAt(T) {
+  /* 4.6 秒里绕 1.1 弧度，同时推近一点点 */
+  const k = T / CFG.DUR;
+  return LN.orbitCam([0, -196, 0], {
+    az: lerp(0.55, 1.62, LN.EASE.inOutSine(k)),
+    el: lerp(0.10, 0.045, k),
+    dist: Math.exp(lerp(Math.log(900), Math.log(560), LN.EASE.outCubic(k))),
+    fov: 34, w: W, h: H,
+  });
+}
+
+function drawFrame(T) {
+  T = clamp(T, 0, CFG.DUR - 0.001);
+  const u = T / CFG.DUR;
+
+  /* 线框 → 实体：1.1s 开始，2.9s 结束 */
+  const fill = sstep(0.26, 0.60, u);
+  const wire = 1 - sstep(0.32, 0.68, u);
+  const lit = sstep(0.66, 0.84, u);
+
+  const cam = camAt(T);
+  const L = SD.keyLight(LT.sky('dusk'), cam, {
+    azimuth: -44, elev: 26, rim: 0.3, fill: 0.2,
+    exposure: 1.25,
+    hemiTop: [0.34, 0.34, 0.36], hemiBot: [0.09, 0.09, 0.10],
+    fog: [10, 14, 22], fogNear: 900, fogFar: 3200,
+  });
+
+  /* 背景：深空 + 一点地平线辉光 */
+  const gd = ctx.createLinearGradient(0, 0, 0, H);
+  gd.addColorStop(0, '#05070e');
+  gd.addColorStop(0.55, '#0a1018');
+  gd.addColorStop(1, '#04060a');
+  ctx.fillStyle = gd;
+  ctx.fillRect(0, 0, W, H);
+
+  AT.stars(ctx, W, H, { horizon: 0.72, n: 220, t: T, i: 0.75 });
+
+  /* 地面光斑 */
+  const qb = SP.project(cam, [0, -54, 0]);
+  if (qb.vis) {
+    const rg = ctx.createRadialGradient(qb.x, qb.y, 0, qb.x, qb.y, 260 * qb.s * 40);
+    rg.addColorStop(0, 'rgba(70,150,180,' + (0.10 + 0.06 * (1 - wire)) + ')');
+    rg.addColorStop(1, 'rgba(70,150,180,0)');
+    ctx.save();
+    ctx.translate(qb.x, qb.y);
+    ctx.scale(1, 0.30);
+    ctx.fillStyle = rg;
+    ctx.beginPath();
+    ctx.arc(0, 0, 260 * qb.s * 40, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /* 塔：wire 从 1 降到 0，同时填充从 0 升到 1 */
+  SD.draw(ctx, cam, PARTS, L, {
+    wire, fill, wireColor: 'rgb(124,222,244)', wireWidth: 1.1, seam: 0.7,
+  });
+
+  /* 经线：只在早期可见，实体出现后淡出（否则像贴了线） */
+  if (wire > 0.02) {
+    SD.draw(ctx, cam, RIBS, L, { alpha: wire * 0.9 });
+  }
+
+  /* 灯：实体几乎长好之后才亮 */
+  if (lit > 0.01) {
+    SD.draw(ctx, cam, [CORE], L, { alpha: lit });
+    const q = SP.project(cam, [0, -318, 0]);
+    if (q.vis) {
+      AT.glow(ctx, { x: q.x, y: q.y, r: 70 + lit * 60, color: '#ffe6b8', i: 0.25 + lit * 0.45 });
+      AT.beam(ctx, {
+        x: q.x, y: q.y, angle: -0.28, len: 900, w0: 5, w1: 190,
+        spread: 0.19, i: 0.30 * lit, rays: 46, color: '#ffe1ad',
+      });
+      AT.flare(ctx, { x: q.x, y: q.y, len: 90 + lit * 60, i: 0.2 * lit, color: '#fff6dc' });
+    }
+  }
+
+  /* 线框阶段的「扫描线」：一条横向亮带缓慢上移，暗示正在构建 */
+  if (wire > 0.05) {
+    const sy = H * (0.75 - 0.55 * u);
+    const sg = ctx.createLinearGradient(0, sy - 40, 0, sy + 40);
+    sg.addColorStop(0, 'rgba(110,220,250,0)');
+    sg.addColorStop(0.5, 'rgba(110,220,250,' + (0.10 * wire) + ')');
+    sg.addColorStop(1, 'rgba(110,220,250,0)');
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = sg;
+    ctx.fillRect(0, sy - 40, W, 80);
+    ctx.restore();
+  }
+
+  AT.grain(ctx, W, H, { i: 0.04, t: T });
+  LT.vignette(ctx, W, H, { amount: 0.5 });
+
+  /* 角标：这是「能力演示」，标一句，省得观众以为是成片 */
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.font = '400 20px ui-monospace, Menlo, monospace';
+  ctx.fillStyle = '#9fd8e6';
+  ctx.textAlign = 'right';
+  ctx.fillText('solid.js · wire → solid', W * 0.94, H * 0.93);
+  ctx.restore();
+}
+
+function resize() {
+  W = Math.max(320, Math.round(window.innerWidth));
+  H = Math.max(180, Math.round(window.innerHeight));
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+}
+window.addEventListener('resize', () => { resize(); renderAt(0); });
+
+function renderAt(t) { drawFrame(clamp(t, 0, CFG.DUR - 0.001)); }
+window.__seek = renderAt;
+window.__duration = CFG.DUR;
+
+resize();
+renderAt(0);
+window.__ready = true;
+
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null;
+  const tick = (now) => {
+    if (last === null) last = now;
+    cur = (cur + Math.min(0.05, (now - last) / 1000)) % CFG.DUR;
+    last = now; renderAt(cur); requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>
