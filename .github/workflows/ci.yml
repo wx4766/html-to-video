@@ -8,7 +8,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 不要用 ubuntu-latest：2026 年它已指向 26.04，而 Playwright 1.5x 的
+    # `install --with-deps` 只认到 24.04，会直接报
+    # "Playwright does not support chromium on ubuntu26.04-x64" 整条流水线挂掉。
+    # 钉版本号，跑得动比「最新」重要。
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -16,7 +20,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       # 渲染管线要一个完整版 ffmpeg（Playwright 自带的是裁剪版，编不了 h264）
       - name: Install ffmpeg
