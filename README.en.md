@@ -83,7 +83,7 @@ node scripts/render-video-seek.js my-video.html --duration=6 --fps=30 --width=10
 
 ---
 
-## 16 templates you can ship today
+## Templates you can ship today
 
 Copy one, edit `CFG`, render. Each template is a single self-contained HTML file.
 
@@ -93,6 +93,7 @@ Copy one, edit `CFG`, render. Each template is a single self-contained HTML file
 | `title-card.html` | Title card — characters pop in, then subtitle and tag |
 | `bar-chart.html` | Bar chart / ranking — bars grow in sequence, numbers count up, leader highlighted |
 | `line-chart.html` | Line trend — line draws itself, points light up, value bubble at the end |
+| `log-scatter.html` | Log-log scatter — place positive numeric data on logarithmic axes, revealing points with guides to both axes |
 | `number-counter.html` | Big number / KPI — rolls from 0 to target, delta label, progress bar |
 | `timeline.html` | Timeline — axis grows, nodes light up one by one |
 | `compare.html` | Before / after — two columns plus a verdict strip |
@@ -103,6 +104,8 @@ Copy one, edit `CFG`, render. Each template is a single self-contained HTML file
 | `quote-card.html` | Quote / pull-quote card — oversized quotation mark, line-by-line quote, attribution rule |
 | `chapter-card.html` | Chapter divider — ghosted number, title, progress dots. Slices a long film into acts |
 | `ui-showcase.html` | Product UI demo — window pushes in, slow push-in, two spotlight callouts. Swap in a real screenshot with `CFG.shot` |
+
+**Log-log scatter:** `assets/templates/log-scatter.html` plots positive `x` and `y` values on logarithmic axes and reveals labelled points with guides to both axes. Edit `CFG.points`, the axis labels and source note; keep `CFG.dur` in step with the render duration. The default example uses rounded values from the [NASA Planetary Fact Sheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/). Both axes expand to powers of ten, spanning at most 12 orders of magnitude each. At least two points with positive, finite numeric coordinates are required. Set a point's `labelSide` to `above` or `below` when labels crowd together.
 
 Every template ships in both landscape and portrait layout — the layout picks itself from
 the viewport, so `--width/--height` is the only switch.

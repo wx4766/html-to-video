@@ -34,6 +34,7 @@ const CAPS = {
   'explainer.html':         { theme: true,  cues: true,  alpha: true  },
   'flow-steps.html':        { theme: true,  cues: false, alpha: true  },
   'line-chart.html':        { theme: true,  cues: false, alpha: false },
+  'log-scatter.html':       { theme: true,  cues: false, alpha: false },
   'quote-card.html':        { theme: true,  cues: false, alpha: true  },
   /* program-film 自带光照系统（LT.sky），不走 CFG.theme；
      它读 window.__story 覆盖文案，但不读 __cues 时间轴。 */
