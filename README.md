@@ -33,7 +33,7 @@
 | **零费用** | 本地跑，不调任何 API |
 | **四道质量门** | 文案 `check` / 页面 `qa` / 成片 `qc` / 声音 `master` —— 四类问题分别量化，不靠眼睛 |
 | **一句话一条镜头** | 12 个命名运动 + 5 种缓动，`dolly in, 6s, slow` 直接喂进去，自带防露边 |
-| **开箱即用** | 14 个模板改个配置块就出片，不用从零学 canvas |
+| **开箱即用** | 模板改个配置块就出片，不用从零学 canvas |
 | **横竖屏都行** | 模板跟视口自适应，16:9 / 9:16 换 `--width/--height` 即可，不裁切 |
 | **能出「一支片子」** | 多镜头 + 8 种转场 + 镜头运动，一个 HTML 出整支，不用渲几段再拼 |
 | **自带素材** | 40+ 图标 / 参数化人物 / 卡片箭头 / 背景纹理，纯代码零依赖零版权风险 |
@@ -75,7 +75,7 @@
 于是闭环是：LLM 写 JSON/HTML → 渲 → QA 自己判红绿 → 红了就照着报告改 → 再渲。
 人只在最后看一眼成片。
 
-## 16 个开箱即用模板
+## 开箱即用模板
 
 拷贝一个，改顶部 `CFG` 里的文案和数据，直接出片。
 
@@ -85,6 +85,7 @@
 | [![](docs/demo-title-card.gif)](docs/demo-title-card.mp4) | `assets/templates/title-card.html` | **片头标题卡**：主标题逐字弹入 + 副标题 + 标签 |
 | [![](docs/demo-bar-chart.gif)](docs/demo-bar-chart.mp4) | `assets/templates/bar-chart.html` | **条形图 / 排名**：条形依次生长，数值同步滚动，第一条高亮 |
 | [![](docs/demo-line-chart.gif)](docs/demo-line-chart.mp4) | `assets/templates/line-chart.html` | **折线趋势**：折线生长 + 数据点亮起 + 末点数值浮标 |
+| | `assets/templates/log-scatter.html` | **双对数散点**：输入正数 x/y 与名称，按 10 倍刻度定位，点依次出现并以辅助线读数；内含 NASA 行星数据示例 |
 | [![](docs/demo-number-counter.gif)](docs/demo-number-counter.mp4) | `assets/templates/number-counter.html` | **大数字 / KPI**：从 0 滚到目标值 + 涨跌标签 + 进度条 |
 | [![](docs/demo-timeline.gif)](docs/demo-timeline.mp4) | `assets/templates/timeline.html` | **时间线 / 流程**：中轴生长，节点逐个点亮 |
 | [![](docs/demo-compare.gif)](docs/demo-compare.mp4) | `assets/templates/compare.html` | **前后对比**：左右两栏对照，底部结论条收口 |
@@ -97,6 +98,8 @@
 | [<img src="docs/img/preview-ui-showcase.jpg" width="150" alt="界面演示">](docs/img/preview-ui-showcase.jpg) | `assets/templates/ui-showcase.html` | **界面演示**：窗口推入 + 缓推 + 两块聚光标注，产品发布 / 功能更新用；也可换成真实截图 |
 | [<img src="docs/preview-program-dusk.png" width="150" alt="程序化电影">](docs/preview-program-night.png) | `assets/templates/program-film.html` | **程序化电影**：一条街从黄昏到深夜，3D 盒子楼 + 7.8 万点灯海 + 镜头穿越 + 色温从 2200K 走到 9500K。v2.0 三层能力的最小完整例子 |
 | [<img src="docs/preview-solid-dusk.png" width="150" alt="实体渲染">](docs/preview-solid-beam.png) | `assets/templates/lighthouse.html` | **实体渲染 / 场景片**：礁石、海、灯塔全是带法线的实体面，逐面着色。41 秒 7 镜，岩层 / 盐渍 / 苔按高度取色，光束扫出二十四海里。v2.1 的能力样本 |
+
+双对数散点模板中的 `CFG.points` 接受至少两个正数坐标；两轴各最多跨 12 个数量级。将标题、轴单位和来源一起换成自己的数据；修改出片时长时同步调整 `CFG.dur`；标签相挤时可给单个点设置 `labelSide: 'above'` 或 `'below'`。示例数值来自 [NASA 行星数据表](https://nssdc.gsfc.nasa.gov/planetary/factsheet/)，为表内近似值。
 
 > 动图只为让你看见「它在动」；**点动图打开原片**看真实画质（横屏 1080p，竖屏 1080×1920）。
 > 静帧大图在 `docs/preview-*.png`。

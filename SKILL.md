@@ -38,6 +38,7 @@ agent_created: true
 | `title-card.html` | 视频片头：主标题逐字弹入 + 副标题 | `--duration=6` |
 | `bar-chart.html` | 条形图/排名：条形依次生长，数值同步滚动 | `--duration=6` |
 | `line-chart.html` | 折线趋势：折线生长 + 数据点亮起 + 末点浮标 | `--duration=8` |
+| `log-scatter.html` | 双对数散点：输入正数坐标和标签，点依次出现并以辅助线读数；内含 NASA 行星数据 | `--duration=8` |
 | `number-counter.html` | 大数字/KPI：从 0 滚到目标值 + 涨跌标签 | `--duration=7` |
 | `timeline.html` | 时间线/流程：中轴生长，节点逐个点亮 | `--duration=7` |
 | `vertical-card.html` | **竖屏 9:16 卡片**：大字标题 + 大数字，抖音/视频号/Reels 用 | `--duration=6 --width=1080 --height=1920` |
@@ -50,7 +51,7 @@ agent_created: true
 | `ui-showcase.html` | **界面演示**：窗口推入 + 缓推 + 两处聚光标注，可换真实截图（`CFG.shot`） | `--duration=8` |
 
 每个模板**单文件自包含**，顶部有一个显眼的 `CFG` 配置块，改文案/数据即可 ——
-不用懂 canvas 也能出片。**14 个模板全部支持换主题与 14 种视觉风格**（见「换配色」一节）。
+不用懂 canvas 也能出片。原有 14 个版式支持换主题与视觉风格（见「换配色」一节）；`log-scatter.html` 支持三套内置主题。
 想做别的，再看 `assets/animation-skeleton.html` 从零写。
 
 **上面 14 个是「版式」。想要不同的「观感」，加一个 `--theme` 就有 14 种视觉语言**：

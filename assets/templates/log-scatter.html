@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>模板 · 双对数数据图</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script src="./themes.js"></script>
+<script>
+/* 双对数散点：修改 CFG.points、标题、坐标单位和来源即可。
+   x、y 必须是大于零的有限数；数据点按数组顺序依次出现，不连线。
+   每次揭晓时，从当前点伸出读数辅助线指向两轴，结尾留时间看完整图表。
+   标签靠得太近时可给某点加 labelSide: 'above' 或 'below'。
+   两轴范围自动扩展到 10 的整数次幂，每条网格代表 10 倍。
+   示例来自 NASA Planetary Fact Sheet：太阳距离（百万 km）、公转周期（天），
+   使用表中四舍五入的数值：https://nssdc.gsfc.nasa.gov/planetary/factsheet/
+   出片：h2v render log-scatter.html --duration=8 --fps=30
+   竖屏：加 --width=1080 --height=1920；换色：--theme=paper。
+*/
+const CFG = {
+  theme: 'midnight',
+  title: '行星的距离与公转周期',
+  subtitle: '每条网格相差 10 倍',
+  xLabel: '距太阳距离（百万 km）',
+  yLabel: '公转周期（天）',
+  note: '来源：NASA Planetary Fact Sheet（近似值）',
+  points: [
+    { label: '水星', x: 57.9, y: 88.0 },
+    { label: '金星', x: 108.2, y: 224.7 },
+    { label: '地球', x: 149.6, y: 365.2 },
+    { label: '火星', x: 228.0, y: 687.0 },
+    { label: '木星', x: 778.5, y: 4331 },
+    { label: '土星', x: 1432.0, y: 10747 },
+    { label: '天王星', x: 2867.0, y: 30589, labelSide: 'below' },
+    { label: '海王星', x: 4515.0, y: 59800, labelSide: 'above' },
+  ],
+  dur: 8,
+};
+
+if (!Array.isArray(CFG.points) || CFG.points.length < 2 ||
+    CFG.points.some(p => !p || !Number.isFinite(p.x) || p.x <= 0 || !Number.isFinite(p.y) || p.y <= 0 || typeof p.label !== 'string')) {
+  throw new Error('CFG.points 至少需要两个点；每个点须有文字 label 和大于零的有限数 x、y');
+}
+if (!Number.isFinite(CFG.dur) || CFG.dur <= 0) throw new Error('CFG.dur 必须大于零');
+const cv = document.getElementById('stage');
+const W = Math.max(1, Math.round(window.innerWidth));
+const H = Math.max(1, Math.round(window.innerHeight));
+cv.width = W; cv.height = H;
+const g = cv.getContext('2d');
+const S = Math.min(W, H) / 1080;
+const TH = window.h2vTheme ? h2vTheme(window.__h2vTheme || CFG.theme) : {
+  bg: '#080A10', ink: '#F4F7FC', sub: '#AAB3C4', accent: '#FFB86B', accentSoft: '#5FE0C0',
+};
+const color = TH.accentSoft || TH.accent;
+const font = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
+const mono = 'ui-monospace, Consolas, monospace';
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const ease = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+const axis = key => {
+  const values = CFG.points.map(p => Math.log10(p[key]));
+  let min = Math.floor(Math.min(...values)), max = Math.ceil(Math.max(...values));
+  if (min === max) { min--; max++; }
+  // A very broad data range otherwise draws unreadably many ticks.
+  if (max - min > 12) throw new Error('对数坐标范围不能超过 12 个数量级');
+  return { min, max };
+};
+const X = axis('x'), Y = axis('y');
+const left = 155 * S, right = W - 95 * S;
+const chartTop = H * 0.28, bottom = H * 0.69;
+const px = x => left + (Math.log10(x) - X.min) / (X.max - X.min) * (right - left);
+const py = y => bottom - (Math.log10(y) - Y.min) / (Y.max - Y.min) * (bottom - chartTop);
+const tick = exponent => exponent >= -3 && exponent <= 4 ? String(10 ** exponent) : `1e${exponent}`;
+
+function text(value, x, y, size, colorValue, align = 'left', weight = 400, maxWidth = W) {
+  g.fillStyle = colorValue; g.textAlign = align; g.font = `${weight} ${size * S}px ${font}`;
+  g.fillText(value, x, y, maxWidth);
+}
+function drawFrame(t) {
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = TH.bg; g.fillRect(0, 0, W, H);
+  // Slow moving ambient band makes held frames subtly live while remaining seekable.
+  const sweepX = W * (0.15 + 0.7 * (t / CFG.dur));
+  const grad = g.createLinearGradient(sweepX - W * 0.3, 0, sweepX + W * 0.3, 0);
+  grad.addColorStop(0, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.025)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, W, H);
+
+  text(CFG.title, left, H * 0.13, 54, TH.ink, 'left', 700, right - left);
+  text(CFG.subtitle, left, H * 0.18, 26, TH.sub || TH.ink, 'left', 400, right - left);
+  text(CFG.yLabel, left, chartTop - 42 * S, 25, TH.ink, 'left', 500, right - left);
+  g.font = `${22 * S}px ${mono}`;
+  g.strokeStyle = TH.ink; g.globalAlpha = 0.18; g.lineWidth = Math.max(1, S);
+  for (let e = X.min; e <= X.max; e++) {
+    const x = left + (e - X.min) / (X.max - X.min) * (right - left);
+    g.beginPath(); g.moveTo(x, chartTop); g.lineTo(x, bottom); g.stroke();
+  }
+  for (let e = Y.min; e <= Y.max; e++) {
+    const y = bottom - (e - Y.min) / (Y.max - Y.min) * (bottom - chartTop);
+    g.beginPath(); g.moveTo(left, y); g.lineTo(right, y); g.stroke();
+  }
+  g.globalAlpha = 0.8; g.fillStyle = TH.ink;
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  for (let e = X.min; e <= X.max; e++) {
+    const x = left + (e - X.min) / (X.max - X.min) * (right - left);
+    g.fillText(tick(e), x, bottom + 12 * S);
+  }
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (let e = Y.min; e <= Y.max; e++) {
+    const y = bottom - (e - Y.min) / (Y.max - Y.min) * (bottom - chartTop);
+    g.fillText(tick(e), left - 18 * S, y);
+  }
+  g.textBaseline = 'alphabetic'; g.globalAlpha = 1;
+  text(CFG.xLabel, right, bottom + 62 * S, 25, TH.ink, 'right', 500, right - left);
+  text(CFG.note, left, H * 0.81, 21, TH.sub || TH.ink, 'left', 400, right - left);
+
+  // Reserve the final 15% for reading the complete chart. Each point gets an
+  // equal share of the middle 80% of the duration, independent of seek order.
+  const first = CFG.dur * 0.05, slot = CFG.dur * 0.8 / CFG.points.length;
+  const current = Math.floor((t - first) / slot);
+  if (current >= 0 && current < CFG.points.length) {
+    const p = CFG.points[current], phase = clamp((t - first - current * slot) / slot, 0, 1);
+    const x = px(p.x), y = py(p.y), grow = ease(phase / 0.75);
+    const fade = 1 - ease((phase - 0.82) / 0.18);
+    g.save();
+    g.globalAlpha = 0.72 * fade;
+    g.strokeStyle = color; g.lineWidth = Math.max(2, 6 * S);
+    g.beginPath();
+    g.moveTo(x, y); g.lineTo(x + (left - x) * grow, y);
+    g.moveTo(x, y); g.lineTo(x, y + (bottom - y) * grow);
+    g.stroke();
+    text(`${p.label}    x: ${p.x}    y: ${p.y}`, left, chartTop - 76 * S, 23, TH.ink, 'left', 500, right - left);
+    g.restore();
+  }
+
+  CFG.points.forEach((p, i) => {
+    const start = first + i * slot;
+    const alpha = ease((t - start) / (slot * 0.18));
+    if (!alpha) return;
+    const x = px(p.x), y = py(p.y), radius = 7 * S;
+    g.save(); g.globalAlpha = alpha;
+    g.fillStyle = color; g.beginPath(); g.arc(x, y, radius, 0, 2 * Math.PI); g.fill();
+    // Alternate label sides to help nearby points; keep the text inside the plot width.
+    const below = p.labelSide === 'below' || (p.labelSide !== 'above' && i % 2 === 1);
+    const labelY = clamp(y + (below ? 28 : -17) * S, chartTop + 18 * S, bottom - 8 * S);
+    const align = x > right - 110 * S ? 'right' : 'left';
+    const labelX = align === 'right' ? x - 12 * S : x + 12 * S;
+    text(p.label, labelX, labelY, 23, TH.ink, align, 500, right - left);
+    g.restore();
+  });
+}
+function renderAt(t) { drawFrame(clamp(t, 0, CFG.dur)); }
+window.__seek = renderAt;
+window.__ready = true;
+if (window.__seekRender) {
+  renderAt(0);
+} else {
+  let cur = 0, last = null, playing = true;
+  const tickFrame = now => {
+    if (last === null) last = now;
+    if (playing) cur = (cur + Math.min(0.05, (now - last) / 1000)) % CFG.dur;
+    last = now; renderAt(cur); requestAnimationFrame(tickFrame);
+  };
+  document.addEventListener('click', () => { playing = !playing; });
+  requestAnimationFrame(tickFrame);
+}
+</script>
+</body>
+</html>
